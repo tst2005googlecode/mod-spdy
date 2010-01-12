@@ -19,6 +19,9 @@ vars = {
 }
 
 deps = {
+  "src/googleurl":
+    "http://google-url.googlecode.com/svn/trunk@121",
+    
   "src/testing/gtest":
     "http://googletest.googlecode.com/svn/trunk@359",
 
@@ -36,6 +39,30 @@ deps = {
     
   "src/third_party/modp_b64":
     Var("chromium_trunk") + "/src/third_party/modp_b64" + Var("chromium_revision"),
+    
+  "src/net/base":
+    Var("chromium_trunk") + "/src/net/base" + Var("chromium_revision"),
+    
+  "src/net/flip":
+    Var("chromium_trunk") + "/src/net/flip" + Var("chromium_revision"),
+    
+  "src/net/ftp":
+    Var("chromium_trunk") + "/src/net/ftp" + Var("chromium_revision"),
+
+  "src/net/http":
+    Var("chromium_trunk") + "/src/net/http" + Var("chromium_revision"),
+    
+  "src/net/proxy":
+    Var("chromium_trunk") + "/src/net/proxy" + Var("chromium_revision"),
+
+  "src/net/socket":
+    Var("chromium_trunk") + "/src/net/socket" + Var("chromium_revision"),
+    
+  "src/net/tools":
+    Var("chromium_trunk") + "/src/net/tools" + Var("chromium_revision"),
+    
+  "src/net/url_request":
+    Var("chromium_trunk") + "/src/net/url_request" + Var("chromium_revision"),
 
   "src/site_scons/site_tools":
     (Var("chromium_trunk") + "/src/site_scons/site_tools" +
@@ -52,6 +79,9 @@ deps = {
 
   "src/tools/grit":
     Var("chromium_trunk") + "/src/tools/grit" + Var("chromium_revision"),
+    
+  "src/third_party/zlib":
+    Var("chromium_trunk") + "/src/third_party/zlib" + Var("chromium_revision"),
 }
 
 
