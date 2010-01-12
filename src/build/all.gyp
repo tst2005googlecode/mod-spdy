@@ -20,6 +20,7 @@
       'xcode_create_dependents_test_runner': 1,
       'dependencies': [
         '../base/base.gyp:*',
+        '../mod_spdy/mod_spdy.gyp:*',
         '../net/net.gyp:*',
       ],} ]
 }
