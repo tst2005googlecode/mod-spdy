@@ -107,6 +107,13 @@
         # This is used to tweak build flags for gcc 4.4.
         'gcc_version%': '<!(python <(DEPTH)/build/compiler_version.py)',
       }],
+      ['OS=="win"', {
+        'nacl_win64_defines': [
+          # This flag is used to minimize dependencies when building
+          # Native Client loader for 64-bit Windows.
+          'NACL_WIN64',
+        ],
+      }],
     ],
   },
   'target_defaults': {
@@ -592,6 +599,8 @@
           'VCLinkerTool': {
             'AdditionalDependencies': [
               'dbghelp.lib',
+              'psapi.lib',
+              'version.lib',
               'ws2_32.lib',
             ],
             'GenerateDebugInformation': 'true',
