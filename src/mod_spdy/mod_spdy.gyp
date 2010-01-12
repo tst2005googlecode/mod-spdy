@@ -51,6 +51,6 @@
       'sources': [
         'mod_spdy.cc',
       ],
-    },      
+    },
   ],
 }

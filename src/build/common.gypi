@@ -42,6 +42,9 @@
     # necessary to get these variables defined for the conditions
     # within this variables dict that operate on these variables.
     'variables': {
+      # Override branding to select the desired branding flavor.
+      'branding%': '',
+
       # Compute the architecture that we're building for. Default to the
       # architecture that we're building on.
       'conditions': [
@@ -55,11 +58,22 @@
           'target_arch%': 'ia32',
         }],
       ],
+
+      # By default, Linux does not use views. To turn on views in Linux,
+      # set the variable GYP_DEFINES to "toolkit_views=1", or modify
+      # ~/.gyp/include.gypi .
+      'toolkit_views%': 0,
+
+      # Defaults to a desktop build, overridden via command line/env.
+      'chromeos%': 0,
     },
 
-    # Define target_arch on the basis of their settings within the
+    # Define variables on the basis of their settings within the
     # variables sub-dict above, unless overridden.
+    'branding%': '<(branding)',
     'target_arch%': '<(target_arch)',
+    'toolkit_views%': '<(toolkit_views)',
+    'chromeos%': '<(chromeos)',
 
     # Mac OS X SDK and deployment target support.
     # The SDK identifies the version of the system headers that will be used,
@@ -100,6 +114,9 @@
 
     # The system root for cross-compiles. Default: none.
     'sysroot%': '',
+
+    # Enable TCMalloc.
+    'linux_use_tcmalloc%': 0,
 
     'conditions': [
       ['OS=="linux" or OS=="freebsd" or OS=="openbsd"', {

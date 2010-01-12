@@ -249,9 +249,9 @@
       'conditions': [
         [ 'OS == "linux"', {
           'dependencies': [
-            '../third_party/chromium/src/build/linux/system.gyp:gconf',
-            '../third_party/chromium/src/build/linux/system.gyp:gdk',
-            '../third_party/chromium/src/build/linux/system.gyp:nss',
+            '../build/linux/system.gyp:gconf',
+            '../build/linux/system.gyp:gdk',
+            '../build/linux/system.gyp:nss',
           ],
         }],
         [ 'OS == "win"', {
