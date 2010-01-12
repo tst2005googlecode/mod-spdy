@@ -58,8 +58,9 @@ deps = {
   "src/net/socket":
     Var("chromium_trunk") + "/src/net/socket" + Var("chromium_revision"),
     
-  "src/net/tools":
-    Var("chromium_trunk") + "/src/net/tools" + Var("chromium_revision"),
+  "src/net/tools/dump_cache":
+    (Var("chromium_trunk") + "/src/net/tools/dump_cache" +
+     Var("chromium_revision")),
     
   "src/net/url_request":
     Var("chromium_trunk") + "/src/net/url_request" + Var("chromium_revision"),
