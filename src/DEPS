@@ -23,14 +23,8 @@ deps = {
   "src/base":
     Var("libpagespeed_trunk") + "/src/base" + Var("libpagespeed_revision"),
 
-#  "src/googleurl":
-#    "http://google-url.googlecode.com/svn/trunk@121",
-
   "src/testing/gtest":
     "http://googletest.googlecode.com/svn/trunk@359",
-
-#  "src/third_party/icu":
-#    Var("chromium_trunk") + "/deps/third_party/icu42@33767",
 
   "src/tools/gyp":
     "http://gyp.googlecode.com/svn/trunk@770",
@@ -40,38 +34,6 @@ deps = {
 
   "src/third_party/chromium/src/base":
     Var("chromium_trunk") + "/src/base" + Var("chromium_revision"),
-
-#  "src/third_party/modp_b64":
-#    Var("chromium_trunk") + "/src/third_party/modp_b64" + Var("chromium_revision"),
-
-#  "src/net/base":
-#    Var("chromium_trunk") + "/src/net/base" + Var("chromium_revision"),
-
-#  "src/net/flip":
-#    Var("chromium_trunk") + "/src/net/flip" + Var("chromium_revision"),
-
-#  "src/net/ftp":
-#    Var("chromium_trunk") + "/src/net/ftp" + Var("chromium_revision"),
-
-#  "src/net/http":
-#    Var("chromium_trunk") + "/src/net/http" + Var("chromium_revision"),
-
-#  "src/net/proxy":
-#    Var("chromium_trunk") + "/src/net/proxy" + Var("chromium_revision"),
-
-#  "src/net/socket":
-#    Var("chromium_trunk") + "/src/net/socket" + Var("chromium_revision"),
-
-#  "src/net/third_party/nss":
-#    (Var("chromium_trunk") + "/src/net/third_party/nss" +
-#     Var("chromium_revision")),
-
-#  "src/net/tools/dump_cache":
-#    (Var("chromium_trunk") + "/src/net/tools/dump_cache" +
-#     Var("chromium_revision")),
-
-#  "src/net/url_request":
-#    Var("chromium_trunk") + "/src/net/url_request" + Var("chromium_revision"),
 
   "src/site_scons/site_tools":
     (Var("chromium_trunk") + "/src/site_scons/site_tools" +
@@ -89,16 +51,8 @@ deps = {
   "src/tools/grit":
     Var("chromium_trunk") + "/src/tools/grit" + Var("chromium_revision"),
 
-#  "src/tools/xdisplaycheck":
-#    (Var("chromium_trunk") + "/src/tools/xdisplaycheck" +
-#     Var("chromium_revision")),
-
   "src/third_party/zlib":
     Var("chromium_trunk") + "/src/third_party/zlib" + Var("chromium_revision"),
-
-#  "src/third_party/libevent":
-#    (Var("chromium_trunk") + "/src/third_party/libevent" +
-#     Var("chromium_revision")),
 }
 
 
