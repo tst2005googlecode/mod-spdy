@@ -33,7 +33,7 @@ SimpleBuffer::SimpleBuffer(int size)
     storage_size_(size) {
   // Callers may try to allocate overly large blocks, but negative sizes are
   // obviously wrong.
-  DCHECK_GE(size, 0);
+  CHECK_GE(size, 0);
   storage_ = new char[size];
 }
 
@@ -149,7 +149,7 @@ bool SimpleBuffer::Reserve(int size) {
       memmove(storage_, read_ptr, read_size);
       read_idx_ = 0;
       write_idx_ = read_size;
-      DCHECK_GE(BytesFree(), size);
+      CHECK_GE(BytesFree(), size);
     } else {
       // what we need is to have at least size bytes available for writing.
       // This implies that the buffer needs to be at least size bytes +

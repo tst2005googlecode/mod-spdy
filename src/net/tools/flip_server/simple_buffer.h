@@ -8,6 +8,7 @@
 #include <string>
 
 #include "net/tools/flip_server/buffer_interface.h"
+#include "net/tools/flip_server/other_defines.h"
 
 namespace net {
 
