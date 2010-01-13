@@ -609,7 +609,10 @@ void BalsaHeaders::SetContentLength(size_t length) {
   content_length_ = length;
   // FastUInt64ToBuffer is supposed to use a maximum of kFastToBufferSize bytes.
   char buffer[kFastToBufferSize];
-  int len_converted = base::snprintf(buffer, sizeof(buffer), "%ld", length);
+  int len_converted = base::snprintf(buffer,
+                                     sizeof(buffer),
+                                     "%lu",
+                                     static_cast<unsigned long>(length));
   CHECK_GT(len_converted, 0);
   const base::StringPiece length_str(buffer, len_converted);
   AppendHeader(content_length, length_str);
@@ -717,8 +720,11 @@ void BalsaHeaders::SetResponseCode(const base::StringPiece& code) {
 void BalsaHeaders::SetParsedResponseCodeAndUpdateFirstline(
     size_t parsed_response_code) {
   char buffer[kFastToBufferSize];
-  int len_converted = base::snprintf(buffer, sizeof(buffer),
-                                     "%ld", parsed_response_code);
+  int len_converted = base::snprintf(
+      buffer,
+      sizeof(buffer),
+      "%lu",
+      static_cast<unsigned long>(parsed_response_code));
   CHECK_GT(len_converted, 0);
   SetResponseCode(base::StringPiece(buffer, len_converted));
 }
@@ -755,4 +761,3 @@ void BalsaHeaders::SetResponseReasonPhrase(const base::StringPiece& reason) {
 }
 
 }  // namespace net
-

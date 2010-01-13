@@ -19,17 +19,17 @@
   },
   'targets': [
     {
-      'target_name': 'apache_sdk',
+      'target_name': 'apache_httpd',
       'type': 'none',
       'direct_dependent_settings': {
         'include_dirs': [
           '<(apache_sdk_root)/include',
+          '<(apache_sdk_root)/arch/<(OS)/include',
         ],
         'conditions': [
           ['OS == "win"', {
             'link_settings': {
               'libraries': [
-                # TODO: which ones do we really need?
                 '<(apache_sdk_arch_root)/lib/apr-1.lib',
                 '<(apache_sdk_arch_root)/lib/aprutil-1.lib',
                 '<(apache_sdk_arch_root)/lib/libapr-1.lib',
@@ -37,7 +37,19 @@
                 '<(apache_sdk_arch_root)/lib/libhttpd.lib',
               ],
             },
-          }]
+          }],
+          ['OS == "linux"', {
+            'ldflags': [
+              '-L<(apache_sdk_arch_root)/lib',
+            ],
+            'link_settings': {
+              'libraries': [
+                '-lapr-1',
+                '-laprutil-1',
+                '-lmain',
+              ],
+            },
+          }],
         ],
       },
     },
@@ -45,7 +57,7 @@
       'target_name': 'mod_spdy',
       'type': 'loadable_module',
       'dependencies': [
-        'apache_sdk',
+        'apache_httpd',
       ],
       'sources': [
         'mod_spdy.cc',

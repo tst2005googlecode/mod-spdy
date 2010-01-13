@@ -50,7 +50,7 @@ int spdy_pre_connection_hook(conn_rec *c, void *csd) {
     ap_log_cerror(APLOG_MARK,
                   APLOG_NOTICE,
                   APR_SUCCESS,
-                  c, 
+                  c,
                   "%ld Registering SPDY filters", c->id);
 
     // TODO: define and initialize shared context.
