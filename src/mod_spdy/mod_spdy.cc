@@ -25,14 +25,21 @@ void spdy_insert_filter_hook(request_rec *r) {
     ap_add_output_filter_handle(g_spdy_output_filter, NULL, r, r->connection) ;
 }
 
+// mod_ssl is AP_FTYPE_CONNECTION + 5. We want to hook right before mod_ssl.
+const ap_filter_type kSpdyFilterType =
+    static_cast<ap_filter_type>(AP_FTYPE_CONNECTION + 4);
+
 void spdy_register_hook(apr_pool_t *p) {
-    ap_hook_insert_filter(spdy_insert_filter_hook, NULL, NULL, APR_HOOK_MIDDLE) ;
+    ap_hook_insert_filter(spdy_insert_filter_hook,
+        NULL,
+        NULL,
+        APR_HOOK_MIDDLE) ;
 
     g_spdy_output_filter = ap_register_output_filter(
         "SPDY",
         spdy_filter,
         spdy_init,
-        static_cast<ap_filter_type>(AP_FTYPE_PROTOCOL + 4));
+        kSpdyFilterType);
 }
 
 }  // namespace
