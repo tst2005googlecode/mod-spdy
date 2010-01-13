@@ -30,11 +30,10 @@
             'link_settings': {
               'libraries': [
                 # TODO: which ones do we really need?
-#                '<(apache_sdk_arch_root)/lib/apr-1.lib',
-#                '<(apache_sdk_arch_root)/lib/aprutil-1.lib',
-#                '<(apache_sdk_arch_root)/lib/libapr-1.lib',
-#                '<(apache_sdk_arch_root)/lib/libapriconv-1.lib',
-#                '<(apache_sdk_arch_root)/lib/libaprutil-1.lib',
+                '<(apache_sdk_arch_root)/lib/apr-1.lib',
+                '<(apache_sdk_arch_root)/lib/aprutil-1.lib',
+                '<(apache_sdk_arch_root)/lib/libapr-1.lib',
+                '<(apache_sdk_arch_root)/lib/libaprutil-1.lib',
                 '<(apache_sdk_arch_root)/lib/libhttpd.lib',
               ],
             },
