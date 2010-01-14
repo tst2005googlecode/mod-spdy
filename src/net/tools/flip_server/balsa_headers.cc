@@ -30,30 +30,12 @@ const char kTransferEncoding[] = "Transfer-Encoding";
 const char kSpaceChar = ' ';
 
 #if defined(OS_WIN)
-
-struct StringPieceHashCompare {
-  // These two public members are required by msvc.  4 and 8 are the
-  // default values.
-  static const size_t bucket_size = 4;
-  static const size_t min_buckets = 8;
-
-  bool operator()(const base::StringPiece& a,
-                  const base::StringPiece& b) const {
-      return 0 < base::strcasecmp(a.data(), b.data());
-  }
-
-  size_t operator()(const base::StringPiece& key) const {
-    net::StringPieceCaseHash h;
-    return h(key);
-  }
-};
-
-typedef base::hash_set<base::StringPiece, 
-    StringPieceHashCompare> StringPieceHashSet;
+typedef base::hash_set<base::StringPiece,
+                       net::StringPieceHashCompare> StringPieceHashSet;
 #else
 typedef base::hash_set<base::StringPiece,
-    net::StringPieceCaseHash,
-    net::StringPieceCaseEqual> StringPieceHashSet;
+                       net::StringPieceCaseHash,
+                       net::StringPieceCaseEqual> StringPieceHashSet;
 #endif
 
 StringPieceHashSet g_multivalued_headers;
@@ -517,7 +499,7 @@ void BalsaHeaders::GetAllOfHeaderAsString(const base::StringPiece& key,
 
 // static
 bool BalsaHeaders::IsMultivaluedHeader(const base::StringPiece& header) {
-  return false;//g_multivalued_headers.find(header) != g_multivalued_headers.end();
+  return g_multivalued_headers.find(header) != g_multivalued_headers.end();
 }
 
 void BalsaHeaders::RemoveAllOfHeader(const base::StringPiece& key) {

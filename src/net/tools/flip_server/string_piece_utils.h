@@ -59,10 +59,28 @@ struct StringPieceUtils {
     return EqualIgnoreCase(text.substr(0, starts_with.size()), starts_with);
   }
 };
+
 struct StringPieceCaseEqual {
   bool operator()(const base::StringPiece& piece1,
                   const base::StringPiece& piece2) const {
     return StringPieceUtils::EqualIgnoreCase(piece1, piece2);
+  }
+};
+
+struct StringPieceHashCompare {
+  // These two public members are required by msvc.  4 and 8 are the
+  // default values.
+  static const size_t bucket_size = 4;
+  static const size_t min_buckets = 8;
+
+  bool operator()(const base::StringPiece& a,
+                  const base::StringPiece& b) const {
+      return 0 < base::strcasecmp(a.data(), b.data());
+  }
+
+  size_t operator()(const base::StringPiece& key) const {
+    StringPieceCaseHash h;
+    return h(key);
   }
 };
 
