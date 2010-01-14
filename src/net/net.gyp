@@ -8,6 +8,23 @@
   },
   'targets': [
     {
+      'target_name': 'flip',
+      'type': '<(library)',
+      'dependencies': [
+        '<(DEPTH)/base/base.gyp:base',
+      ],
+      'export_dependent_settings': [
+        '<(DEPTH)/base/base.gyp:base',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        'flip/flip_framer.cc',
+        'flip/flip_frame_builder.cc',
+      ],
+    },
+    {
       'target_name': 'flip_server_lib',
       'type': '<(library)',
       'dependencies': [
