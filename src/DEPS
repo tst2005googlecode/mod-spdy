@@ -15,14 +15,9 @@
 vars = {
   "chromium_trunk": "http://src.chromium.org/svn/trunk",
   "chromium_revision": "@35449",
-  "libpagespeed_trunk": "http://page-speed.googlecode.com/svn/lib/trunk",
-  "libpagespeed_revision": "@head",
 }
 
 deps = {
-  "src/base":
-    Var("libpagespeed_trunk") + "/src/base" + Var("libpagespeed_revision"),
-
   "src/testing/gtest":
     "http://googletest.googlecode.com/svn/trunk@359",
 
@@ -44,7 +39,7 @@ deps = {
 
   "src/net/flip":
     Var("chromium_trunk") + "/src/net/flip" + Var("chromium_revision"),
-    
+
   "src/third_party/scons":
     Var("chromium_trunk") + "/src/third_party/scons" + Var("chromium_revision"),
 
