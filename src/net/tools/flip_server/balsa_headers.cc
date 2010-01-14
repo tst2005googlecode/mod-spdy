@@ -28,12 +28,42 @@ namespace {
 const char kContentLength[] = "Content-Length";
 const char kTransferEncoding[] = "Transfer-Encoding";
 const char kSpaceChar = ' ';
-/*
-base::hash_set<base::StringPiece,
-                    net::StringPieceCaseHash,
-                    net::StringPieceCaseEqual> g_multivalued_headers;
+
+#if defined(OS_WIN)
+
+struct StringPieceHashCompare {
+  // These two public members are required by msvc.  4 and 8 are the
+  // default values.
+  static const size_t bucket_size = 4;
+  static const size_t min_buckets = 8;
+
+  bool operator()(const base::StringPiece& a,
+                  const base::StringPiece& b) const {
+      return 0 < base::strcasecmp(a.data(), b.data());
+  }
+
+  size_t operator()(const base::StringPiece& key) const {
+    net::StringPieceCaseHash h;
+    return h(key);
+  }
+};
+
+typedef base::hash_set<base::StringPiece, 
+    StringPieceHashCompare> StringPieceHashSet;
+#else
+typedef base::hash_set<base::StringPiece,
+    net::StringPieceCaseHash,
+    net::StringPieceCaseEqual> StringPieceHashSet;
+#endif
+
+StringPieceHashSet g_multivalued_headers;
 
 void InitMultivaluedHeaders() {
+  if (g_multivalued_headers.size() > 0) {
+    LOG(DFATAL) << "Already initialized.";
+    return;
+  }
+
   g_multivalued_headers.insert("accept");
   g_multivalued_headers.insert("accept-charset");
   g_multivalued_headers.insert("accept-encoding");
@@ -61,14 +91,15 @@ void InitMultivaluedHeaders() {
   g_multivalued_headers.insert("set-cookie");
 }
 
-REGISTER_MODULE_INITIALIZER(multivalued_headers, InitMultivaluedHeaders());
-*/
-
 const int kFastToBufferSize = 32;  // I think 22 is adequate, but anyway..
 
 }  // namespace
 
 namespace net {
+
+void BalsaHeaders::Init() {
+    InitMultivaluedHeaders();
+}
 
 void BalsaHeaders::Clear() {
   balsa_buffer_.Clear();

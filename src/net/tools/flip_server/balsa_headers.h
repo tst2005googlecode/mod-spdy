@@ -390,6 +390,9 @@ class BalsaHeaders {
     bool skip;
   };
 
+  // Initialize static data structures. Should be called once at startup.
+  static void Init();
+
   typedef std::vector<base::StringPiece> HeaderTokenList;
   friend bool ParseHTTPFirstLine(const char* begin,
                                  const char* end,

@@ -9,6 +9,7 @@
 
 #include "base/port.h"
 #include "base/string_piece.h"
+#include "base/string_util.h"
 
 namespace net {
 
@@ -27,18 +28,10 @@ struct StringPieceCaseHash {
 struct StringPieceUtils {
   static bool EqualIgnoreCase(const base::StringPiece& piece1,
                               const base::StringPiece& piece2) {
-    base::StringPiece::const_iterator p1i = piece1.begin();
-    base::StringPiece::const_iterator p2i = piece2.begin();
-    if (piece1.empty() && piece2.empty()) {
-      return true;
-    } else if (piece1.size() != piece2.size()) {
-      return false;
-    }
-    while (p1i != piece1.end() && p2i != piece2.begin()) {
-      if (tolower(*p1i) != tolower(*p2i))
-        return false;
-    }
-    return true;
+    return (piece1.size() == piece2.size()
+        && 0 == base::strncasecmp(piece1.data(),
+                                  piece2.data(),
+                                  piece1.size()));
   }
 
   static void RemoveWhitespaceContext(base::StringPiece* piece1) {
@@ -72,8 +65,6 @@ struct StringPieceCaseEqual {
     return StringPieceUtils::EqualIgnoreCase(piece1, piece2);
   }
 };
-
-
 
 }  // namespace net
 
