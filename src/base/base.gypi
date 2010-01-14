@@ -42,6 +42,11 @@
         'include_dirs': [
           '<(chromium_root)',
         ],
+        'direct_dependent_settings': {
+          'include_dirs': [
+            '<(chromium_root)',
+          ],
+        },
         # These warnings are needed for the files in third_party\dmg_fp.
         'msvs_disabled_warnings': [
           4244, 4554, 4018, 4102,

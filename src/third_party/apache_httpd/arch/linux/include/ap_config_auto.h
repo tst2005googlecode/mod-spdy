@@ -147,7 +147,7 @@
 #define HAVE_STRING_H 1
 
 /* Define to 1 if you have the `syslog' function. */
-#define HAVE_SYSLOG 1
+/* #undef HAVE_SYSLOG */
 
 /* Define to 1 if you have the <sys/ipc.h> header file. */
 #define HAVE_SYS_IPC_H 1

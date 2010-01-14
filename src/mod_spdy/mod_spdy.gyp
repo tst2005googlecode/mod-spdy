@@ -46,6 +46,10 @@
       'type': 'loadable_module',
       'dependencies': [
         'apache_httpd',
+        '<(DEPTH)/net/net.gyp:flip_server_lib',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
       ],
       'sources': [
         'mod_spdy.cc',

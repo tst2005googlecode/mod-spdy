@@ -69,4 +69,3 @@ struct StringPieceCaseEqual {
 }  // namespace net
 
 #endif  // NET_TOOLS_FLIP_SERVER_STRING_PIECE_UTILS_H_
-

@@ -11,7 +11,10 @@
       'target_name': 'flip_server_lib',
       'type': '<(library)',
       'dependencies': [
-        '../base/base.gyp:base',
+        '<(DEPTH)/base/base.gyp:base',
+      ],
+      'export_dependent_settings': [
+        '<(DEPTH)/base/base.gyp:base',
       ],
       'include_dirs': [
         '<(DEPTH)',
