@@ -302,6 +302,9 @@
           '-fno-exceptions',
           '-Wall',
           '-D_FILE_OFFSET_BITS=64',
+          # We're building a shared module so everything needs -fPIC
+          # (at least on 64-bit builds)
+          '-fPIC',
         ],
         'cflags_cc': [
           '-fno-rtti',
@@ -475,17 +478,6 @@
           ['no_strict_aliasing==1', {
             'cflags': [
               '-fno-strict-aliasing',
-            ],
-          }],
-          ['library=="shared_library"', {
-            # When building with shared libraries, remove the visiblity-hiding
-            # flag.
-            'cflags!': [ '-fvisibility=hidden' ],
-            'conditions': [
-              ['target_arch=="x64" or target_arch=="arm"', {
-                # Shared libraries need -fPIC on x86-64 and arm
-                'cflags': ['-fPIC']
-              }]
             ],
           }],
         ],

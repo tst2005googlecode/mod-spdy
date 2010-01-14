@@ -38,18 +38,6 @@
               ],
             },
           }],
-          ['OS == "linux"', {
-            'ldflags': [
-              '-L<(apache_sdk_arch_root)/lib',
-            ],
-            'link_settings': {
-              'libraries': [
-                '-lapr-1',
-                '-laprutil-1',
-                '-lmain',
-              ],
-            },
-          }],
         ],
       },
     },

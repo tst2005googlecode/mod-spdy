@@ -88,6 +88,10 @@ void spdy_register_hook(apr_pool_t *p) {
 
 extern "C" {
 
+// Export our module so Apache is able to load us.
+// See http://gcc.gnu.org/wiki/Visibility for more information.
+#pragma GCC visibility push(default)
+
 module AP_MODULE_DECLARE_DATA spdy_module = {
     STANDARD20_MODULE_STUFF,
     NULL,               /* create per-directory config structure */
@@ -97,5 +101,7 @@ module AP_MODULE_DECLARE_DATA spdy_module = {
     NULL,               /* command apr_table_t */
     spdy_register_hook  /* register hooks */
 };
+
+#pragma GCC visibility pop
 
 }
