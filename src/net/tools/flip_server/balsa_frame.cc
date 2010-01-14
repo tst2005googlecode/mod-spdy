@@ -51,7 +51,7 @@ void BalsaFrame::Reset() {
   last_slash_n_idx_ = 0;
   term_chars_ = 0;
   parse_state_ = BalsaFrameEnums::READING_HEADER_AND_FIRSTLINE;
-  last_error_ = BalsaFrameEnums::NO_ERROR;
+  last_error_ = BalsaFrameEnums::BALSA_NO_ERROR;
   lines_.clear();
   if (headers_ != NULL) {
     headers_->Clear();
@@ -92,8 +92,8 @@ const char* BalsaFrameEnums::ParseStateToString(
 const char* BalsaFrameEnums::ErrorCodeToString(
     BalsaFrameEnums::ErrorCode error_code) {
   switch (error_code) {
-    case NO_ERROR:
-      return "NO_ERROR";
+    case BALSA_NO_ERROR:
+      return "BALSA_NO_ERROR";
     case NO_STATUS_LINE_IN_RESPONSE:
       return "NO_STATUS_LINE_IN_RESPONSE";
     case NO_REQUEST_LINE_IN_REQUEST:
@@ -1571,4 +1571,3 @@ const uint32 BalsaFrame::kValidTerm2;
 const uint32 BalsaFrame::kValidTerm2Mask;
 
 }  // namespace net
-

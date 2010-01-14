@@ -24,8 +24,8 @@ struct BalsaFrameEnums {
   };
 
   enum ErrorCode {
-    NO_ERROR = 0,  // A sentinel value for convenience, none of the callbacks
-    //                should ever see this error code.
+    BALSA_NO_ERROR = 0,  // A sentinel value for convenience, none of the
+    //                      callbacks should ever see this error code.
     // Header parsing errors
     // Note that adding one to many of the REQUEST errors yields the
     // appropriate RESPONSE error.
@@ -108,4 +108,3 @@ struct BalsaHeadersEnums {
 }  // namespace net
 
 #endif  // NET_TOOLS_FLIP_SERVER_BALSA_ENUMS_H_
-
