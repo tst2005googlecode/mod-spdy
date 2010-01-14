@@ -90,7 +90,9 @@ extern "C" {
 
 // Export our module so Apache is able to load us.
 // See http://gcc.gnu.org/wiki/Visibility for more information.
+#if defined(__linux)
 #pragma GCC visibility push(default)
+#endif
 
 module AP_MODULE_DECLARE_DATA spdy_module = {
     STANDARD20_MODULE_STUFF,
@@ -102,6 +104,8 @@ module AP_MODULE_DECLARE_DATA spdy_module = {
     spdy_register_hook  /* register hooks */
 };
 
+#if defined(__linux)
 #pragma GCC visibility pop
+#endif
 
 }
