@@ -20,6 +20,9 @@ extern "C" {
 #include "http_request.h"
 }
 
+#include "net/flip/flip_frame_builder.h"
+#include "net/flip/flip_framer.h"
+
 namespace {
 
 ap_filter_rec_t* g_spdy_output_filter;
@@ -49,6 +52,16 @@ apr_status_t spdy_output_filter(ap_filter_t *f,
   return ap_pass_brigade(f->next, bb);
 }
 
+apr_status_t FlipFramerDeleter(void* framer) {
+  delete static_cast<flip::FlipFramer*>(framer);
+  return APR_SUCCESS;
+}
+
+apr_status_t FlipFrameBuilderDeleter(void* builder) {
+  delete static_cast<flip::FlipFrameBuilder*>(builder);
+  return APR_SUCCESS;
+}
+
 /**
  * Invoked once per connection. See http_connection.h for details.
  */
@@ -59,10 +72,22 @@ int spdy_pre_connection_hook(conn_rec *c, void *csd) {
                 c,
                 "%ld Registering SPDY filters", c->id);
 
-  // TODO: define and initialize shared context.
-  void* context = NULL;
-  ap_add_input_filter_handle(g_spdy_input_filter, context, NULL, c);
-  ap_add_output_filter_handle(g_spdy_output_filter, context, NULL, c);
+  // Set up the input filter.
+  flip::FlipFramer *framer = new flip::FlipFramer();
+  apr_pool_cleanup_register(c->pool,
+                            framer,
+                            FlipFramerDeleter,
+                            apr_pool_cleanup_null);
+  ap_add_input_filter_handle(g_spdy_input_filter, framer, NULL, c);
+
+  // Set up the output filter.
+  flip::FlipFrameBuilder *builder = new flip::FlipFrameBuilder();
+  apr_pool_cleanup_register(c->pool,
+                            builder,
+                            FlipFrameBuilderDeleter,
+                            apr_pool_cleanup_null);
+  ap_add_output_filter_handle(g_spdy_output_filter, builder, NULL, c);
+
   return APR_SUCCESS;
 }
 
