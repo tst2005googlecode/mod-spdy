@@ -33,6 +33,7 @@
         '<(chromium_root)/base/platform_thread_win.cc',
         '<(chromium_root)/base/registry.cc',
         '<(chromium_root)/base/safe_strerror_posix.cc',
+        'stats_table.cc',
         '<(chromium_root)/base/string_piece.cc',
         'string_util.cc',
         '<(chromium_root)/base/string_util.h',
