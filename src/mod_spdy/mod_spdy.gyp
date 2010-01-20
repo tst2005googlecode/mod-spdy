@@ -46,7 +46,8 @@
       'type': 'loadable_module',
       'dependencies': [
         'apache_httpd',
-        '<(DEPTH)/net/net.gyp:flip_server_lib',
+        '<(DEPTH)/net/net.gyp:flip',
+        '<(DEPTH)/third_party/zlib/zlib.gyp:zlib',
       ],
       'include_dirs': [
         '<(DEPTH)',

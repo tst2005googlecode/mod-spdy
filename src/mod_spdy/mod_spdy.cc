@@ -1,3 +1,17 @@
+// Copyright 2010 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 extern "C" {
 #include "httpd.h"
 #include "http_connection.h"
@@ -5,8 +19,6 @@ extern "C" {
 #include "http_log.h"
 #include "http_request.h"
 }
-
-#include "net/tools/flip_server/balsa_headers.h"
 
 namespace {
 
@@ -20,14 +32,6 @@ void TRACE_FILTER(ap_filter_t *f, const char *msg) {
                 APR_SUCCESS,
                 f->c,
                 "%ld %s: %s", f->c->id, f->frec->name, msg);
-}
-
-/**
- * Runs once per request, once for each filter.
- */
-int spdy_init_filter(ap_filter_t *f) {
-  TRACE_FILTER(f, "Initializing");
-  return APR_SUCCESS;
 }
 
 apr_status_t spdy_input_filter(ap_filter_t *f,
@@ -67,8 +71,6 @@ const ap_filter_type kSpdyFilterType =
     static_cast<ap_filter_type>(AP_FTYPE_CONNECTION + 4);
 
 void spdy_register_hook(apr_pool_t *p) {
-  net::BalsaHeaders::Init();
-
   ap_hook_pre_connection(
       spdy_pre_connection_hook,
       NULL,
@@ -78,13 +80,13 @@ void spdy_register_hook(apr_pool_t *p) {
   g_spdy_input_filter = ap_register_input_filter(
       "SPDY-IN",
       spdy_input_filter,
-      spdy_init_filter,
+      NULL,
       kSpdyFilterType);
 
   g_spdy_output_filter = ap_register_output_filter(
       "SPDY-OUT",
       spdy_output_filter,
-      spdy_init_filter,
+      NULL,
       kSpdyFilterType);
 }
 
