@@ -13,40 +13,13 @@
 # limitations under the License.
 
 {
-  'variables': {
-    'apache_sdk_root': '<(DEPTH)/third_party/apache_httpd',
-    'apache_sdk_arch_root': '<(apache_sdk_root)/arch/<(OS)/<(target_arch)'
-  },
   'targets': [
-    {
-      'target_name': 'apache_httpd',
-      'type': 'none',
-      'direct_dependent_settings': {
-        'include_dirs': [
-          '<(apache_sdk_root)/include',
-          '<(apache_sdk_root)/arch/<(OS)/include',
-        ],
-        'conditions': [
-          ['OS == "win"', {
-            'link_settings': {
-              'libraries': [
-                '<(apache_sdk_arch_root)/lib/apr-1.lib',
-                '<(apache_sdk_arch_root)/lib/aprutil-1.lib',
-                '<(apache_sdk_arch_root)/lib/libapr-1.lib',
-                '<(apache_sdk_arch_root)/lib/libaprutil-1.lib',
-                '<(apache_sdk_arch_root)/lib/libhttpd.lib',
-              ],
-            },
-          }],
-        ],
-      },
-    },
     {
       'target_name': 'mod_spdy',
       'type': 'loadable_module',
       'dependencies': [
-        'apache_httpd',
         '<(DEPTH)/net/net.gyp:flip',
+        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
         '<(DEPTH)/third_party/zlib/zlib.gyp:zlib',
       ],
       'include_dirs': [

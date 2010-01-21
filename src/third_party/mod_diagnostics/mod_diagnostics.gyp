@@ -13,15 +13,23 @@
 # limitations under the License.
 
 {
+  'variables': {
+    'apache_sdk_root': '<(DEPTH)/third_party/apache_httpd',
+    'apache_sdk_arch_root': '<(apache_sdk_root)/arch/<(OS)/<(target_arch)'
+  },
   'targets': [
     {
-      'target_name': 'All',
-      'type': 'none',
-      'xcode_create_dependents_test_runner': 1,
+      'target_name': 'mod_diagnostics',
+      'type': 'loadable_module',
       'dependencies': [
-        '../base/base.gyp:*',
-        '../mod_spdy/mod_spdy.gyp:*',
-        '../net/net.gyp:*',
-        '../third_party/mod_diagnostics/mod_diagnostics.gyp:*',
-      ],} ]
+        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        'mod_diagnostics.c',
+      ],
+    },
+  ],
 }
