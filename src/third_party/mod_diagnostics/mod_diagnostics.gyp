@@ -13,10 +13,6 @@
 # limitations under the License.
 
 {
-  'variables': {
-    'apache_sdk_root': '<(DEPTH)/third_party/apache_httpd',
-    'apache_sdk_arch_root': '<(apache_sdk_root)/arch/<(OS)/<(target_arch)'
-  },
   'targets': [
     {
       'target_name': 'mod_diagnostics',
