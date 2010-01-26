@@ -104,6 +104,10 @@ class FlipFramer {
     visitor_ = visitor;
   }
 
+  size_t remaining_payload() {
+    return remaining_payload_;
+  }
+
   // Pass data into the framer for parsing.
   // Returns the number of bytes consumed. It is safe to pass more bytes in
   // than may be consumed.
@@ -257,4 +261,3 @@ class FlipFramer {
 }  // namespace flip
 
 #endif  // NET_FLIP_FLIP_FRAMER_H_
-
