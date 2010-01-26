@@ -12,6 +12,7 @@
       'type': '<(library)',
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/third_party/zlib/zlib.gyp:zlib',
       ],
       'export_dependent_settings': [
         '<(DEPTH)/base/base.gyp:base',
