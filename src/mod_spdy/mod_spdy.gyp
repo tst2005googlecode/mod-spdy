@@ -38,6 +38,7 @@
       'target_name': 'mod_spdy',
       'type': 'loadable_module',
       'dependencies': [
+        '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/net/net.gyp:flip',
         '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
       ],

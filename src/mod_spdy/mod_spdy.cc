@@ -23,6 +23,8 @@ extern "C" {
 #include "http_request.h"
 }
 
+#include "base/basictypes.h"
+#include "base/logging.h"
 #include "net/flip/flip_frame_builder.h"
 #include "net/flip/flip_framer.h"
 
@@ -35,6 +37,62 @@ namespace {
 // TAMB 2.2.1), and are read-only thereafter.
 ap_filter_rec_t* g_spdy_output_filter;
 ap_filter_rec_t* g_spdy_input_filter;
+
+/**
+ * Wrapper object that creates a new apr_pool_t and then destroys it when
+ * deleted (handy for creating a local apr_pool_t on the stack).
+ *
+ * Example usage:
+ *
+ *   apr_status_t SomeFunction() {
+ *     LocalPool local;
+ *     if (local.status() != APR_SUCCESS) {
+ *       return local.status();
+ *     }
+ *     char* buffer = apr_palloc(local.pool(), 1024);
+ *     // Do stuff with buffer; it will dealloc when we leave this scope.
+ *     return APR_SUCCESS;
+ *   }
+ */
+class LocalPool {
+ public:
+  LocalPool() : pool_(NULL), status_(apr_pool_create(&pool_, NULL)) {
+    DCHECK((pool_ == NULL) ^ (status_ == APR_SUCCESS));
+  }
+
+  ~LocalPool() {
+    if (pool_) {
+      DCHECK(status_ == APR_SUCCESS);
+      apr_pool_destroy(pool_);
+    }
+  }
+
+  apr_pool_t* pool() { return pool_; }
+  apr_status_t status() const { return status_; }
+
+ private:
+  apr_pool_t* pool_;
+  const apr_status_t status_;
+
+  DISALLOW_COPY_AND_ASSIGN(LocalPool);
+};
+
+// Helper function for PoolRegisterDelete.
+template <class T>
+apr_status_t DeletionFunction(void* object) {
+  delete static_cast<T*>(object);
+  return APR_SUCCESS;
+}
+
+// Register a C++ object to be deleted with a pool.
+template <class T>
+void PoolRegisterDelete(apr_pool_t* pool, T* object) {
+  // Note that the "child cleanup" argument below doesn't apply to us, so we
+  // use apr_pool_cleanup_null, which is a no-op cleanup function.
+  apr_pool_cleanup_register(pool, object,
+                            DeletionFunction<T>,  // cleanup function
+                            apr_pool_cleanup_null);  // child cleanup
+}
 
 // Helper that logs information associated with a filter.  Print the given
 // message, prepended with the connection ID and the filter name.
@@ -65,16 +123,6 @@ apr_status_t spdy_output_filter(ap_filter_t* f,
   return ap_pass_brigade(f->next, bb);
 }
 
-apr_status_t FlipFramerDeleter(void* framer) {
-  delete static_cast<flip::FlipFramer*>(framer);
-  return APR_SUCCESS;
-}
-
-apr_status_t FlipFrameBuilderDeleter(void* builder) {
-  delete static_cast<flip::FlipFrameBuilder*>(builder);
-  return APR_SUCCESS;
-}
-
 /**
  * Invoked once per connection. See http_connection.h for details.
  */
@@ -87,14 +135,9 @@ int spdy_pre_connection_hook(conn_rec* c, void* csd) {
 
   // Create a FlipFramer object to be used by our input filter, and register it
   // with the connection's pool so that it will be deallocated when this
-  // connection ends.  (Note that the "child cleanup" argument below doesn't
-  // apply to us, so we use apr_pool_cleanup_null, which is a no-op cleanup
-  // function.)
+  // connection ends.
   flip::FlipFramer *framer = new flip::FlipFramer();
-  apr_pool_cleanup_register(c->pool,                 // pool
-                            framer,                  // object
-                            FlipFramerDeleter,       // cleanup function
-                            apr_pool_cleanup_null);  // child cleanup
+  PoolRegisterDelete(c->pool, framer);
 
   // Add our input filter into the filter chain.  We use the FlipFramer as our
   // context object, so that our input filter will have access to it every time
@@ -109,10 +152,7 @@ int spdy_pre_connection_hook(conn_rec* c, void* csd) {
   // Now set up the output filter, analogously to the input filter.  The same
   // comments apply here as for the input filter above, so we will elide them.
   flip::FlipFrameBuilder *builder = new flip::FlipFrameBuilder();
-  apr_pool_cleanup_register(c->pool,
-                            builder,
-                            FlipFrameBuilderDeleter,
-                            apr_pool_cleanup_null);
+  PoolRegisterDelete(c->pool, builder);
   ap_add_output_filter_handle(g_spdy_output_filter, builder, NULL, c);
 
   // This hook should return OK (meaning we did something), DECLINED (meaning
