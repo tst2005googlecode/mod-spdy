@@ -50,9 +50,14 @@ void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
     CHECK(false);
     return;
   }
+
   CHECK(block.count(kMethod) == 1);
   CHECK(block.count(kUrl) == 1);
   CHECK(block.count(kVersion) == 1);
+
+  // Technically we should decode the URL into a path and a
+  // Host. Instead we pass the full URL on to the visitor and leave it
+  // up to the visitor to extract Host and path.
   visitor_->OnStatusLine(block[kMethod].c_str(),
                          block[kUrl].c_str(),
                          block[kVersion].c_str());
@@ -72,9 +77,11 @@ void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
     // Split header values on null characters, emitting a separate
     // header key-value pair for each substring. Logic from
     // net/flip/flip_session.cc
-    size_t start = 0;
-    size_t end = 0;
-    do {
+    for (size_t start = 0, end = 0; end != value.npos; start = end) {
+      start = value.find_first_not_of('\0', start);
+      if (start == value.npos) {
+        break;
+      }
       end = value.find('\0', start);
       std::string tval;
       if (end != value.npos) {
@@ -82,9 +89,8 @@ void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
       } else {
         tval = value.substr(start);
       }
-      visitor_->OnHeader(key.c_str(), value.c_str());
-      start = end + 1;
-    } while (end != value.npos);
+      visitor_->OnHeader(key.c_str(), tval.c_str());
+    }
   }
 
   visitor_->OnHeadersComplete();

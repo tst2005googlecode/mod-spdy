@@ -26,6 +26,7 @@ using testing::StrEq;
 const char *kMethod = "GET";
 const char *kUrl = "http://www.example.com/";
 const char *kVersion = "HTTP/1.1";
+const char kMultiValue[] = "this\0is\0\0\0four\0\0headers";
 
 class MockHttpStreamVisitor: public mod_spdy::HttpStreamVisitorInterface {
  public:
@@ -78,6 +79,16 @@ TEST(SpdyToHttpConverterTest, BasicSynFrame) {
   headers["version"] = kVersion;
   headers["foo"] = "bar";
   headers["flip"] = "spdy";
+
+  // Create a multi-valued header to verify that it's processed
+  // properly.
+  std::string multi_values(kMultiValue, sizeof(kMultiValue));
+  headers["multi"] = multi_values;
+
+  // Also make sure "junk" headers get skipped over.
+  headers["empty"] = std::string("\0\0\0", 3);
+  headers["empty2"] = "";
+
   scoped_ptr<flip::FlipSynStreamControlFrame> syn_frame(
       framer.CreateSynStream(1, 1, flip::CONTROL_FLAG_FIN, true, &headers));
 
@@ -85,12 +96,12 @@ TEST(SpdyToHttpConverterTest, BasicSynFrame) {
   // OnHeader() (the order of the calls to OnHeader() is
   // non-deterministic so we put each in its own Sequence), followed
   // by a final call to OnHeadersComplete().
-  Sequence s1, s2;
+  Sequence s1, s2, s3;
   EXPECT_CALL(visitor,
               OnStatusLine(StrEq(kMethod),
                            StrEq(kUrl),
                            StrEq(kVersion)))
-      .InSequence(s1, s2);
+      .InSequence(s1, s2, s3);
 
   EXPECT_CALL(visitor,
               OnHeader(StrEq("foo"),
@@ -102,7 +113,27 @@ TEST(SpdyToHttpConverterTest, BasicSynFrame) {
                        StrEq("spdy")))
       .InSequence(s2);
 
-  EXPECT_CALL(visitor, OnHeadersComplete()).InSequence(s1, s2);
+  EXPECT_CALL(visitor,
+              OnHeader(StrEq("multi"),
+                       StrEq("this")))
+      .InSequence(s3);
+
+  EXPECT_CALL(visitor,
+              OnHeader(StrEq("multi"),
+                       StrEq("is")))
+      .InSequence(s3);
+
+  EXPECT_CALL(visitor,
+              OnHeader(StrEq("multi"),
+                       StrEq("four")))
+      .InSequence(s3);
+
+  EXPECT_CALL(visitor,
+              OnHeader(StrEq("multi"),
+                       StrEq("headers")))
+      .InSequence(s3);
+
+  EXPECT_CALL(visitor, OnHeadersComplete()).InSequence(s1, s2, s3);
 
   // Trigger the calls to the mock object by passing the frame to the
   // converter.
