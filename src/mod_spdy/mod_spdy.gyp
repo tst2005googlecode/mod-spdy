@@ -15,18 +15,53 @@
 {
   'targets': [
     {
+      'target_name': 'spdy_common',
+      'type': '<(library)',
+      'dependencies': [
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/net/net.gyp:flip',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'export_dependent_settings': [
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/net/net.gyp:flip',
+      ],
+      'sources': [
+        'common/http_stream_visitor_interface.cc',
+        'common/input_stream_interface.cc',
+        'common/spdy_to_http_converter.cc',
+      ],
+    },
+    {
       'target_name': 'mod_spdy',
       'type': 'loadable_module',
       'dependencies': [
         '<(DEPTH)/net/net.gyp:flip',
         '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
-        '<(DEPTH)/third_party/zlib/zlib.gyp:zlib',
       ],
       'include_dirs': [
         '<(DEPTH)',
       ],
       'sources': [
         'mod_spdy.cc',
+      ],
+    },
+    {
+      'target_name': 'spdy_common_test',
+      'type': 'executable',
+      'dependencies': [
+        'spdy_common',
+        '<(DEPTH)/testing/gmock.gyp:gmock',
+        '<(DEPTH)/testing/gtest.gyp:gtest',
+        '<(DEPTH)/testing/gtest.gyp:gtestmain',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        'common/spdy_to_http_converter_test.cc',
       ],
     },
   ],
