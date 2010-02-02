@@ -229,8 +229,11 @@ size_t FlipFramer::ProcessCommonHeader(const char* data, size_t len) {
           visitor_->OnStreamFrameData(data_frame.stream_id(), NULL, 0);
         }
         CHANGE_STATE(FLIP_RESET);
+        break;
       }
-      break;
+      if (current_frame_len_ < FlipFrame::size()) {
+        break;
+      }
     }
     remaining_payload_ = current_frame.length();
     DCHECK_LE(remaining_payload_, 1000000u);  // Sanity!
@@ -373,7 +376,8 @@ size_t FlipFramer::ProcessDataFramePayload(const char* data, size_t len) {
         current_data_frame.flags() & DATA_FLAG_FIN)
       visitor_->OnStreamFrameData(current_data_frame.stream_id(), NULL,
                                   0);
-  } else {
+  }
+  if (remaining_payload_ == 0) {
     CHANGE_STATE(FLIP_AUTO_RESET);
   }
   return original_len - len;
@@ -629,8 +633,6 @@ bool FlipFramer::GetFrameBoundaries(const FlipFrame* frame,
     *payload_length = frame->length();
     *payload = frame->data() + FlipFrame::size();
   }
-  DCHECK(static_cast<size_t>(*header_length) <=
-      FlipFrame::size() + *payload_length);
   return true;
 }
 
@@ -773,4 +775,3 @@ void FlipFramer::set_enable_compression_default(bool value) {
 }
 
 }  // namespace flip
-

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "base/scoped_ptr.h"
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/flip/flip_framer.h"
