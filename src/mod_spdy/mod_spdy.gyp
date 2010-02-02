@@ -29,9 +29,11 @@
         '<(DEPTH)/net/net.gyp:flip',
       ],
       'sources': [
+        'common/connection_context.cc',
         'common/flip_frame_pump.cc',
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
+        'common/output_filter_context.cc',
         'common/spdy_to_http_converter.cc',
       ],
     },
