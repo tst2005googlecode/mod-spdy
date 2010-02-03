@@ -31,6 +31,7 @@
       'sources': [
         'common/connection_context.cc',
         'common/flip_frame_pump.cc',
+        'common/header_populator_interface.cc',
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
         'common/output_filter_context.cc',
@@ -54,9 +55,11 @@
         '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
       ],
       'sources': [
+        'apache/brigade_output_stream.cc',
         'apache/http_stream_accumulator.cc',
         'apache/input_filter_input_stream.cc',
         'apache/log_message_handler.cc',
+        'apache/response_header_populator.cc',
         'apache/spdy_input_filter.cc',
       ],
     },
@@ -90,6 +93,7 @@
       ],
       'sources': [
         'common/flip_frame_pump_test.cc',
+        'common/header_populator_interface_test.cc',
         'common/spdy_to_http_converter_test.cc',
       ],
     },

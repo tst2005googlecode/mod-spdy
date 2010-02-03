@@ -35,6 +35,11 @@ class HeaderPopulatorInterface {
   // Given an empty header table, populate it.
   virtual void Populate(flip::FlipHeaderBlock* headers) const = 0;
 
+  // Add a header to a header table, merging if necessary.
+  static void MergeInHeader(const std::string& key,
+                            const std::string& value,
+                            flip::FlipHeaderBlock* headers);
+
  private:
   DISALLOW_COPY_AND_ASSIGN(HeaderPopulatorInterface);
 };

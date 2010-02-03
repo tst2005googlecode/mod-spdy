@@ -15,13 +15,11 @@
 // References to "TAMB" below refer to _The Apache Modules Book_ by Nick Kew
 // (ISBN: 0-13-240967-4).
 
-extern "C" {
-#include "httpd.h"
-#include "http_connection.h"
-#include "http_config.h"
-#include "http_log.h"
-#include "http_request.h"
-}
+#include "third_party/apache_httpd/include/httpd.h"
+#include "third_party/apache_httpd/include/http_connection.h"
+#include "third_party/apache_httpd/include/http_config.h"
+#include "third_party/apache_httpd/include/http_log.h"
+#include "third_party/apache_httpd/include/http_request.h"
 
 #include "base/basictypes.h"
 #include "base/logging.h"
