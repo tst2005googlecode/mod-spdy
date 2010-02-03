@@ -112,6 +112,8 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
                   version,
                   kCRLF);
 
+  LOG(INFO) << method << " " << path << " " << version;
+
   CHECK(strlen(uri.hostname) > 0);
   OnHeader(kHost, uri.hostname);
 }
@@ -130,6 +132,8 @@ void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {
                   kHeaderSeparator,
                   value,
                   kCRLF);
+
+  LOG(INFO) << key << ": " << value;
 }
 
 void HttpStreamAccumulator::OnHeadersComplete() {
@@ -137,6 +141,8 @@ void HttpStreamAccumulator::OnHeadersComplete() {
                           apr_bucket_immortal_create(kCRLF,
                                                      kCRLFLen,
                                                      brigade_->bucket_alloc));
+
+  LOG(INFO) << "headers complete";
 }
 
 void HttpStreamAccumulator::OnBody(const char *data, size_t data_len) {

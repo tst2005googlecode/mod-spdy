@@ -30,6 +30,7 @@ extern "C" {
 
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
+#include "mod_spdy/apache/spdy_input_filter.h"
 
 namespace {
 
@@ -57,9 +58,10 @@ apr_status_t spdy_input_filter(ap_filter_t* f,
                                ap_input_mode_t mode,
                                apr_read_type_e block,
                                apr_off_t readbytes) {
-  // TODO: Implement this filter!
   TRACE_FILTER(f, "Input");
-  return ap_get_brigade(f->next, bb, mode, block, readbytes);
+  mod_spdy::SpdyInputFilter *filter =
+      static_cast<mod_spdy::SpdyInputFilter*>(f->ctx);
+  return filter->Read(f, bb, mode, block, readbytes);
 }
 
 // See TAMB 8.4.1
@@ -80,19 +82,20 @@ int spdy_pre_connection_hook(conn_rec* c, void* csd) {
                 c,             // connection
                 "%ld Registering SPDY filters", c->id);  // format and args
 
-  // Create a FlipFramer object to be used by our input filter, and register it
-  // with the connection's pool so that it will be deallocated when this
-  // connection ends.
-  flip::FlipFramer *framer = new flip::FlipFramer();
-  mod_spdy::PoolRegisterDelete(c->pool, framer);
+  // Create a SpdyInputFilter object to be used by our input filter,
+  // and register it with the connection's pool so that it will be
+  // deallocated when this connection ends.
+  mod_spdy::SpdyInputFilter *filter = new mod_spdy::SpdyInputFilter(c);
+  mod_spdy::PoolRegisterDelete(c->pool, filter);
 
-  // Add our input filter into the filter chain.  We use the FlipFramer as our
-  // context object, so that our input filter will have access to it every time
-  // it runs.  The position of our filter in the chain is (partially)
-  // determined by the filter type, which is specified when our filter handle
-  // is created below in the spdy_register_hook function.
+  // Add our input filter into the filter chain.  We use the
+  // SpdyInputFilter as our context object, so that our input filter
+  // will have access to it every time it runs.  The position of our
+  // filter in the chain is (partially) determined by the filter type,
+  // which is specified when our filter handle is created below in the
+  // spdy_register_hook function.
   ap_add_input_filter_handle(g_spdy_input_filter,  // filter handle
-                             framer,  // context object (any void* we want)
+                             filter,  // context object (any void* we want)
                              NULL,    // request object (n/a for a conn filter)
                              c);      // connection object
 

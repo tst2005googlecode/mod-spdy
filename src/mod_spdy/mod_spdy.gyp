@@ -57,6 +57,7 @@
         'apache/http_stream_accumulator.cc',
         'apache/input_filter_input_stream.cc',
         'apache/log_message_handler.cc',
+        'apache/spdy_input_filter.cc',
       ],
     },
     {
