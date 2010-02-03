@@ -38,6 +38,26 @@
       ],
     },
     {
+      'target_name': 'spdy_apache',
+      'type': '<(library)',
+      'dependencies': [
+        'spdy_common',
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'export_dependent_settings': [
+        'spdy_common',
+        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+      ],
+      'sources': [
+        'apache/http_stream_accumulator.cc',
+        'apache/input_filter_input_stream.cc',
+      ],
+    },
+    {
       'target_name': 'mod_spdy',
       'type': 'loadable_module',
       'dependencies': [
