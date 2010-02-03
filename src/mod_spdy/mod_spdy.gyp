@@ -50,17 +50,20 @@
       ],
       'export_dependent_settings': [
         'spdy_common',
+        '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
       ],
       'sources': [
         'apache/http_stream_accumulator.cc',
         'apache/input_filter_input_stream.cc',
+        'apache/log_message_handler.cc',
       ],
     },
     {
       'target_name': 'mod_spdy',
       'type': 'loadable_module',
       'dependencies': [
+        'spdy_apache',
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/net/net.gyp:flip',
         '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
