@@ -73,7 +73,8 @@ class SpdyFrameSender {
 }  // namespace
 
 OutputFilterContext::OutputFilterContext(ConnectionContext* conn_context)
-    : conn_context_(conn_context) {}
+    : conn_context_(conn_context),
+      headers_have_been_sent_(false) {}
 
 OutputFilterContext::~OutputFilterContext() {}
 
@@ -83,6 +84,7 @@ bool OutputFilterContext::SendHeaders(
     OutputStreamInterface* output_stream) {
   // TODO: Don't hardcode stream ID to 1.  We probably need to get the stream
   //       ID from the shared connection context somehow.
+  headers_have_been_sent_ = true;
   SpdyFrameSender sender(1, conn_context_->output_framer(), output_stream);
   flip::FlipHeaderBlock headers;
   populator.Populate(&headers);

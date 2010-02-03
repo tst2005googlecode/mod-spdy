@@ -21,14 +21,18 @@
 #include "third_party/apache_httpd/include/http_log.h"
 #include "third_party/apache_httpd/include/http_request.h"
 
-#include "base/basictypes.h"
-#include "base/logging.h"
-#include "net/flip/flip_frame_builder.h"
-#include "net/flip/flip_framer.h"
-
+#include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
+#include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/apache/spdy_input_filter.h"
+#include "mod_spdy/apache/spdy_output_filter.h"
+#include "mod_spdy/common/connection_context.h"
+
+extern "C" {
+  // Forward declaration for the sake of ap_get_module_config and friends.
+  extern module AP_MODULE_DECLARE_DATA spdy_module;
+}
 
 namespace {
 
@@ -51,40 +55,82 @@ void TRACE_FILTER(ap_filter_t* f, const char* msg) {
 }
 
 // See TAMB 8.4.2
-apr_status_t spdy_input_filter(ap_filter_t* f,
+apr_status_t spdy_input_filter(ap_filter_t* filter,
                                apr_bucket_brigade* bb,
                                ap_input_mode_t mode,
                                apr_read_type_e block,
                                apr_off_t readbytes) {
-  TRACE_FILTER(f, "Input");
-  mod_spdy::SpdyInputFilter *filter =
-      static_cast<mod_spdy::SpdyInputFilter*>(f->ctx);
-  return filter->Read(f, bb, mode, block, readbytes);
+  TRACE_FILTER(filter, "Input");
+  mod_spdy::SpdyInputFilter* input_filter =
+      static_cast<mod_spdy::SpdyInputFilter*>(filter->ctx);
+  return input_filter->Read(filter, bb, mode, block, readbytes);
 }
 
 // See TAMB 8.4.1
-apr_status_t spdy_output_filter(ap_filter_t* f,
-                                apr_bucket_brigade* bb) {
-  // TODO: Implement this filter!
-  TRACE_FILTER(f, "Output");
-  return ap_pass_brigade(f->next, bb);
+apr_status_t spdy_output_filter(ap_filter_t* filter,
+                                apr_bucket_brigade* input_brigade) {
+  TRACE_FILTER(filter, "Output");
+  mod_spdy::SpdyOutputFilter* output_filter =
+      static_cast<mod_spdy::SpdyOutputFilter*>(filter->ctx);
+  return output_filter->Write(filter, input_brigade);
+}
+
+// Invoked once per request.  See http_request.h for details.
+void spdy_insert_filter_hook(request_rec* request) {
+  conn_rec* connection = request->connection;
+
+  // Get the shared context object for this connection.  This object is created
+  // and attached to the connection's configuration vector in the
+  // spdy_pre_connection_hook function.
+  mod_spdy::ConnectionContext* conn_context =
+      static_cast<mod_spdy::ConnectionContext*>(ap_get_module_config(
+          connection->conn_config,  // configuration vector to get from
+          &spdy_module));  // module with which desired object is associated
+
+  if (conn_context == NULL) {
+    ap_log_rerror(APLOG_MARK, APLOG_WARNING, APR_SUCCESS, request,
+                  "No connection context present for mod_spdy");
+    return;
+  }
+
+  // Create a context object for this request's output filter.
+  mod_spdy::SpdyOutputFilter* output_filter =
+      new mod_spdy::SpdyOutputFilter(conn_context);
+  PoolRegisterDelete(request->pool, output_filter);
+
+  // Insert the output filter into this request's filter chain.
+  ap_add_output_filter_handle(g_spdy_output_filter,  // filter handle
+                              output_filter,  // context (any void* we want)
+                              request,        // request object
+                              connection);    // connection object
 }
 
 /**
  * Invoked once per connection. See http_connection.h for details.
  */
-int spdy_pre_connection_hook(conn_rec* c, void* csd) {
-  ap_log_cerror(APLOG_MARK,    // file/line
-                APLOG_NOTICE,  // level
-                APR_SUCCESS,   // status
-                c,             // connection
-                "%ld Registering SPDY filters", c->id);  // format and args
+int spdy_pre_connection_hook(conn_rec* connection, void* csd) {
+  ap_log_cerror(APLOG_MARK, APLOG_NOTICE, APR_SUCCESS, connection,
+                "%ld Registering SPDY filters", connection->id);
+
+  // Create a shared context object for this connection; this object will be
+  // used by both our input filter and our output filter.
+  mod_spdy::ConnectionContext* context =
+      new mod_spdy::ConnectionContext();
+  PoolRegisterDelete(connection->pool, context);
+
+  // Place the context object in the connection's configuration vector, so that
+  // other hook functions with access to this connection can get hold of the
+  // context object.  See TAMB 4.2 for details.
+  ap_set_module_config(connection->conn_config,  // configuration vector
+                       &spdy_module,  // module with which to associate
+                       context);      // pointer to store (any void* we want)
 
   // Create a SpdyInputFilter object to be used by our input filter,
   // and register it with the connection's pool so that it will be
   // deallocated when this connection ends.
-  mod_spdy::SpdyInputFilter *filter = new mod_spdy::SpdyInputFilter(c);
-  mod_spdy::PoolRegisterDelete(c->pool, filter);
+  mod_spdy::SpdyInputFilter *input_filter =
+      new mod_spdy::SpdyInputFilter(connection);
+  mod_spdy::PoolRegisterDelete(connection->pool, input_filter);
 
   // Add our input filter into the filter chain.  We use the
   // SpdyInputFilter as our context object, so that our input filter
@@ -93,15 +139,9 @@ int spdy_pre_connection_hook(conn_rec* c, void* csd) {
   // which is specified when our filter handle is created below in the
   // spdy_register_hook function.
   ap_add_input_filter_handle(g_spdy_input_filter,  // filter handle
-                             filter,  // context object (any void* we want)
-                             NULL,    // request object (n/a for a conn filter)
-                             c);      // connection object
-
-  // Now set up the output filter, analogously to the input filter.  The same
-  // comments apply here as for the input filter above, so we will elide them.
-  flip::FlipFrameBuilder *builder = new flip::FlipFrameBuilder();
-  mod_spdy::PoolRegisterDelete(c->pool, builder);
-  ap_add_output_filter_handle(g_spdy_output_filter, builder, NULL, c);
+                             input_filter,  // context (any void* we want)
+                             NULL,  // request object (n/a for a conn filter)
+                             connection);  // connection object
 
   // This hook should return OK (meaning we did something), DECLINED (meaning
   // we did nothing), or some error code (meaning something went wrong).  In
@@ -111,16 +151,18 @@ int spdy_pre_connection_hook(conn_rec* c, void* csd) {
   return OK;
 }
 
-// mod_ssl is AP_FTYPE_CONNECTION + 5.  We want to hook right before mod_ssl on
-// output (right after mod_ssl on input).
-const ap_filter_type kSpdyFilterType =
+// mod_ssl is AP_FTYPE_CONNECTION + 5.  We want to hook right after mod_ssl on
+// input.
+const ap_filter_type kSpdyInputFilterType =
     static_cast<ap_filter_type>(AP_FTYPE_CONNECTION + 4);
+
+const ap_filter_type kSpdyOutputFilterType = AP_FTYPE_TRANSCODE;
 
 void spdy_register_hook(apr_pool_t* p) {
   mod_spdy::InstallLogMessageHandler();
 
-  // Register a hook to be called for each new connection.  Our hook will
-  // install our input and output filters into the filter chain for that
+  // Register a hook to be called for each new connection.  This hook will
+  // set up a shared context object and install our input filter for that
   // connection.  The "predecessors" and "successors" arguments can be used to
   // specify particular modules that must run before/after this one (see
   // http://httpd.apache.org/docs/2.0/developer/hooks.html#hooking-order),
@@ -132,19 +174,36 @@ void spdy_register_hook(apr_pool_t* p) {
       NULL,                      // successors
       APR_HOOK_MIDDLE);          // position
 
+  // Register a hook to be called when adding filters for each new request.
+  // This hook will insert our output filter.
+  ap_hook_insert_filter(
+      spdy_insert_filter_hook,   // hook function to be called
+      NULL,                      // predecessors
+      NULL,                      // successors
+      APR_HOOK_MIDDLE);          // position
+
   // Register our input filter, and store the filter handle into a global
   // variable so we can use it later to instantiate our filter into a filter
   // chain.  The "filter type" argument below determines where in the filter
   // chain our filter will be placed.
   g_spdy_input_filter = ap_register_input_filter(
-      "SPDY-IN",          // name
-      spdy_input_filter,  // filter function
-      NULL,               // init function (n/a in our case)
-      kSpdyFilterType);   // filter type
+      "SPDY-IN",              // name
+      spdy_input_filter,      // filter function
+      NULL,                   // init function (n/a in our case)
+      kSpdyInputFilterType);  // filter type
 
   // Now register our output filter, analogously to the input filter above.
+  // Using AP_FTYPE_TRANSCODE allows us to convert from HTTP to SPDY at the end
+  // of the protocol phase, so that we still have access to the HTTP headers as
+  // a data structure (rather than raw bytes).  Filters that run after
+  // TRANSCODE are connection filters, which are supposed to be oblivious to
+  // HTTP (and thus shouldn't break when run on SPDY data).  See TAMB 8.2 for a
+  // summary of the different filter types.
   g_spdy_output_filter = ap_register_output_filter(
-      "SPDY-OUT", spdy_output_filter, NULL, kSpdyFilterType);
+      "SPDY-OUT",              // name
+      spdy_output_filter,      // filter function
+      NULL,                    // init function (n/a in our case)
+      kSpdyOutputFilterType);  // filter type
 }
 
 }  // namespace

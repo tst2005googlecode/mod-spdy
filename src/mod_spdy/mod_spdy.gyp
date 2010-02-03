@@ -61,6 +61,7 @@
         'apache/log_message_handler.cc',
         'apache/response_header_populator.cc',
         'apache/spdy_input_filter.cc',
+        'apache/spdy_output_filter.cc',
       ],
     },
     {

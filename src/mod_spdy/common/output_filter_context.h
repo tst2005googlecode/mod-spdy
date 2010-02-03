@@ -54,8 +54,14 @@ class OutputFilterContext {
                 bool is_end_of_stream,
                 mod_spdy::OutputStreamInterface* output_stream);
 
+  /**
+   * @return true iff SendHeaders has been called before
+   */
+  bool headers_have_been_sent() const { return headers_have_been_sent_; }
+
  private:
   ConnectionContext* const conn_context_;  // non-owning pointer
+  bool headers_have_been_sent_;
 
   DISALLOW_COPY_AND_ASSIGN(OutputFilterContext);
 };
