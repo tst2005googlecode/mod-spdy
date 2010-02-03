@@ -26,7 +26,8 @@ class HttpStreamVisitorInterface;
 // HttpStreamVisitorInterface.
 class SpdyToHttpConverter : public flip::FlipFramerVisitorInterface {
  public:
-  explicit SpdyToHttpConverter(HttpStreamVisitorInterface *visitor);
+  SpdyToHttpConverter(flip::FlipFramer *framer,
+                      HttpStreamVisitorInterface *visitor);
   virtual ~SpdyToHttpConverter();
 
   virtual void OnError(flip::FlipFramer *framer);
@@ -35,6 +36,7 @@ class SpdyToHttpConverter : public flip::FlipFramerVisitorInterface {
                                  const char *data,
                                  size_t len);
  private:
+  flip::FlipFramer *const framer_;
   HttpStreamVisitorInterface *const visitor_;
 };
 

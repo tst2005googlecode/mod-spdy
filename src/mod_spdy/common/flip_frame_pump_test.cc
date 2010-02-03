@@ -83,7 +83,9 @@ void MockInputStream::AssertFrameEq(
 TEST(FlipFramePumpTest, EmptyDataInputStream) {
   MockInputStream input;
   MockFlipFramerVisitor visitor;
-  mod_spdy::FlipFramePump pump(&input, &visitor);
+  flip::FlipFramer consumer_framer;
+  consumer_framer.set_visitor(&visitor);
+  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
 
   int num_attempts = 100;
   EXPECT_CALL(input,
@@ -107,12 +109,15 @@ TEST(FlipFramePumpTest, OneSynFrame) {
 
   MockInputStream input;
   MockFlipFramerVisitor visitor;
-  mod_spdy::FlipFramePump pump(&input, &visitor);
+  flip::FlipFramer consumer_framer;
+  consumer_framer.set_visitor(&visitor);
+  flip::FlipFramer generator_framer;
+  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
 
-  flip::FlipFramer framer;
   flip::FlipHeaderBlock headers;
   scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame(
-      framer.CreateSynStream(1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+      generator_framer.CreateSynStream(
+          1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
 
   const size_t syn_frame_size =
       flip::FlipFrame::size() + syn_stream_frame->length();
@@ -181,12 +186,15 @@ TEST(FlipFramePumpTest, OneSynFrameTrickle) {
 
   MockInputStream input;
   MockFlipFramerVisitor visitor;
-  mod_spdy::FlipFramePump pump(&input, &visitor);
+  flip::FlipFramer consumer_framer;
+  consumer_framer.set_visitor(&visitor);
+  flip::FlipFramer generator_framer;
+  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
 
-  flip::FlipFramer framer;
   flip::FlipHeaderBlock headers;
   scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame(
-      framer.CreateSynStream(1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+      generator_framer.CreateSynStream(
+          1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
 
   const size_t syn_frame_size =
       flip::FlipFrame::size() + syn_stream_frame->length();
@@ -269,12 +277,15 @@ TEST(FlipFramePumpTest, OneDataFrame) {
 
   MockInputStream input;
   MockFlipFramerVisitor visitor;
-  mod_spdy::FlipFramePump pump(&input, &visitor);
+  flip::FlipFramer consumer_framer;
+  consumer_framer.set_visitor(&visitor);
+  flip::FlipFramer generator_framer;
+  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
 
-  flip::FlipFramer framer;
   flip::FlipHeaderBlock headers;
   scoped_ptr<flip::FlipDataFrame> data_frame(
-      framer.CreateDataFrame(1, kData, sizeof(kData), flip::DATA_FLAG_NONE));
+      generator_framer.CreateDataFrame(
+          1, kData, sizeof(kData), flip::DATA_FLAG_NONE));
 
   const size_t data_frame_size =
       flip::FlipFrame::size() + data_frame->length();

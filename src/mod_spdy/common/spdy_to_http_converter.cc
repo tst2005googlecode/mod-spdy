@@ -26,8 +26,9 @@ const char *kVersion = "version";
 
 namespace mod_spdy {
 
-SpdyToHttpConverter::SpdyToHttpConverter(HttpStreamVisitorInterface *visitor)
-    : visitor_(visitor) {
+SpdyToHttpConverter::SpdyToHttpConverter(flip::FlipFramer *framer,
+                                         HttpStreamVisitorInterface *visitor)
+    : framer_(framer), visitor_(visitor) {
 }
 
 SpdyToHttpConverter::~SpdyToHttpConverter() {}
@@ -44,8 +45,7 @@ void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
   CHECK(frame->flags() & flip::CONTROL_FLAG_FIN);
 
   flip::FlipHeaderBlock block;
-  flip::FlipFramer framer;
-  if (!framer.ParseHeaderBlock(frame, &block)) {
+  if (!framer_->ParseHeaderBlock(frame, &block)) {
     // TODO: handle this case
     CHECK(false);
     return;

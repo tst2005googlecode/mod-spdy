@@ -21,7 +21,6 @@
 
 namespace flip {
 class FlipFramer;
-class FlipFramerVisitorInterface;
 }  // namespace flip
 
 namespace mod_spdy {
@@ -38,8 +37,7 @@ class InputStreamInterface;
 // more.
 class FlipFramePump {
  public:
-  FlipFramePump(InputStreamInterface *input,
-                flip::FlipFramerVisitorInterface *visitor);
+  FlipFramePump(InputStreamInterface *input, flip::FlipFramer *framer);
   ~FlipFramePump();
 
   // Pump a single flip frame through the FlipFramer.
@@ -53,8 +51,7 @@ class FlipFramePump {
   bool PumpAtMost(size_t num_bytes);
 
   InputStreamInterface *const input_;
-  flip::FlipFramerVisitorInterface *const visitor_;
-  scoped_ptr<flip::FlipFramer> framer_;
+  flip::FlipFramer *const framer_;
   scoped_array<char> buf_;
   size_t frame_bytes_consumed_;
 };

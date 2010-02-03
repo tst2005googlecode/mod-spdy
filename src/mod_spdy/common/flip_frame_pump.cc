@@ -25,13 +25,11 @@ const size_t kBufSize = 4096;
 namespace mod_spdy {
 
 FlipFramePump::FlipFramePump(InputStreamInterface *input,
-                             flip::FlipFramerVisitorInterface *visitor)
+                             flip::FlipFramer *framer)
     : input_(input),
-      visitor_(visitor),
-      framer_(new flip::FlipFramer()),
+      framer_(framer),
       buf_(new char[kBufSize]),
       frame_bytes_consumed_(0) {
-  framer_->set_visitor(visitor_);
 }
 
 FlipFramePump::~FlipFramePump() {

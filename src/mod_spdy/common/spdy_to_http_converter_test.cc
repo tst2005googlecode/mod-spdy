@@ -21,6 +21,7 @@
 
 namespace {
 
+using testing::InSequence;
 using testing::Sequence;
 using testing::StrEq;
 
@@ -39,41 +40,82 @@ class MockHttpStreamVisitor: public mod_spdy::HttpStreamVisitorInterface {
 
 // Make it clear that we do not currently handle most callbacks.
 TEST(SpdyToHttpConverterTest, UnsupportedCallbacks) {
-  mod_spdy::SpdyToHttpConverter converter(NULL);
+  flip::FlipFramer framer;
+  mod_spdy::SpdyToHttpConverter converter(&framer, NULL);
   EXPECT_DEATH(converter.OnError(NULL), "");
   EXPECT_DEATH(converter.OnStreamFrameData(1, NULL, 0), "");
 }
 
 // We also don't currently support most control frames.
 TEST(SpdyToHttpConverterTest, UnsupportedControlFrames) {
-  mod_spdy::SpdyToHttpConverter converter(NULL);
-  flip::FlipFramer framer;
+  flip::FlipFramer converter_framer;
+  flip::FlipFramer generator_framer;
+  mod_spdy::SpdyToHttpConverter converter(&converter_framer, NULL);
   flip::FlipHeaderBlock headers;
 
   // We don't handle syn stream unless it has CONTROL_FLAG_FIN set.
   scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame(
-      framer.CreateSynStream(1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+      generator_framer.CreateSynStream(
+          1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
   EXPECT_DEATH(converter.OnControl(syn_stream_frame.get()), "");
 
   // We don't handle syn reply.
   scoped_ptr<flip::FlipSynReplyControlFrame> syn_reply_frame(
-      framer.CreateSynReply(1, flip::CONTROL_FLAG_NONE, true, &headers));
+      generator_framer.CreateSynReply(
+          1, flip::CONTROL_FLAG_NONE, true, &headers));
   EXPECT_DEATH(converter.OnControl(syn_reply_frame.get()), "");
 
   // We don't handle fin stream.
   scoped_ptr<flip::FlipFinStreamControlFrame> fin_stream_frame(
-      framer.CreateFinStream(1, 0));
+      generator_framer.CreateFinStream(1, 0));
   EXPECT_DEATH(converter.OnControl(fin_stream_frame.get()), "");
 
   // We don't handle nop.
-  scoped_ptr<flip::FlipControlFrame> nop_frame(framer.CreateNopFrame());
+  scoped_ptr<flip::FlipControlFrame> nop_frame(
+      generator_framer.CreateNopFrame());
   EXPECT_DEATH(converter.OnControl(nop_frame.get()), "");
 }
 
-TEST(SpdyToHttpConverterTest, BasicSynFrame) {
+// Send multiple SYN frames through the converter, to exercise the
+// inter-frame compression context.
+TEST(SpdyToHttpConverterTest, MultipleSynFrames) {
+  InSequence seq;
+
   MockHttpStreamVisitor visitor;
-  mod_spdy::SpdyToHttpConverter converter(&visitor);
-  flip::FlipFramer framer;
+  flip::FlipFramer converter_framer;
+  flip::FlipFramer generator_framer;
+  mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
+
+  flip::FlipHeaderBlock headers;
+  headers["method"] = kMethod;
+  headers["url"] = kUrl;
+  headers["version"] = kVersion;
+
+  for (int i = 0; i < 10; ++i) {
+    scoped_ptr<flip::FlipSynStreamControlFrame> syn_frame(
+        generator_framer.CreateSynStream(
+            i, 1, flip::CONTROL_FLAG_FIN, true, &headers));
+
+    EXPECT_CALL(visitor,
+                OnStatusLine(StrEq(kMethod),
+                             StrEq(kUrl),
+                             StrEq(kVersion)));
+
+    EXPECT_CALL(visitor, OnHeadersComplete());
+
+    // Trigger the calls to the mock object by passing the frame to the
+    // converter.
+    converter.OnControl(syn_frame.get());
+
+    testing::Mock::VerifyAndClearExpectations(&visitor);
+  }
+}
+
+TEST(SpdyToHttpConverterTest, SynFrameWithHeaders) {
+  MockHttpStreamVisitor visitor;
+  flip::FlipFramer converter_framer;
+  flip::FlipFramer generator_framer;
+  mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
   flip::FlipHeaderBlock headers;
   headers["method"] = kMethod;
   headers["url"] = kUrl;
@@ -91,7 +133,8 @@ TEST(SpdyToHttpConverterTest, BasicSynFrame) {
   headers["empty2"] = "";
 
   scoped_ptr<flip::FlipSynStreamControlFrame> syn_frame(
-      framer.CreateSynStream(1, 1, flip::CONTROL_FLAG_FIN, true, &headers));
+      generator_framer.CreateSynStream(
+          1, 1, flip::CONTROL_FLAG_FIN, true, &headers));
 
   // We expect a call to OnStatusLine(), followed by two calls to
   // OnHeader() (the order of the calls to OnHeader() is
