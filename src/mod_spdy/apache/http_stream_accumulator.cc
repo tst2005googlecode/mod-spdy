@@ -156,19 +156,46 @@ apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
                                          ap_input_mode_t mode,
                                          apr_read_type_e block,
                                          apr_off_t readbytes) {
-  if (IsEmpty()) {
-    return APR_EOF;
+  // From ap_core_input_filter().
+  if (mode == AP_MODE_INIT) {
+    return APR_SUCCESS;
   }
+
+  if (IsEmpty()) {
+    if (mode == AP_MODE_READBYTES ||
+        mode == AP_MODE_GETLINE) {
+      if (block == APR_NONBLOCK_READ) {
+        return APR_EAGAIN;
+      } else {
+        return APR_EOF;
+      }
+    }
+  }
+
   apr_status_t rv = APR_SUCCESS;
   apr_bucket *extra = NULL;
   switch(mode) {
     case AP_MODE_GETLINE:
+      // ap_core_input_filter maps APR_EAGAIN to APR_SUCCESS in this
+      // mode, so we don't have to do anything special here since we
+      // expect this method to return APR_SUCCESS (see comment below).
       rv = apr_brigade_split_line(dest, brigade_, block, HUGE_STRING_LEN);
+
+      // apr_brigade_split_line only returns non-APR_SUCCESS if a
+      // bucket read fails, so this should only return APR_SUCCESS
+      // since we only use HEAP buckets, and reading from HEAP buckets
+      // should never fail.
+      CHECK(rv == APR_SUCCESS);
       break;
 
     case AP_MODE_READBYTES:
       rv = apr_brigade_partition(brigade_, readbytes, &extra);
-      if (rv != APR_SUCCESS) {
+      if (rv == APR_INCOMPLETE) {
+        // If readbytes is greater than the number of bytes in the
+        // brigade_, we get APR_INCOMPLETE. Map that to APR_SUCCESS
+        // since ap_core_input_filter() doesn't return APR_INCOMPLETE.
+        rv = APR_SUCCESS;
+      } else if (rv != APR_SUCCESS) {
         return rv;
       }
       APR_BRIGADE_CONCAT(dest, brigade_);
@@ -180,6 +207,13 @@ apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
     case AP_MODE_EATCRLF:
       // TODO: Strip leading CRLF pairs from the input see
       // core_filters.c for impl idea.
+
+      // In this case, ap_core_input_filter() will return the status
+      // code from the call to apr_bucket_read(), which is APR_EAGAIN
+      // in non-blocking mode, so we do the same.
+      if (block == APR_NONBLOCK_READ) {
+        rv = APR_EAGAIN;
+      }
       break;
 
     default:

@@ -60,13 +60,13 @@ apr_status_t SpdyInputFilter::Read(ap_filter_t *filter,
     // not alway succeed; if there is no data available from the next
     // filter (e.g. no data to be read from the socket) then the
     // accumulator will not be populated with new data.
-    input_->set_filter(filter);
+    input_->set_filter(filter, block);
     pump_->PumpOneFrame();
-    input_->set_filter(NULL);
+    input_->clear_filter();
   }
 
   apr_status_t rv = http_accumulator_->Read(brigade, mode, block, readbytes);
-  if (http_accumulator_->IsEmpty()) {
+  if (rv == APR_SUCCESS && http_accumulator_->IsEmpty()) {
     // TODO: not sure this CHECK is always valid. If there's data in the
     // input then we need to pump another frame until we can satisfy the
     // request.

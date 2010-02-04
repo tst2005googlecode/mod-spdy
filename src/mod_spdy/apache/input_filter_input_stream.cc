@@ -25,6 +25,7 @@ InputFilterInputStream::InputFilterInputStream(apr_pool_t *pool,
     : filter_(NULL),
       brigade_(apr_brigade_create(pool, bucket_alloc)),
       tmp_brigade_(apr_brigade_create(pool, bucket_alloc)),
+      block_(APR_NONBLOCK_READ),
       next_filter_rv_(APR_SUCCESS) {
 }
 

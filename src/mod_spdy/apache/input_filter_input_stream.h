@@ -31,8 +31,14 @@ class InputFilterInputStream : public InputStreamInterface {
 
   virtual size_t Read(char *data, size_t data_len);
 
-  void set_filter(ap_filter_t *filter) {
+  void set_filter(ap_filter_t *filter, apr_read_type_e block) {
     filter_ = filter;
+    block_ = block;
+  }
+
+  void clear_filter() {
+    filter_ = NULL;
+    block_ = APR_NONBLOCK_READ;
   }
 
   apr_status_t next_filter_rv() const { return next_filter_rv_; }
@@ -47,6 +53,7 @@ class InputFilterInputStream : public InputStreamInterface {
   ap_filter_t *filter_;
   apr_bucket_brigade *brigade_;
   apr_bucket_brigade *tmp_brigade_;
+  apr_read_type_e block_;
   apr_status_t next_filter_rv_;
 };
 
