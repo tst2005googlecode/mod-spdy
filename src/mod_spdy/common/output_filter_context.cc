@@ -79,25 +79,25 @@ OutputFilterContext::OutputFilterContext(ConnectionContext* conn_context)
 OutputFilterContext::~OutputFilterContext() {}
 
 bool OutputFilterContext::SendHeaders(
+    flip::FlipStreamId stream_id,
     const HeaderPopulatorInterface& populator,
     bool is_end_of_stream,
     OutputStreamInterface* output_stream) {
-  // TODO: Don't hardcode stream ID to 1.  We probably need to get the stream
-  //       ID from the shared connection context somehow.
   headers_have_been_sent_ = true;
-  SpdyFrameSender sender(1, conn_context_->output_framer(), output_stream);
+  SpdyFrameSender sender(stream_id, conn_context_->output_framer(),
+                         output_stream);
   flip::FlipHeaderBlock headers;
   populator.Populate(&headers);
   return sender.SendSynReplyFrame(&headers, is_end_of_stream);
 }
 
-bool OutputFilterContext::SendData(const char* input_data,
+bool OutputFilterContext::SendData(flip::FlipStreamId stream_id,
+                                   const char* input_data,
                                    size_t input_size,
                                    bool is_end_of_stream,
                                    OutputStreamInterface* output_stream) {
-  // TODO: Don't hardcode stream ID to 1.  We probably need to get the stream
-  //       ID from the shared connection context somehow.
-  SpdyFrameSender sender(1, conn_context_->output_framer(), output_stream);
+  SpdyFrameSender sender(stream_id, conn_context_->output_framer(),
+                         output_stream);
   return sender.SendDataFrame(input_data, input_size, is_end_of_stream);
 }
 

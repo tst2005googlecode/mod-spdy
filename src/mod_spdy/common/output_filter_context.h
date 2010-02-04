@@ -17,6 +17,10 @@
 
 #include "base/basictypes.h"
 
+namespace flip {
+typedef uint32 FlipStreamId;
+} // namespace
+
 namespace mod_spdy {
 
 class HeaderPopulatorInterface;
@@ -32,25 +36,29 @@ class OutputFilterContext {
   /**
    * Convert HTTP headers to SPDY and send them.
    *
+   * @param stream_id the ID of the SPDY stream to send on
    * @param populator an object that can provide the HTTP headers
    * @param is_end_of_stream true iff there is no body data after the headers
    * @param output_stream the stream to which SPDY data should be written
    * @return true iff we were successful
    */
-  bool SendHeaders(const HeaderPopulatorInterface& populator,
+  bool SendHeaders(flip::FlipStreamId stream_id,
+                   const HeaderPopulatorInterface& populator,
                    bool is_end_of_stream,
                    OutputStreamInterface* output_stream);
 
   /**
    * Convert a fragment of an HTTP response body into SPDY.
    *
+   * @param stream_id the ID of the SPDY stream to send on
    * @param input_data the HTTP data to convert
    * @param input_size the length of the HTTP data
    * @param is_end_of_stream true iff this fragment is the end of the stream
    * @param output_stream the stream to which SPDY data should be written
    * @return true iff we were successful
    */
-  bool SendData(const char* input_data, size_t input_size,
+  bool SendData(flip::FlipStreamId stream_id,
+                const char* input_data, size_t input_size,
                 bool is_end_of_stream,
                 mod_spdy::OutputStreamInterface* output_stream);
 

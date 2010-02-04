@@ -14,11 +14,44 @@
 
 #include "mod_spdy/apache/spdy_output_filter.h"
 
+#include "base/string_util.h"  // For StringToInt64
+#include "third_party/apache_httpd/include/http_log.h"
+
 #include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/output_filter_context.h"
+
+namespace {
+
+flip::FlipStreamId GetRequestStreamId(request_rec* request) {
+  apr_table_t* headers = request->headers_in;
+  // TODO: The "x-spdy-stream-id" string really ought to be stored in a shared
+  //       constant somewhere.  But where?  Anyway, that issue may be obviated
+  //       if and when we find a better way to communicate the stream ID from
+  //       the input filter to the output filter.
+  const char* value = apr_table_get(headers, "x-spdy-stream-id");
+  if (value == NULL) {
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, request,
+                  "Request had no x-spdy-stream-id header");
+    DCHECK(false);
+    return 1;
+  }
+  int64 id;
+  if (StringToInt64(value, &id)) {
+    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, APR_SUCCESS, request,
+                  "Hooray, x-spdy-stream-id = %d", static_cast<int>(id));
+    return static_cast<flip::FlipStreamId>(id);
+  } else {
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, request,
+                  "Couldn't parse x-spdy-stream-id: %s", value);
+    DCHECK(false);
+    return 1;
+  }
+}
+
+}  // namespace
 
 namespace mod_spdy {
 
@@ -41,8 +74,8 @@ apr_status_t SpdyOutputFilter::Write(ap_filter_t* filter,
   }
 
   // Create an output brigade/stream.
-  request_rec* request = filter->r;
-  apr_bucket_brigade* output_brigade =
+  request_rec* const request = filter->r;
+  apr_bucket_brigade* const output_brigade =
       apr_brigade_create(request->pool, request->connection->bucket_alloc);
   BrigadeOutputStream output_stream(filter, output_brigade);
 
@@ -69,11 +102,13 @@ apr_status_t SpdyOutputFilter::Write(ap_filter_t* filter,
     }
 
     // Send a SPDY data frame.
-    ok = context_->SendData(input_data, input_size,
+    ok = context_->SendData(GetRequestStreamId(request),
+                            input_data, input_size,
                             is_end_of_stream, &output_stream);
   } else if (!context_->headers_have_been_sent()) {
     ResponseHeaderPopulator populator(request);
-    ok = context_->SendHeaders(populator, is_end_of_stream, &output_stream);
+    ok = context_->SendHeaders(GetRequestStreamId(request), populator,
+                               is_end_of_stream, &output_stream);
   }
 
   DCHECK(ok);  // TODO: Maybe we should return an error code if ok is false?

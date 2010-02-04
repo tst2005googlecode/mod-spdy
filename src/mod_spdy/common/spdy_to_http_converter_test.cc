@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "base/scoped_ptr.h"
+#include "base/string_util.h"  // for IntToString
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/flip/flip_framer.h"
@@ -101,6 +102,10 @@ TEST(SpdyToHttpConverterTest, MultipleSynFrames) {
                              StrEq(kUrl),
                              StrEq(kVersion)));
 
+    EXPECT_CALL(visitor,
+                OnHeader(StrEq("x-spdy-stream-id"),
+                         StrEq(IntToString(i))));
+
     EXPECT_CALL(visitor, OnHeadersComplete());
 
     // Trigger the calls to the mock object by passing the frame to the
@@ -146,6 +151,11 @@ TEST(SpdyToHttpConverterTest, SynFrameWithHeaders) {
                            StrEq(kUrl),
                            StrEq(kVersion)))
       .InSequence(s1, s2, s3);
+
+  EXPECT_CALL(visitor,
+              OnHeader(StrEq("x-spdy-stream-id"),
+                       StrEq("1")))
+      .InSequence(s1);
 
   EXPECT_CALL(visitor,
               OnHeader(StrEq("foo"),
