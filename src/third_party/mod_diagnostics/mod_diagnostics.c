@@ -128,6 +128,8 @@ int diagnostic_pre_connection_hook(conn_rec *c, void *csd) {
                 "%ld Registering diagnostic filters", c->id);
 
   ap_add_input_filter("i-connection-1", NULL, NULL, c);
+  ap_add_input_filter("i-connection-2", NULL, NULL, c);
+  ap_add_output_filter("o-connection-1", NULL, NULL, c);
   //ap_add_input_filter("i-transcode-1", NULL, NULL, c);
   //ap_add_input_filter("i-protocol-1", NULL, NULL, c);
   //  ap_add_output_filter(g_spdy_output_filter, builder, NULL, c);
@@ -191,7 +193,7 @@ static void diagnostic_hooks(apr_pool_t* p) {
   ap_register_input_filter("i-connection-1", diagnostic_ifilter,
 	ifilter_init, AP_FTYPE_CONNECTION) ;
   ap_register_input_filter("i-connection-2", diagnostic_ifilter,
-	ifilter_init, AP_FTYPE_CONNECTION) ;
+	ifilter_init, AP_FTYPE_CONNECTION + 8) ;
   ap_register_input_filter("i-network-1", diagnostic_ifilter,
 	ifilter_init, AP_FTYPE_NETWORK) ;
   ap_register_input_filter("i-network-2", diagnostic_ifilter,

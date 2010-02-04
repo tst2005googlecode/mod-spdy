@@ -111,6 +111,12 @@ apr_status_t SpdyOutputFilter::Write(ap_filter_t* filter,
                                is_end_of_stream, &output_stream);
   }
 
+  if (is_end_of_stream) {
+    APR_BRIGADE_INSERT_TAIL(
+        output_brigade,
+        apr_bucket_eos_create(output_brigade->bucket_alloc));
+  }
+
   DCHECK(ok);  // TODO: Maybe we should return an error code if ok is false?
 
   return ap_pass_brigade(filter->next, output_brigade);

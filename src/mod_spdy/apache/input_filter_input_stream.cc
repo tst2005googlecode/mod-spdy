@@ -34,41 +34,35 @@ InputFilterInputStream::~InputFilterInputStream() {
   apr_brigade_destroy(tmp_brigade_);
 }
 
-// TODO: convert to non-blocking reads.
 apr_status_t InputFilterInputStream::PullBytesFromNextFilter(
     size_t num_bytes) {
   apr_status_t rv = APR_SUCCESS;
   apr_status_t next_filter_rv = APR_SUCCESS;
+
+  // NOTE: apr_brigade_length can be expensive for certain bucket types.
+  // Revisit if this turns out to be a perf problem.
   apr_off_t brigade_len = 0;
-  while (true) {
-    // NOTE: apr_brigade_length can be expensive for certain bucket types.
-    // Revisit if this turns out to be a perf problem.
-    rv = apr_brigade_length(brigade_, 1, &brigade_len);
-    if (rv != APR_SUCCESS) {
-      return rv;
-    }
-
-    const apr_off_t data_needed = num_bytes - brigade_len;
-    if (data_needed <= 0) {
-      // We can satisfy the request, so stop reading from the filter chain.
-      return APR_SUCCESS;
-    }
-
-    CHECK(APR_BRIGADE_EMPTY(tmp_brigade_));
-    rv = ap_get_brigade(filter_->next,
-                        tmp_brigade_,
-                        AP_MODE_READBYTES,
-                        APR_BLOCK_READ,
-                        data_needed);
-    next_filter_rv_ = rv;
-
-    // TODO: only concat data buckets? What about EOF, etc?
-    APR_BRIGADE_CONCAT(brigade_, tmp_brigade_);
-    if (rv != APR_SUCCESS) {
-      break;
-    }
+  rv = apr_brigade_length(brigade_, 1, &brigade_len);
+  if (rv != APR_SUCCESS) {
+    return rv;
   }
 
+  const apr_off_t data_needed = num_bytes - brigade_len;
+  if (data_needed <= 0) {
+    // We can satisfy the request, so stop reading from the filter chain.
+    return APR_SUCCESS;
+  }
+
+  CHECK(APR_BRIGADE_EMPTY(tmp_brigade_));
+  rv = ap_get_brigade(filter_->next,
+                      tmp_brigade_,
+                      AP_MODE_READBYTES,
+                      block_,
+                      data_needed);
+  next_filter_rv_ = rv;
+
+  // TODO: only concat data buckets? What about EOF, etc?
+  APR_BRIGADE_CONCAT(brigade_, tmp_brigade_);
   return rv;
 }
 
@@ -116,8 +110,13 @@ apr_size_t InputFilterInputStream::FinishRead(char *data,
 bool InputFilterInputStream::IsEmpty() const {
   CHECK(APR_BRIGADE_EMPTY(tmp_brigade_));
 
-  // TODO: what if brigade contains non-data buckets (e.g. EOF)?
-  return APR_BRIGADE_EMPTY(brigade_);
+  apr_off_t brigade_len = 0;
+  apr_status_t rv = apr_brigade_length(brigade_, 1, &brigade_len);
+  if (rv != APR_SUCCESS) {
+    return true;
+  }
+
+  return brigade_len == 0;
 }
 
 }  // namespace mod_spdy

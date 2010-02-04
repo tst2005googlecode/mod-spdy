@@ -148,8 +148,13 @@ bool HttpStreamAccumulator::IsEmpty() const {
     return true;
   }
 
-  // TODO: what if brigade contains non-data buckets (e.g. EOF)?
-  return APR_BRIGADE_EMPTY(brigade_);
+  apr_off_t brigade_len = 0;
+  apr_status_t rv = apr_brigade_length(brigade_, 1, &brigade_len);
+  if (rv != APR_SUCCESS) {
+    return true;
+  }
+
+  return brigade_len == 0;
 }
 
 apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
