@@ -72,7 +72,11 @@ apr_status_t InputFilterInputStream::PullBytesFromNextFilter(
 }
 
 size_t InputFilterInputStream::Read(char *data, size_t data_len) {
-  apr_status_t rv = PullBytesFromNextFilter(data_len);
+  // We don't look at the return from PullBytesFromNextFilter. We just
+  // want to pass any bytes that might already be in the buffer on to
+  // to caller. The caller will find out about any errors encountered
+  // by inspecting next_filter_rv().
+  PullBytesFromNextFilter(data_len);
 
   apr_bucket *extra = NULL;
   apr_size_t bytes_read = FinishRead(data, data_len, &extra);

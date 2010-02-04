@@ -17,8 +17,8 @@
 
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 
-#include "apr_buckets.h"
-#include "util_filter.h"
+#include "third_party/apache_httpd/include/apr_buckets.h"
+#include "third_party/apache_httpd/include/util_filter.h"
 
 namespace mod_spdy {
 

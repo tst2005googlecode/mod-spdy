@@ -17,14 +17,14 @@
 
 #include "mod_spdy/common/input_stream_interface.h"
 
-#include "apr_buckets.h"
-#include "util_filter.h"
+#include "third_party/apache_httpd/include/apr_buckets.h"
+#include "third_party/apache_httpd/include/util_filter.h"
 
 namespace mod_spdy {
 
 // InputFilterInputStream provides an InputStreamInterface API
 // to an apr_filter_t input filter.
-class InputFilterInputStream: public InputStreamInterface {
+class InputFilterInputStream : public InputStreamInterface {
  public:
   InputFilterInputStream(apr_pool_t *pool, apr_bucket_alloc_t *bucket_alloc);
   virtual ~InputFilterInputStream();
