@@ -15,14 +15,18 @@
 {
   'targets': [
     {
-      'target_name': 'All',
-      'type': 'none',
-      'xcode_create_dependents_test_runner': 1,
+      'target_name': 'mod_static',
+      'type': 'loadable_module',
       'dependencies': [
-        '../base/base.gyp:*',
-        '../mod_spdy/mod_spdy.gyp:*',
-        '../mod_static/mod_static.gyp:*',
-        '../net/net.gyp:*',
-        '../third_party/mod_diagnostics/mod_diagnostics.gyp:*',
-      ],} ]
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        'mod_static.cc',
+      ],
+    },
+  ],
 }
