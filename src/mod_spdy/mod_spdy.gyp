@@ -35,6 +35,7 @@
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
         'common/output_filter_context.cc',
+        'common/spdy_stream_distributor.cc',
         'common/spdy_to_http_converter.cc',
       ],
     },
@@ -95,6 +96,7 @@
       'sources': [
         'common/flip_frame_pump_test.cc',
         'common/header_populator_interface_test.cc',
+        'common/spdy_stream_distributor_test.cc',
         'common/spdy_to_http_converter_test.cc',
       ],
     },
