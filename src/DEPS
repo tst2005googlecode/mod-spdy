@@ -14,22 +14,10 @@
 
 vars = {
   "chromium_trunk": "http://src.chromium.org/svn/trunk",
-  "chromium_revision": "@35449",
+  "chromium_revision": "@38464",
 }
 
 deps = {
-  "src/testing/gtest":
-    "http://googletest.googlecode.com/svn/trunk@359",
-
-  "src/tools/gyp":
-    "http://gyp.googlecode.com/svn/trunk@770",
-
-  "src/third_party/chromium/src/build":
-    Var("chromium_trunk") + "/src/build" + Var("chromium_revision"),
-
-  "src/third_party/chromium/src/base":
-    Var("chromium_trunk") + "/src/base" + Var("chromium_revision"),
-
   "src/site_scons/site_tools":
     (Var("chromium_trunk") + "/src/site_scons/site_tools" +
      Var("chromium_revision")),
@@ -37,8 +25,20 @@ deps = {
   "src/testing":
     Var("chromium_trunk") + "/src/testing" + Var("chromium_revision"),
 
+  "src/testing/gtest":
+    "http://googletest.googlecode.com/svn/trunk@359",
+
+  "src/third_party/chromium/src/base":
+    Var("chromium_trunk") + "/src/base" + Var("chromium_revision"),
+
+  "src/third_party/chromium/src/build":
+    Var("chromium_trunk") + "/src/build" + Var("chromium_revision"),
+
   "src/third_party/scons":
     Var("chromium_trunk") + "/src/third_party/scons" + Var("chromium_revision"),
+
+  "src/third_party/zlib":
+    Var("chromium_trunk") + "/src/third_party/zlib" + Var("chromium_revision"),
 
   "src/tools/data_pack":
     Var("chromium_trunk") + "/src/tools/data_pack" + Var("chromium_revision"),
@@ -46,8 +46,8 @@ deps = {
   "src/tools/grit":
     Var("chromium_trunk") + "/src/tools/grit" + Var("chromium_revision"),
 
-  "src/third_party/zlib":
-    Var("chromium_trunk") + "/src/third_party/zlib" + Var("chromium_revision"),
+  "src/tools/gyp":
+    "http://gyp.googlecode.com/svn/trunk@778",
 }
 
 
