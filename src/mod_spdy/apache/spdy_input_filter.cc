@@ -16,9 +16,9 @@
 
 #include "mod_spdy/apache/http_stream_accumulator.h"
 #include "mod_spdy/apache/input_filter_input_stream.h"
-#include "mod_spdy/common/flip_frame_pump.h"
+#include "mod_spdy/common/spdy_frame_pump.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
@@ -27,10 +27,10 @@ SpdyInputFilter::SpdyInputFilter(conn_rec *c)
                                         c->bucket_alloc)),
       http_accumulator_(new HttpStreamAccumulator(c->pool,
                                                   c->bucket_alloc)),
-      framer_(new flip::FlipFramer()),
+      framer_(new spdy::SpdyFramer()),
       converter_(new SpdyToHttpConverter(framer_.get(),
                                          http_accumulator_.get())),
-      pump_(new FlipFramePump(input_.get(), framer_.get())) {
+      pump_(new SpdyFramePump(input_.get(), framer_.get())) {
   framer_->set_visitor(converter_.get());
 }
 
@@ -56,7 +56,7 @@ apr_status_t SpdyInputFilter::Read(ap_filter_t *filter,
 
   if (http_accumulator_->IsEmpty()) {
     // If there's no data in the accumulator, attempt to pull more
-    // data into it by driving the FlipFramePump. Note that this will
+    // data into it by driving the SpdyFramePump. Note that this will
     // not alway succeed; if there is no data available from the next
     // filter (e.g. no data to be read from the socket) then the
     // accumulator will not be populated with new data.

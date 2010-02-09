@@ -15,43 +15,43 @@
 #ifndef MOD_SPDY_SPDY_STREAM_DISTRIBUTOR_H_
 #define MOD_SPDY_SPDY_STREAM_DISTRIBUTOR_H_
 
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
-class FlipFramerVisitorFactoryInterface {
+class SpdyFramerVisitorFactoryInterface {
 public:
-  FlipFramerVisitorFactoryInterface();
-  virtual ~FlipFramerVisitorFactoryInterface();
+  SpdyFramerVisitorFactoryInterface();
+  virtual ~SpdyFramerVisitorFactoryInterface();
 
-  virtual flip::FlipFramerVisitorInterface *Create(
-      flip::FlipStreamId stream_id) = 0;
+  virtual spdy::SpdyFramerVisitorInterface *Create(
+      spdy::SpdyStreamId stream_id) = 0;
 };
 
 // The SpdyStreamDistributor is responsible for delivering all
-// FlipFramerVisitorInterface callbacks to a dedicated instance of
-// FlipFramerVisitorInterface associated with that stream.
-class SpdyStreamDistributor : public flip::FlipFramerVisitorInterface {
+// SpdyFramerVisitorInterface callbacks to a dedicated instance of
+// SpdyFramerVisitorInterface associated with that stream.
+class SpdyStreamDistributor : public spdy::SpdyFramerVisitorInterface {
  public:
-  SpdyStreamDistributor(flip::FlipFramer *framer,
-                        FlipFramerVisitorFactoryInterface *factory);
+  SpdyStreamDistributor(spdy::SpdyFramer *framer,
+                        SpdyFramerVisitorFactoryInterface *factory);
   virtual ~SpdyStreamDistributor();
 
-  virtual void OnError(flip::FlipFramer *framer);
-  virtual void OnControl(const flip::FlipControlFrame *frame);
-  virtual void OnStreamFrameData(flip::FlipStreamId stream_id,
+  virtual void OnError(spdy::SpdyFramer *framer);
+  virtual void OnControl(const spdy::SpdyControlFrame *frame);
+  virtual void OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                  const char *data,
                                  size_t len);
 
 private:
-  flip::FlipFramerVisitorInterface *GetFramerForStreamId(flip::FlipStreamId id);
+  spdy::SpdyFramerVisitorInterface *GetFramerForStreamId(spdy::SpdyStreamId id);
 
-  typedef std::map<flip::FlipStreamId, flip::FlipFramerVisitorInterface *>
+  typedef std::map<spdy::SpdyStreamId, spdy::SpdyFramerVisitorInterface *>
       StreamIdToVisitorMap;
 
   StreamIdToVisitorMap map_;
-  flip::FlipFramer *const framer_;
-  FlipFramerVisitorFactoryInterface *const factory_;
+  spdy::SpdyFramer *const framer_;
+  SpdyFramerVisitorFactoryInterface *const factory_;
 };
 
 }  // namespace mod_spdy

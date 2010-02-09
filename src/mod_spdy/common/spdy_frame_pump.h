@@ -12,35 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef MOD_SPDY_FLIP_FRAME_PUMP_H_
-#define MOD_SPDY_FLIP_FRAME_PUMP_H_
+#ifndef MOD_SPDY_SPDY_FRAME_PUMP_H_
+#define MOD_SPDY_SPDY_FRAME_PUMP_H_
 
 #include <stddef.h>  // for size_t
 
 #include "base/scoped_ptr.h"
 
-namespace flip {
-class FlipFramer;
-}  // namespace flip
+namespace spdy {
+class SpdyFramer;
+}  // namespace spdy
 
 namespace mod_spdy {
 
 class InputStreamInterface;
 
-// FlipFramePump is an adapter that provides a pull interface to a
-// FlipFramer. Typically, FlipFramer runs in push mode. Data is
-// written into FlipFramer as it becomes available, using
-// FlipFramer::ProcessInput().  FlipFramePump provides a
+// SpdyFramePump is an adapter that provides a pull interface to a
+// SpdyFramer. Typically, SpdyFramer runs in push mode. Data is
+// written into SpdyFramer as it becomes available, using
+// SpdyFramer::ProcessInput().  SpdyFramePump provides a
 // PumpOneFrame() method which attempts to pull a frame worth of data
-// into the FlipFramer. This is useful in environments that want to
-// feed just enough data into the FlipFramer to make progress, but no
+// into the SpdyFramer. This is useful in environments that want to
+// feed just enough data into the SpdyFramer to make progress, but no
 // more.
-class FlipFramePump {
+class SpdyFramePump {
  public:
-  FlipFramePump(InputStreamInterface *input, flip::FlipFramer *framer);
-  ~FlipFramePump();
+  SpdyFramePump(InputStreamInterface *input, spdy::SpdyFramer *framer);
+  ~SpdyFramePump();
 
-  // Pump a single flip frame through the FlipFramer.
+  // Pump a single spdy frame through the SpdyFramer.
   // @return true on success, false on failure (error, or partial frame).
   bool PumpOneFrame();
 
@@ -51,11 +51,11 @@ class FlipFramePump {
   bool PumpAtMost(size_t num_bytes);
 
   InputStreamInterface *const input_;
-  flip::FlipFramer *const framer_;
+  spdy::SpdyFramer *const framer_;
   scoped_array<char> buf_;
   size_t frame_bytes_consumed_;
 };
 
 }  // namespace mod_spdy
 
-#endif  // MOD_SPDY_FLIP_FRAME_PUMP_H_
+#endif  // MOD_SPDY_SPDY_FRAME_PUMP_H_

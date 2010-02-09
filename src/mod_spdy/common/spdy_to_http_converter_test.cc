@@ -16,7 +16,7 @@
 #include "base/string_util.h"  // for IntToString
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -41,7 +41,7 @@ class MockHttpStreamVisitor: public mod_spdy::HttpStreamVisitorInterface {
 
 // Make it clear that we do not currently handle most callbacks.
 TEST(SpdyToHttpConverterTest, UnsupportedCallbacks) {
-  flip::FlipFramer framer;
+  spdy::SpdyFramer framer;
   mod_spdy::SpdyToHttpConverter converter(&framer, NULL);
   EXPECT_DEATH(converter.OnError(NULL), "");
   EXPECT_DEATH(converter.OnStreamFrameData(1, NULL, 0), "");
@@ -49,30 +49,30 @@ TEST(SpdyToHttpConverterTest, UnsupportedCallbacks) {
 
 // We also don't currently support most control frames.
 TEST(SpdyToHttpConverterTest, UnsupportedControlFrames) {
-  flip::FlipFramer converter_framer;
-  flip::FlipFramer generator_framer;
+  spdy::SpdyFramer converter_framer;
+  spdy::SpdyFramer generator_framer;
   mod_spdy::SpdyToHttpConverter converter(&converter_framer, NULL);
-  flip::FlipHeaderBlock headers;
+  spdy::SpdyHeaderBlock headers;
 
   // We don't handle syn stream unless it has CONTROL_FLAG_FIN set.
-  scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame(
+  scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
       generator_framer.CreateSynStream(
-          1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
   EXPECT_DEATH(converter.OnControl(syn_stream_frame.get()), "");
 
   // We don't handle syn reply.
-  scoped_ptr<flip::FlipSynReplyControlFrame> syn_reply_frame(
+  scoped_ptr<spdy::SpdySynReplyControlFrame> syn_reply_frame(
       generator_framer.CreateSynReply(
-          1, flip::CONTROL_FLAG_NONE, true, &headers));
+          1, spdy::CONTROL_FLAG_NONE, true, &headers));
   EXPECT_DEATH(converter.OnControl(syn_reply_frame.get()), "");
 
   // We don't handle fin stream.
-  scoped_ptr<flip::FlipFinStreamControlFrame> fin_stream_frame(
+  scoped_ptr<spdy::SpdyFinStreamControlFrame> fin_stream_frame(
       generator_framer.CreateFinStream(1, 0));
   EXPECT_DEATH(converter.OnControl(fin_stream_frame.get()), "");
 
   // We don't handle nop.
-  scoped_ptr<flip::FlipControlFrame> nop_frame(
+  scoped_ptr<spdy::SpdyControlFrame> nop_frame(
       generator_framer.CreateNopFrame());
   EXPECT_DEATH(converter.OnControl(nop_frame.get()), "");
 }
@@ -83,19 +83,19 @@ TEST(SpdyToHttpConverterTest, MultipleSynFrames) {
   InSequence seq;
 
   MockHttpStreamVisitor visitor;
-  flip::FlipFramer converter_framer;
-  flip::FlipFramer generator_framer;
+  spdy::SpdyFramer converter_framer;
+  spdy::SpdyFramer generator_framer;
   mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
 
-  flip::FlipHeaderBlock headers;
+  spdy::SpdyHeaderBlock headers;
   headers["method"] = kMethod;
   headers["url"] = kUrl;
   headers["version"] = kVersion;
 
   for (int i = 0; i < 10; ++i) {
-    scoped_ptr<flip::FlipSynStreamControlFrame> syn_frame(
+    scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
         generator_framer.CreateSynStream(
-            i, 1, flip::CONTROL_FLAG_FIN, true, &headers));
+            i, 1, spdy::CONTROL_FLAG_FIN, true, &headers));
 
     EXPECT_CALL(visitor,
                 OnStatusLine(StrEq(kMethod),
@@ -118,15 +118,15 @@ TEST(SpdyToHttpConverterTest, MultipleSynFrames) {
 
 TEST(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   MockHttpStreamVisitor visitor;
-  flip::FlipFramer converter_framer;
-  flip::FlipFramer generator_framer;
+  spdy::SpdyFramer converter_framer;
+  spdy::SpdyFramer generator_framer;
   mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
-  flip::FlipHeaderBlock headers;
+  spdy::SpdyHeaderBlock headers;
   headers["method"] = kMethod;
   headers["url"] = kUrl;
   headers["version"] = kVersion;
   headers["foo"] = "bar";
-  headers["flip"] = "spdy";
+  headers["spdy"] = "spdy";
 
   // Create a multi-valued header to verify that it's processed
   // properly.
@@ -137,9 +137,9 @@ TEST(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   headers["empty"] = std::string("\0\0\0", 3);
   headers["empty2"] = "";
 
-  scoped_ptr<flip::FlipSynStreamControlFrame> syn_frame(
+  scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
       generator_framer.CreateSynStream(
-          1, 1, flip::CONTROL_FLAG_FIN, true, &headers));
+          1, 1, spdy::CONTROL_FLAG_FIN, true, &headers));
 
   // We expect a call to OnStatusLine(), followed by two calls to
   // OnHeader() (the order of the calls to OnHeader() is
@@ -163,7 +163,7 @@ TEST(SpdyToHttpConverterTest, SynFrameWithHeaders) {
       .InSequence(s1);
 
   EXPECT_CALL(visitor,
-              OnHeader(StrEq("flip"),
+              OnHeader(StrEq("spdy"),
                        StrEq("spdy")))
       .InSequence(s2);
 

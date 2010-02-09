@@ -14,12 +14,12 @@
 
 #include "mod_spdy/common/connection_context.h"
 
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
 ConnectionContext::ConnectionContext()
-    : output_framer_(new flip::FlipFramer) {}
+    : output_framer_(new spdy::SpdyFramer) {}
 
 ConnectionContext::~ConnectionContext() {}
 

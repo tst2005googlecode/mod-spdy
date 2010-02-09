@@ -28,25 +28,25 @@ const char *kVersion = "version";
 
 namespace mod_spdy {
 
-SpdyToHttpConverter::SpdyToHttpConverter(flip::FlipFramer *framer,
+SpdyToHttpConverter::SpdyToHttpConverter(spdy::SpdyFramer *framer,
                                          HttpStreamVisitorInterface *visitor)
     : framer_(framer), visitor_(visitor) {
 }
 
 SpdyToHttpConverter::~SpdyToHttpConverter() {}
 
-void SpdyToHttpConverter::OnError(flip::FlipFramer *framer) {
+void SpdyToHttpConverter::OnError(spdy::SpdyFramer *framer) {
   // Not yet supported.
   CHECK(false);
 }
 
-void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
-  // For now we support a subset of FLIP. Crash if we receive a frame
+void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
+  // For now we support a subset of SPDY. Crash if we receive a frame
   // we don't yet know how to process.
-  CHECK(frame->type() == flip::SYN_STREAM);
-  CHECK(frame->flags() & flip::CONTROL_FLAG_FIN);
+  CHECK(frame->type() == spdy::SYN_STREAM);
+  CHECK(frame->flags() & spdy::CONTROL_FLAG_FIN);
 
-  flip::FlipHeaderBlock block;
+  spdy::SpdyHeaderBlock block;
   if (!framer_->ParseHeaderBlock(frame, &block)) {
     // TODO: handle this case
     CHECK(false);
@@ -75,12 +75,12 @@ void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
   //       but our input filter runs before the request object has been
   //       created.  There are several possible solutions; we should probably
   //       revisit this issue once we figure out how multiplexing will work.
-  const flip::FlipStreamId stream_id = frame->stream_id();
+  const spdy::SpdyStreamId stream_id = frame->stream_id();
   const std::string stream_id_str(Int64ToString(stream_id));
   visitor_->OnHeader("x-spdy-stream-id", stream_id_str.c_str());
 
   // Write out the rest of the HTTP headers.
-  for (flip::FlipHeaderBlock::const_iterator it = block.begin(),
+  for (spdy::SpdyHeaderBlock::const_iterator it = block.begin(),
            it_end = block.end();
        it != it_end;
        ++it) {
@@ -94,7 +94,7 @@ void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
 
     // Split header values on null characters, emitting a separate
     // header key-value pair for each substring. Logic from
-    // net/flip/flip_session.cc
+    // net/spdy/spdy_session.cc
     for (size_t start = 0, end = 0; end != value.npos; start = end) {
       start = value.find_first_not_of('\0', start);
       if (start == value.npos) {
@@ -114,7 +114,7 @@ void SpdyToHttpConverter::OnControl(const flip::FlipControlFrame *frame) {
   visitor_->OnHeadersComplete();
 }
 
-void SpdyToHttpConverter::OnStreamFrameData(flip::FlipStreamId stream_id,
+void SpdyToHttpConverter::OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                             const char *data,
                                             size_t len) {
   // Not yet supported.

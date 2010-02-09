@@ -20,9 +20,9 @@
 
 #include "base/basictypes.h"
 
-namespace flip {
-typedef std::map<std::string, std::string> FlipHeaderBlock;
-}  // namespace flip
+namespace spdy {
+typedef std::map<std::string, std::string> SpdyHeaderBlock;
+}  // namespace spdy
 
 namespace mod_spdy {
 
@@ -33,12 +33,12 @@ class HeaderPopulatorInterface {
   virtual ~HeaderPopulatorInterface() {}
 
   // Given an empty header table, populate it.
-  virtual void Populate(flip::FlipHeaderBlock* headers) const = 0;
+  virtual void Populate(spdy::SpdyHeaderBlock* headers) const = 0;
 
   // Add a header to a header table, merging if necessary.
   static void MergeInHeader(const std::string& key,
                             const std::string& value,
-                            flip::FlipHeaderBlock* headers);
+                            spdy::SpdyHeaderBlock* headers);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(HeaderPopulatorInterface);

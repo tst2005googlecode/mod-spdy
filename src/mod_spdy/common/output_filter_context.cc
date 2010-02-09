@@ -18,7 +18,7 @@
 #include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/header_populator_interface.h"
 #include "mod_spdy/common/output_stream_interface.h"
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
@@ -26,28 +26,28 @@ namespace {
 
 class SpdyFrameSender {
  public:
-  SpdyFrameSender(flip::FlipStreamId stream_id,
-                  flip::FlipFramer* framer,
+  SpdyFrameSender(spdy::SpdyStreamId stream_id,
+                  spdy::SpdyFramer* framer,
                   OutputStreamInterface* output_stream)
       : stream_id_(stream_id),
         framer_(framer),
         output_stream_(output_stream) {}
   ~SpdyFrameSender() {}
 
-  bool SendFrame(const flip::FlipFrame* frame) {
+  bool SendFrame(const spdy::SpdyFrame* frame) {
     return output_stream_->Write(frame->data(),
-                                 flip::FlipFrame::size() + frame->length());
+                                 spdy::SpdyFrame::size() + frame->length());
   }
 
   bool SendNopFrame() {
-    scoped_ptr<flip::FlipFrame> frame(flip::FlipFramer::CreateNopFrame());
+    scoped_ptr<spdy::SpdyFrame> frame(spdy::SpdyFramer::CreateNopFrame());
     return SendFrame(frame.get());
   }
 
-  bool SendSynReplyFrame(flip::FlipHeaderBlock* headers, bool fin_stream) {
-    const flip::FlipControlFlags flags =
-        (fin_stream ? flip::CONTROL_FLAG_FIN : flip::CONTROL_FLAG_NONE);
-    scoped_ptr<flip::FlipFrame> frame(
+  bool SendSynReplyFrame(spdy::SpdyHeaderBlock* headers, bool fin_stream) {
+    const spdy::SpdyControlFlags flags =
+        (fin_stream ? spdy::CONTROL_FLAG_FIN : spdy::CONTROL_FLAG_NONE);
+    scoped_ptr<spdy::SpdyFrame> frame(
         framer_->CreateSynReply(stream_id_, flags,
                                 true,  // use compression
                                 headers));
@@ -55,16 +55,16 @@ class SpdyFrameSender {
   }
 
   bool SendDataFrame(const char* data, size_t num_bytes, bool fin_stream) {
-    const flip::FlipDataFlags flags =
-        (fin_stream ? flip::DATA_FLAG_FIN : flip::DATA_FLAG_NONE);
-    scoped_ptr<flip::FlipFrame> frame(
+    const spdy::SpdyDataFlags flags =
+        (fin_stream ? spdy::DATA_FLAG_FIN : spdy::DATA_FLAG_NONE);
+    scoped_ptr<spdy::SpdyFrame> frame(
         framer_->CreateDataFrame(stream_id_, data, num_bytes, flags));
     return SendFrame(frame.get());
   }
 
  private:
-  const flip::FlipStreamId stream_id_;
-  flip::FlipFramer* framer_;
+  const spdy::SpdyStreamId stream_id_;
+  spdy::SpdyFramer* framer_;
   OutputStreamInterface* output_stream_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyFrameSender);
@@ -79,19 +79,19 @@ OutputFilterContext::OutputFilterContext(ConnectionContext* conn_context)
 OutputFilterContext::~OutputFilterContext() {}
 
 bool OutputFilterContext::SendHeaders(
-    flip::FlipStreamId stream_id,
+    spdy::SpdyStreamId stream_id,
     const HeaderPopulatorInterface& populator,
     bool is_end_of_stream,
     OutputStreamInterface* output_stream) {
   headers_have_been_sent_ = true;
   SpdyFrameSender sender(stream_id, conn_context_->output_framer(),
                          output_stream);
-  flip::FlipHeaderBlock headers;
+  spdy::SpdyHeaderBlock headers;
   populator.Populate(&headers);
   return sender.SendSynReplyFrame(&headers, is_end_of_stream);
 }
 
-bool OutputFilterContext::SendData(flip::FlipStreamId stream_id,
+bool OutputFilterContext::SendData(spdy::SpdyStreamId stream_id,
                                    const char* input_data,
                                    size_t input_size,
                                    bool is_end_of_stream,

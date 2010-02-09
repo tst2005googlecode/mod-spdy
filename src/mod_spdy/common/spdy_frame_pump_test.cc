@@ -15,9 +15,9 @@
 #include <algorithm>  // for std::min()
 
 #include "base/scoped_ptr.h"
-#include "mod_spdy/common/flip_frame_pump.h"
+#include "mod_spdy/common/spdy_frame_pump.h"
 #include "mod_spdy/common/input_stream_interface.h"
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -39,9 +39,9 @@ class MockInputStream : public mod_spdy::InputStreamInterface {
 
   size_t DoRead(char *target, size_t target_len);
 
-  // Helper used assert that the given flip::FlipFrame is equal to the
+  // Helper used assert that the given spdy::SpdyFrame is equal to the
   // current input data.
-  void AssertFrameEq(const flip::FlipFrame* frame);
+  void AssertFrameEq(const spdy::SpdyFrame* frame);
 
   void set_data(const char *data, size_t data_len) {
     data_ = data;
@@ -59,12 +59,12 @@ class MockInputStream : public mod_spdy::InputStreamInterface {
   size_t read_;
 };
 
-class MockFlipFramerVisitor : public flip::FlipFramerVisitorInterface {
+class MockSpdyFramerVisitor : public spdy::SpdyFramerVisitorInterface {
  public:
-  MOCK_METHOD1(OnError, void(flip::FlipFramer*));
-  MOCK_METHOD1(OnControl, void(const flip::FlipControlFrame*));
+  MOCK_METHOD1(OnError, void(spdy::SpdyFramer*));
+  MOCK_METHOD1(OnControl, void(const spdy::SpdyControlFrame*));
   MOCK_METHOD3(OnStreamFrameData,
-               void(flip::FlipStreamId, const char*, size_t));
+               void(spdy::SpdyStreamId, const char*, size_t));
 };
 
 size_t MockInputStream::DoRead(char *target, size_t target_len) {
@@ -75,22 +75,22 @@ size_t MockInputStream::DoRead(char *target, size_t target_len) {
 }
 
 void MockInputStream::AssertFrameEq(
-    const flip::FlipFrame* frame) {
-  ASSERT_EQ(flip::FlipFrame::size() + frame->length(), data_len_);
+    const spdy::SpdyFrame* frame) {
+  ASSERT_EQ(spdy::SpdyFrame::size() + frame->length(), data_len_);
   ASSERT_EQ(0, memcmp(frame->data(), data_, data_len_));
 }
 
-TEST(FlipFramePumpTest, EmptyDataInputStream) {
+TEST(SpdyFramePumpTest, EmptyDataInputStream) {
   MockInputStream input;
-  MockFlipFramerVisitor visitor;
-  flip::FlipFramer consumer_framer;
+  MockSpdyFramerVisitor visitor;
+  spdy::SpdyFramer consumer_framer;
   consumer_framer.set_visitor(&visitor);
-  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
+  mod_spdy::SpdyFramePump pump(&input, &consumer_framer);
 
   int num_attempts = 100;
   EXPECT_CALL(input,
               Read(NotNull(),
-                   Eq(flip::FlipFrame::size())))
+                   Eq(spdy::SpdyFrame::size())))
       .Times(100)
       .WillRepeatedly(Return(0));
 
@@ -103,35 +103,35 @@ TEST(FlipFramePumpTest, EmptyDataInputStream) {
   ASSERT_FALSE(pump.HasError());
 }
 
-TEST(FlipFramePumpTest, OneSynFrame) {
+TEST(SpdyFramePumpTest, OneSynFrame) {
   // Verify that the expected calls happen in sequence.
   InSequence seq;
 
   MockInputStream input;
-  MockFlipFramerVisitor visitor;
-  flip::FlipFramer consumer_framer;
+  MockSpdyFramerVisitor visitor;
+  spdy::SpdyFramer consumer_framer;
   consumer_framer.set_visitor(&visitor);
-  flip::FlipFramer generator_framer;
-  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
+  spdy::SpdyFramer generator_framer;
+  mod_spdy::SpdyFramePump pump(&input, &consumer_framer);
 
-  flip::FlipHeaderBlock headers;
-  scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame(
+  spdy::SpdyHeaderBlock headers;
+  scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
       generator_framer.CreateSynStream(
-          1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
 
   const size_t syn_frame_size =
-      flip::FlipFrame::size() + syn_stream_frame->length();
+      spdy::SpdyFrame::size() + syn_stream_frame->length();
 
   // Supply the frame's data to the input stream, so it can be pumped
-  // through the FlipFramer.
+  // through the SpdyFramer.
   input.set_data(syn_stream_frame->data(), syn_frame_size);
 
   // We expect two calls to InputStreamInterface::Read(). The first
-  // should read the FlipFrame header, and the second should read the
+  // should read the SpdyFrame header, and the second should read the
   // remaining bytes in the frame.
   EXPECT_CALL(input,
               Read(NotNull(),
-                   Eq(flip::FlipFrame::size())))
+                   Eq(spdy::SpdyFrame::size())))
       .WillOnce(Invoke(&input, &MockInputStream::DoRead));
 
   EXPECT_CALL(input,
@@ -139,7 +139,7 @@ TEST(FlipFramePumpTest, OneSynFrame) {
                    Eq(syn_stream_frame->length())))
       .WillOnce(Invoke(&input, &MockInputStream::DoRead));
 
-  // Verify that the MockFlipFramerVisitor gets called back with the
+  // Verify that the MockSpdyFramerVisitor gets called back with the
   // expected frame.
   EXPECT_CALL(visitor, OnControl(NotNull()))
       .WillOnce(Invoke(&input, &MockInputStream::AssertFrameEq));
@@ -159,7 +159,7 @@ TEST(FlipFramePumpTest, OneSynFrame) {
   // Now verify that there is no additional data to read.
   EXPECT_CALL(input,
               Read(NotNull(),
-                   Eq(flip::FlipFrame::size())))
+                   Eq(spdy::SpdyFrame::size())))
       .WillOnce(Return(0));
 
   ASSERT_FALSE(pump.PumpOneFrame());
@@ -167,40 +167,40 @@ TEST(FlipFramePumpTest, OneSynFrame) {
   ASSERT_FALSE(pump.HasError());
 }
 
-// Helper that computes the expected number of bytes the FlipFramePump
+// Helper that computes the expected number of bytes the SpdyFramePump
 // will try to read, given the current offset and the size of the
 // frame.
 size_t ComputeExpectedReadLen(size_t offset, size_t syn_frame_size) {
   // If offset is less than 8, we're trying to read the header
   // block. Otherwise, we're trying to read to the end of the frame.
   if (offset < 8) {
-    return flip::FlipFrame::size() - offset;
+    return spdy::SpdyFrame::size() - offset;
   } else {
     return syn_frame_size - offset;
   }
 }
 
-TEST(FlipFramePumpTest, OneSynFrameTrickle) {
+TEST(SpdyFramePumpTest, OneSynFrameTrickle) {
   // Verify that the expected calls happen in sequence.
   InSequence seq;
 
   MockInputStream input;
-  MockFlipFramerVisitor visitor;
-  flip::FlipFramer consumer_framer;
+  MockSpdyFramerVisitor visitor;
+  spdy::SpdyFramer consumer_framer;
   consumer_framer.set_visitor(&visitor);
-  flip::FlipFramer generator_framer;
-  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
+  spdy::SpdyFramer generator_framer;
+  mod_spdy::SpdyFramePump pump(&input, &consumer_framer);
 
-  flip::FlipHeaderBlock headers;
-  scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame(
+  spdy::SpdyHeaderBlock headers;
+  scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
       generator_framer.CreateSynStream(
-          1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
 
   const size_t syn_frame_size =
-      flip::FlipFrame::size() + syn_stream_frame->length();
+      spdy::SpdyFrame::size() + syn_stream_frame->length();
   for (size_t offset = 0; offset < syn_frame_size - 1; ++offset) {
     // Supply the frame's data to the input stream, so it can be pumped
-    // through the FlipFramer.
+    // through the SpdyFramer.
     input.set_data(syn_stream_frame->data() + offset, 1);
 
     size_t expected_read_len =
@@ -211,8 +211,8 @@ TEST(FlipFramePumpTest, OneSynFrameTrickle) {
                      Eq(expected_read_len)))
         .WillOnce(Invoke(&input, &MockInputStream::DoRead));
 
-    if (offset == flip::FlipFrame::size() - 1) {
-      // Special case: once the FlipFramePump consumes the header, it
+    if (offset == spdy::SpdyFrame::size() - 1) {
+      // Special case: once the SpdyFramePump consumes the header, it
       // determines that it can read the rest of the frame and
       // attempts to do so, so we expect an extra call to Read() in
       // this one case.
@@ -254,7 +254,7 @@ TEST(FlipFramePumpTest, OneSynFrameTrickle) {
                    Eq(1)))
       .WillOnce(Invoke(&input, &MockInputStream::DoRead));
 
-  // Verify that the MockFlipFramerVisitor gets called back with the
+  // Verify that the MockSpdyFramerVisitor gets called back with the
   // expected frame.
   EXPECT_CALL(visitor, OnControl(NotNull()));
 
@@ -263,7 +263,7 @@ TEST(FlipFramePumpTest, OneSynFrameTrickle) {
   // Now verify that there is no additional data to read.
   EXPECT_CALL(input,
               Read(NotNull(),
-                   Eq(flip::FlipFrame::size())))
+                   Eq(spdy::SpdyFrame::size())))
       .WillOnce(Return(0));
 
   ASSERT_FALSE(pump.PumpOneFrame());
@@ -271,35 +271,35 @@ TEST(FlipFramePumpTest, OneSynFrameTrickle) {
   ASSERT_FALSE(pump.HasError());
 }
 
-TEST(FlipFramePumpTest, OneDataFrame) {
+TEST(SpdyFramePumpTest, OneDataFrame) {
   // Verify that the expected calls happen in sequence.
   InSequence seq;
 
   MockInputStream input;
-  MockFlipFramerVisitor visitor;
-  flip::FlipFramer consumer_framer;
+  MockSpdyFramerVisitor visitor;
+  spdy::SpdyFramer consumer_framer;
   consumer_framer.set_visitor(&visitor);
-  flip::FlipFramer generator_framer;
-  mod_spdy::FlipFramePump pump(&input, &consumer_framer);
+  spdy::SpdyFramer generator_framer;
+  mod_spdy::SpdyFramePump pump(&input, &consumer_framer);
 
-  flip::FlipHeaderBlock headers;
-  scoped_ptr<flip::FlipDataFrame> data_frame(
+  spdy::SpdyHeaderBlock headers;
+  scoped_ptr<spdy::SpdyDataFrame> data_frame(
       generator_framer.CreateDataFrame(
-          1, kData, sizeof(kData), flip::DATA_FLAG_NONE));
+          1, kData, sizeof(kData), spdy::DATA_FLAG_NONE));
 
   const size_t data_frame_size =
-      flip::FlipFrame::size() + data_frame->length();
+      spdy::SpdyFrame::size() + data_frame->length();
 
   // Supply the frame's data to the input stream, so it can be pumped
-  // through the FlipFramer.
+  // through the SpdyFramer.
   input.set_data(data_frame->data(), data_frame_size);
 
   // We expect two calls to InputStreamInterface::Read(). The first
-  // should read the FlipFrame header, and the second should read the
+  // should read the SpdyFrame header, and the second should read the
   // remaining bytes in the frame.
   EXPECT_CALL(input,
               Read(NotNull(),
-                   Eq(flip::FlipFrame::size())))
+                   Eq(spdy::SpdyFrame::size())))
       .WillOnce(Invoke(&input, &MockInputStream::DoRead));
 
   EXPECT_CALL(input,
@@ -335,7 +335,7 @@ TEST(FlipFramePumpTest, OneDataFrame) {
   // Now verify that there is no additional data to read.
   EXPECT_CALL(input,
               Read(NotNull(),
-                   Eq(flip::FlipFrame::size())))
+                   Eq(spdy::SpdyFrame::size())))
       .WillOnce(Return(0));
 
   ASSERT_FALSE(pump.PumpOneFrame());

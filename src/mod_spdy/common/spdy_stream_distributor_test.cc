@@ -14,7 +14,7 @@
 
 #include "base/scoped_ptr.h"
 #include "mod_spdy/common/spdy_stream_distributor.h"
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -29,54 +29,54 @@ using testing::StrEq;
 const char *kMethod = "GET";
 const char *kUrl = "http://www.example.com/";
 
-class MockFlipFramerVisitor : public flip::FlipFramerVisitorInterface {
+class MockSpdyFramerVisitor : public spdy::SpdyFramerVisitorInterface {
  public:
   // on_delete gets set in the destructor. We use this to verify that
   // the visitor gets deleted when end of stream is encountered.
-  MockFlipFramerVisitor(bool *on_delete) {
+  MockSpdyFramerVisitor(bool *on_delete) {
     on_delete_ = on_delete;
   }
 
-  virtual ~MockFlipFramerVisitor() {
+  virtual ~MockSpdyFramerVisitor() {
     *on_delete_ = true;
   }
 
-  MOCK_METHOD1(OnError, void(flip::FlipFramer*));
-  MOCK_METHOD1(OnControl, void(const flip::FlipControlFrame*));
+  MOCK_METHOD1(OnError, void(spdy::SpdyFramer*));
+  MOCK_METHOD1(OnControl, void(const spdy::SpdyControlFrame*));
   MOCK_METHOD3(OnStreamFrameData,
-               void(flip::FlipStreamId, const char*, size_t));
+               void(spdy::SpdyStreamId, const char*, size_t));
 
  private:
   bool *on_delete_;
 };
 
-class MockFlipFramerVisitorFactory
-    : public mod_spdy::FlipFramerVisitorFactoryInterface {
+class MockSpdyFramerVisitorFactory
+    : public mod_spdy::SpdyFramerVisitorFactoryInterface {
  public:
-  MOCK_METHOD1(Create, flip::FlipFramerVisitorInterface*(flip::FlipStreamId));
+  MOCK_METHOD1(Create, spdy::SpdyFramerVisitorInterface*(spdy::SpdyStreamId));
 };
 
 TEST(SpdyStreamDistributorTest, Basic) {
   InSequence seq;
 
-  flip::FlipFramer distributor_framer;
-  flip::FlipFramer generator_framer;
-  MockFlipFramerVisitorFactory factory;
+  spdy::SpdyFramer distributor_framer;
+  spdy::SpdyFramer generator_framer;
+  MockSpdyFramerVisitorFactory factory;
   mod_spdy::SpdyStreamDistributor distributor(&distributor_framer, &factory);
 
-  flip::FlipHeaderBlock headers;
-  scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame_1(
+  spdy::SpdyHeaderBlock headers;
+  scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame_1(
       generator_framer.CreateSynStream(
-          1, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
 
-  scoped_ptr<flip::FlipSynStreamControlFrame> syn_stream_frame_2(
+  scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame_2(
       generator_framer.CreateSynStream(
-          2, 1, flip::CONTROL_FLAG_NONE, true, &headers));
+          2, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
 
   bool deleted_1 = false;
-  MockFlipFramerVisitor *v1 = new MockFlipFramerVisitor(&deleted_1);
+  MockSpdyFramerVisitor *v1 = new MockSpdyFramerVisitor(&deleted_1);
   bool deleted_2 = false;
-  MockFlipFramerVisitor *v2 = new MockFlipFramerVisitor(&deleted_2);
+  MockSpdyFramerVisitor *v2 = new MockSpdyFramerVisitor(&deleted_2);
 
   // Interleave calls from multiple streams in order to verify that
   // those calls are routed to the proper visitor.
@@ -113,10 +113,10 @@ TEST(SpdyStreamDistributorTest, Basic) {
   ASSERT_TRUE(deleted_2);
 
   deleted_1 = false;
-  v1 = new MockFlipFramerVisitor(&deleted_1);
+  v1 = new MockSpdyFramerVisitor(&deleted_1);
   syn_stream_frame_1.reset(
       generator_framer.CreateSynStream(
-          1, 1, flip::CONTROL_FLAG_FIN, true, &headers));
+          1, 1, spdy::CONTROL_FLAG_FIN, true, &headers));
 
   // At this point, streams 1 and 2 should have been removed from the
   // SpdyStreamDistributor. So a new SYN frame with stream id 1 should

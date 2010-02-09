@@ -18,12 +18,12 @@
 
 namespace mod_spdy {
 
-FlipFramerVisitorFactoryInterface::FlipFramerVisitorFactoryInterface() {}
-FlipFramerVisitorFactoryInterface::~FlipFramerVisitorFactoryInterface() {}
+SpdyFramerVisitorFactoryInterface::SpdyFramerVisitorFactoryInterface() {}
+SpdyFramerVisitorFactoryInterface::~SpdyFramerVisitorFactoryInterface() {}
 
 SpdyStreamDistributor::SpdyStreamDistributor(
-    flip::FlipFramer *framer,
-    FlipFramerVisitorFactoryInterface *factory)
+    spdy::SpdyFramer *framer,
+    SpdyFramerVisitorFactoryInterface *factory)
     : framer_(framer), factory_(factory) {
 }
 
@@ -31,30 +31,30 @@ SpdyStreamDistributor::~SpdyStreamDistributor() {
   STLDeleteContainerPairSecondPointers(map_.begin(), map_.end());
 }
 
-void SpdyStreamDistributor::OnError(flip::FlipFramer *framer) {
+void SpdyStreamDistributor::OnError(spdy::SpdyFramer *framer) {
   CHECK(false);
 }
 
-void SpdyStreamDistributor::OnControl(const flip::FlipControlFrame *frame) {
-  const flip::FlipStreamId stream_id = frame->stream_id();
+void SpdyStreamDistributor::OnControl(const spdy::SpdyControlFrame *frame) {
+  const spdy::SpdyStreamId stream_id = frame->stream_id();
   const bool have_stream_visitor = map_.count(stream_id) == 1;
-  const bool is_syn_stream = frame->type() == flip::SYN_STREAM;
+  const bool is_syn_stream = frame->type() == spdy::SYN_STREAM;
   CHECK(is_syn_stream != have_stream_visitor);
 
-  flip::FlipFramerVisitorInterface *visitor = GetFramerForStreamId(stream_id);
+  spdy::SpdyFramerVisitorInterface *visitor = GetFramerForStreamId(stream_id);
   visitor->OnControl(frame);
-  if (frame->flags() & flip::CONTROL_FLAG_FIN) {
+  if (frame->flags() & spdy::CONTROL_FLAG_FIN) {
     map_.erase(stream_id);
     delete visitor;
   }
 }
 
-void SpdyStreamDistributor::OnStreamFrameData(flip::FlipStreamId stream_id,
+void SpdyStreamDistributor::OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                               const char *data,
                                               size_t len) {
   CHECK(map_.find(stream_id) != map_.end());
 
-  flip::FlipFramerVisitorInterface *visitor = GetFramerForStreamId(stream_id);
+  spdy::SpdyFramerVisitorInterface *visitor = GetFramerForStreamId(stream_id);
   visitor->OnStreamFrameData(stream_id, data, len);
   if (len == 0) {
     map_.erase(stream_id);
@@ -62,8 +62,8 @@ void SpdyStreamDistributor::OnStreamFrameData(flip::FlipStreamId stream_id,
   }
 }
 
-flip::FlipFramerVisitorInterface *SpdyStreamDistributor::GetFramerForStreamId(
-    flip::FlipStreamId id) {
+spdy::SpdyFramerVisitorInterface *SpdyStreamDistributor::GetFramerForStreamId(
+    spdy::SpdyStreamId id) {
   StreamIdToVisitorMap::const_iterator it = map_.find(id);
   if (it == map_.end()) {
     map_[id] = factory_->Create(id);

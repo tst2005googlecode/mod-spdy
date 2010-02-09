@@ -19,18 +19,18 @@
       'type': '<(library)',
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/net/net.gyp:flip',
+        '<(DEPTH)/net/net.gyp:spdy',
       ],
       'include_dirs': [
         '<(DEPTH)',
       ],
       'export_dependent_settings': [
         '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/net/net.gyp:flip',
+        '<(DEPTH)/net/net.gyp:spdy',
       ],
       'sources': [
         'common/connection_context.cc',
-        'common/flip_frame_pump.cc',
+        'common/spdy_frame_pump.cc',
         'common/header_populator_interface.cc',
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
@@ -71,7 +71,7 @@
       'dependencies': [
         'spdy_apache',
         '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/net/net.gyp:flip',
+        '<(DEPTH)/net/net.gyp:spdy',
         '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
       ],
       'include_dirs': [
@@ -94,7 +94,7 @@
         '<(DEPTH)',
       ],
       'sources': [
-        'common/flip_frame_pump_test.cc',
+        'common/spdy_frame_pump_test.cc',
         'common/header_populator_interface_test.cc',
         'common/spdy_stream_distributor_test.cc',
         'common/spdy_to_http_converter_test.cc',

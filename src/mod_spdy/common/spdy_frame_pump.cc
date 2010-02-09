@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "mod_spdy/common/flip_frame_pump.h"
+#include "mod_spdy/common/spdy_frame_pump.h"
 
 #include "base/logging.h"
 #include "mod_spdy/common/input_stream_interface.h"
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 
 namespace {
 const size_t kBufSize = 4096;
@@ -24,18 +24,18 @@ const size_t kBufSize = 4096;
 
 namespace mod_spdy {
 
-FlipFramePump::FlipFramePump(InputStreamInterface *input,
-                             flip::FlipFramer *framer)
+SpdyFramePump::SpdyFramePump(InputStreamInterface *input,
+                             spdy::SpdyFramer *framer)
     : input_(input),
       framer_(framer),
       buf_(new char[kBufSize]),
       frame_bytes_consumed_(0) {
 }
 
-FlipFramePump::~FlipFramePump() {
+SpdyFramePump::~SpdyFramePump() {
 }
 
-bool FlipFramePump::PumpOneFrame() {
+bool SpdyFramePump::PumpOneFrame() {
   // Loop until we reach a frame boundary.
   do {
     if (framer_->HasError()) {
@@ -49,36 +49,36 @@ bool FlipFramePump::PumpOneFrame() {
   return framer_->MessageFullyRead();
 }
 
-bool FlipFramePump::HasError() const {
+bool SpdyFramePump::HasError() const {
   return framer_->HasError();
 }
 
-bool FlipFramePump::PumpMoreBytes() {
+bool SpdyFramePump::PumpMoreBytes() {
   // TODO: push the logic to compute number of bytes to read into
-  // FlipFramer.
+  // SpdyFramer.
   size_t common_header_bytes_remaining;
   switch (framer_->state()) {
-    case flip::FlipFramer::FLIP_RESET:
-    case flip::FlipFramer::FLIP_AUTO_RESET:
+    case spdy::SpdyFramer::SPDY_RESET:
+    case spdy::SpdyFramer::SPDY_AUTO_RESET:
       frame_bytes_consumed_ = 0;
-      return PumpAtMost(flip::FlipFrame::size());
+      return PumpAtMost(spdy::SpdyFrame::size());
 
-    case flip::FlipFramer::FLIP_READING_COMMON_HEADER:
+    case spdy::SpdyFramer::SPDY_READING_COMMON_HEADER:
       common_header_bytes_remaining =
-          flip::FlipFrame::size() - frame_bytes_consumed_;
+          spdy::SpdyFrame::size() - frame_bytes_consumed_;
       CHECK(common_header_bytes_remaining > 0);
       return PumpAtMost(common_header_bytes_remaining);
 
-    case flip::FlipFramer::FLIP_INTERPRET_CONTROL_FRAME_COMMON_HEADER:
-    case flip::FlipFramer::FLIP_CONTROL_FRAME_PAYLOAD:
-    case flip::FlipFramer::FLIP_FORWARD_STREAM_FRAME:
-    case flip::FlipFramer::FLIP_IGNORE_REMAINING_PAYLOAD:
+    case spdy::SpdyFramer::SPDY_INTERPRET_CONTROL_FRAME_COMMON_HEADER:
+    case spdy::SpdyFramer::SPDY_CONTROL_FRAME_PAYLOAD:
+    case spdy::SpdyFramer::SPDY_FORWARD_STREAM_FRAME:
+    case spdy::SpdyFramer::SPDY_IGNORE_REMAINING_PAYLOAD:
       CHECK(framer_->remaining_payload() > 0);
       return PumpAtMost(framer_->remaining_payload());
 
     // These should never happen.
-    case flip::FlipFramer::FLIP_DONE:
-    case flip::FlipFramer::FLIP_ERROR:
+    case spdy::SpdyFramer::SPDY_DONE:
+    case spdy::SpdyFramer::SPDY_ERROR:
       CHECK(false);
       return false;
 
@@ -88,7 +88,7 @@ bool FlipFramePump::PumpMoreBytes() {
   }
 }
 
-bool FlipFramePump::PumpAtMost(size_t num_bytes) {
+bool SpdyFramePump::PumpAtMost(size_t num_bytes) {
   num_bytes = std::min(num_bytes, kBufSize);
   CHECK(num_bytes > 0);
   const size_t bytes_available = input_->Read(buf_.get(), num_bytes);
@@ -101,8 +101,8 @@ bool FlipFramePump::PumpAtMost(size_t num_bytes) {
   size_t actual_bytes_consumed =
       framer_->ProcessInput(buf_.get(), bytes_available);
 
-  // For now we expect the FlipFramer to consume all available bytes.
-  // TODO: find out if it's possible for the FlipFramer to refuse to
+  // For now we expect the SpdyFramer to consume all available bytes.
+  // TODO: find out if it's possible for the SpdyFramer to refuse to
   // consume some bytes.
   CHECK(actual_bytes_consumed == bytes_available);
 

@@ -25,7 +25,7 @@
 
 namespace {
 
-flip::FlipStreamId GetRequestStreamId(request_rec* request) {
+spdy::SpdyStreamId GetRequestStreamId(request_rec* request) {
   apr_table_t* headers = request->headers_in;
   // TODO: The "x-spdy-stream-id" string really ought to be stored in a shared
   //       constant somewhere.  But where?  Anyway, that issue may be obviated
@@ -42,7 +42,7 @@ flip::FlipStreamId GetRequestStreamId(request_rec* request) {
   if (StringToInt64(value, &id)) {
     ap_log_rerror(APLOG_MARK, APLOG_NOTICE, APR_SUCCESS, request,
                   "Hooray, x-spdy-stream-id = %d", static_cast<int>(id));
-    return static_cast<flip::FlipStreamId>(id);
+    return static_cast<spdy::SpdyStreamId>(id);
   } else {
     ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, request,
                   "Couldn't parse x-spdy-stream-id: %s", value);

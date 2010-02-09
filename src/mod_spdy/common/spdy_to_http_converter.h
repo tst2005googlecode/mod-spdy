@@ -15,28 +15,28 @@
 #ifndef MOD_SPDY_SPDY_TO_HTTP_CONVERTER_H_
 #define MOD_SPDY_SPDY_TO_HTTP_CONVERTER_H_
 
-#include "net/flip/flip_framer.h"
+#include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
 class HttpStreamVisitorInterface;
 
-// FlipFramerVisitorInterface that converts FlipFrames to HTTP
+// SpdyFramerVisitorInterface that converts SpdyFrames to HTTP
 // streams, and passes the HTTP stream to the specified
 // HttpStreamVisitorInterface.
-class SpdyToHttpConverter : public flip::FlipFramerVisitorInterface {
+class SpdyToHttpConverter : public spdy::SpdyFramerVisitorInterface {
  public:
-  SpdyToHttpConverter(flip::FlipFramer *framer,
+  SpdyToHttpConverter(spdy::SpdyFramer *framer,
                       HttpStreamVisitorInterface *visitor);
   virtual ~SpdyToHttpConverter();
 
-  virtual void OnError(flip::FlipFramer *framer);
-  virtual void OnControl(const flip::FlipControlFrame *frame);
-  virtual void OnStreamFrameData(flip::FlipStreamId stream_id,
+  virtual void OnError(spdy::SpdyFramer *framer);
+  virtual void OnControl(const spdy::SpdyControlFrame *frame);
+  virtual void OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                  const char *data,
                                  size_t len);
  private:
-  flip::FlipFramer *const framer_;
+  spdy::SpdyFramer *const framer_;
   HttpStreamVisitorInterface *const visitor_;
 };
 

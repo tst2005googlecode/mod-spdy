@@ -19,13 +19,13 @@
 #include "third_party/apache_httpd/include/apr_buckets.h"
 #include "third_party/apache_httpd/include/util_filter.h"
 
-namespace flip {
-class FlipFramer;
-}  // namespace flip
+namespace spdy {
+class SpdyFramer;
+}  // namespace spdy
 
 namespace mod_spdy {
 
-class FlipFramePump;
+class SpdyFramePump;
 class HttpStreamAccumulator;
 class InputFilterInputStream;
 class SpdyToHttpConverter;
@@ -37,7 +37,7 @@ class SpdyInputFilter {
 
   // Read data from the given filter, into the given brigade. This
   // method is responsible for driving the SPDY to HTTP conversion
-  // process, by invoking the FlipFramePump if necessary, and then
+  // process, by invoking the SpdyFramePump if necessary, and then
   // reading HTTP data from the HttpStreamAccumulator.
   apr_status_t Read(ap_filter_t *filter,
                     apr_bucket_brigade *brigade,
@@ -48,9 +48,9 @@ class SpdyInputFilter {
  private:
   scoped_ptr<InputFilterInputStream> input_;
   scoped_ptr<HttpStreamAccumulator> http_accumulator_;
-  scoped_ptr<flip::FlipFramer> framer_;
+  scoped_ptr<spdy::SpdyFramer> framer_;
   scoped_ptr<SpdyToHttpConverter> converter_;
-  scoped_ptr<FlipFramePump> pump_;
+  scoped_ptr<SpdyFramePump> pump_;
 };
 
 }  // namespace mod_spdy

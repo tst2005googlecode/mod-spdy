@@ -4,7 +4,7 @@
 
 // A stubbed version of stats_table.cc that doesn't do anything. These
 // functions must be defined in order to link with code that updates
-// stats (such as flip_framer.cc).
+// stats (such as spdy_framer.cc).
 
 #include "base/stats_table.h"
 

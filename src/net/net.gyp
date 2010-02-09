@@ -8,7 +8,7 @@
   },
   'targets': [
     {
-      'target_name': 'flip',
+      'target_name': 'spdy',
       'type': '<(library)',
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
@@ -21,8 +21,8 @@
         '<(DEPTH)',
       ],
       'sources': [
-        'flip/flip_framer.cc',
-        'flip/flip_frame_builder.cc',
+        'spdy/spdy_framer.cc',
+        'spdy/spdy_frame_builder.cc',
       ],
     },
   ],
