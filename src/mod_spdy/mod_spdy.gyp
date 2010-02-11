@@ -100,5 +100,19 @@
         'common/spdy_to_http_converter_test.cc',
       ],
     },
+    {
+      'target_name': 'spdyget',
+      'type': 'executable',
+      'dependencies': [
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/net/net.gyp:spdy',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        'spdyget.cc',
+      ],
+    },
   ],
 }
