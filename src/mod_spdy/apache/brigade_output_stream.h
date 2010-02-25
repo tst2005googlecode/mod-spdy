@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifndef MOD_SPDY_APACHE_BRIGADE_OUTPUT_STREAM_H_
+#define MOD_SPDY_APACHE_BRIGADE_OUTPUT_STREAM_H_
+
 #include "third_party/apache_httpd/include/apr_buckets.h"
 #include "third_party/apache_httpd/include/util_filter.h"
 
@@ -37,3 +40,5 @@ class BrigadeOutputStream : public mod_spdy::OutputStreamInterface {
 };
 
 }  // namespace mod_spdy
+
+#endif  // MOD_SPDY_APACHE_BRIGADE_OUTPUT_STREAM_H_

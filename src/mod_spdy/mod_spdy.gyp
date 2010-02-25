@@ -59,6 +59,7 @@
         'apache/brigade_output_stream.cc',
         'apache/http_stream_accumulator.cc',
         'apache/input_filter_input_stream.cc',
+        'apache/inspect.cc',
         'apache/log_message_handler.cc',
         'apache/response_header_populator.cc',
         'apache/spdy_input_filter.cc',
