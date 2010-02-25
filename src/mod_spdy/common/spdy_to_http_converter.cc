@@ -43,8 +43,8 @@ void SpdyToHttpConverter::OnError(spdy::SpdyFramer *framer) {
 void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
   // For now we support a subset of SPDY. Crash if we receive a frame
   // we don't yet know how to process.
+  const bool is_fin = frame->flags() & spdy::CONTROL_FLAG_FIN;
   CHECK(frame->type() == spdy::SYN_STREAM);
-  CHECK(frame->flags() & spdy::CONTROL_FLAG_FIN);
 
   spdy::SpdyHeaderBlock block;
   if (!framer_->ParseHeaderBlock(frame, &block)) {
@@ -112,13 +112,20 @@ void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
   }
 
   visitor_->OnHeadersComplete();
+
+  if (is_fin) {
+    visitor_->OnComplete();
+  }
 }
 
 void SpdyToHttpConverter::OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                             const char *data,
                                             size_t len) {
-  // Not yet supported.
-  CHECK(false);
+  if (len == 0) {
+    visitor_->OnComplete();
+  } else {
+    visitor_->OnBody(data, len);
+  }
 }
 
 }  // namespace mod_spdy

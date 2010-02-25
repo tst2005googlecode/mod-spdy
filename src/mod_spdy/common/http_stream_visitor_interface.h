@@ -41,6 +41,11 @@ class HttpStreamVisitorInterface {
   // Called zero or more times, after OnHeadersComplete, once for each
   // "chunk" of the HTTP body. Chunks are delivered sequentially.
   virtual void OnBody(const char *data, size_t data_len) = 0;
+
+  // Called once, after all HTTP headers have been visited, after
+  // OnHeadersComplete has been called, and after all calls to OnBody have
+  // completed.
+  virtual void OnComplete() = 0;
 };
 
 }  // namespace mod_spdy

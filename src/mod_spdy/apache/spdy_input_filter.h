@@ -26,9 +26,9 @@ class SpdyFramer;
 namespace mod_spdy {
 
 class SpdyFramePump;
-class HttpStreamAccumulator;
 class InputFilterInputStream;
-class SpdyToHttpConverter;
+class SpdyStreamDistributor;
+class SpdyToHttpConverterFactory;
 
 class SpdyInputFilter {
  public:
@@ -47,9 +47,9 @@ class SpdyInputFilter {
 
  private:
   scoped_ptr<InputFilterInputStream> input_;
-  scoped_ptr<HttpStreamAccumulator> http_accumulator_;
   scoped_ptr<spdy::SpdyFramer> framer_;
-  scoped_ptr<SpdyToHttpConverter> converter_;
+  scoped_ptr<SpdyToHttpConverterFactory> factory_;
+  scoped_ptr<mod_spdy::SpdyStreamDistributor> distributor_;
   scoped_ptr<SpdyFramePump> pump_;
 };
 

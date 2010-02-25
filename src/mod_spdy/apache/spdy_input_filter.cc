@@ -14,24 +14,124 @@
 
 #include "mod_spdy/apache/spdy_input_filter.h"
 
+#include <queue>
+
 #include "mod_spdy/apache/http_stream_accumulator.h"
 #include "mod_spdy/apache/input_filter_input_stream.h"
 #include "mod_spdy/common/spdy_frame_pump.h"
+#include "mod_spdy/common/spdy_stream_distributor.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
+// The SpdyToHttpConverterFactory creates SpdyToHttpConverter
+// instances that write to an HttpStreamAccumulator. Each
+// SpdyToHttpConverter gets its own dedicated HttpStreamAccumulator
+// which is owned by the SpdyToHttpConverterFactory instance and
+// placed in a queue. The SpdyToHttpConverterFactory also exposes a
+// Read() method to drain the HttpStreamAccumulator instances. The
+// HttpStreamAccumulators are drained in FIFO order. This is a
+// sub-optimal implementation but it's the best we can do in a
+// non-multiplexed environment. Because this is sub-optimal, we hide
+// the class declaration inside this cc file instead of promoting it
+// to a public header file.
+class SpdyToHttpConverterFactory
+    : public mod_spdy::SpdyFramerVisitorFactoryInterface {
+ public:
+  SpdyToHttpConverterFactory(spdy::SpdyFramer *framer,
+                             apr_pool_t *pool,
+                             apr_bucket_alloc_t *bucket_alloc);
+  virtual ~SpdyToHttpConverterFactory();
+
+  virtual spdy::SpdyFramerVisitorInterface *Create(
+      spdy::SpdyStreamId stream_id);
+
+  bool IsDataAvailable() const;
+
+  // Read from the HttpStreamAccumulator queue. We read from the first
+  // HttpStreamAccumulator in the queue, and do not begin reading from
+  // the next HttpStreamAccumulator until the current
+  // HttpStreamAccumulator is complete and empty.
+  apr_status_t Read(apr_bucket_brigade *brigade,
+                    ap_input_mode_t mode,
+                    apr_read_type_e block,
+                    apr_off_t readbytes);
+
+ private:
+  typedef std::queue<mod_spdy::HttpStreamAccumulator*> AccumulatorQueue;
+
+  AccumulatorQueue queue_;
+  spdy::SpdyFramer *const framer_;
+  apr_pool_t *const pool_;
+  apr_bucket_alloc_t *const bucket_alloc_;
+};
+
+SpdyToHttpConverterFactory::SpdyToHttpConverterFactory(
+    spdy::SpdyFramer *framer, apr_pool_t *pool, apr_bucket_alloc_t *bucket_alloc)
+    : framer_(framer), pool_(pool), bucket_alloc_(bucket_alloc) {
+}
+
+SpdyToHttpConverterFactory::~SpdyToHttpConverterFactory() {
+  while (!queue_.empty()) {
+    mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
+    queue_.pop();
+    delete accumulator;
+  }
+}
+
+spdy::SpdyFramerVisitorInterface *SpdyToHttpConverterFactory::Create(
+    spdy::SpdyStreamId stream_id) {
+  mod_spdy::HttpStreamAccumulator *accumulator =
+      new mod_spdy::HttpStreamAccumulator(pool_, bucket_alloc_);
+  queue_.push(accumulator);
+  return new mod_spdy::SpdyToHttpConverter(framer_, accumulator);
+}
+
+bool SpdyToHttpConverterFactory::IsDataAvailable() const {
+  if (queue_.size() == 0) {
+    return false;
+  }
+  mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
+  const bool is_empty = accumulator->IsEmpty();
+  if (is_empty) {
+    // There should never be an HttpStreamAccumulator in the queue
+    // that's both empty and complete (it should be removed during a
+    // call to Read()).
+    DCHECK(!accumulator->IsComplete());
+  }
+  return !is_empty;
+}
+
+apr_status_t SpdyToHttpConverterFactory::Read(apr_bucket_brigade *brigade,
+                                              ap_input_mode_t mode,
+                                              apr_read_type_e block,
+                                              apr_off_t readbytes) {
+  if (!IsDataAvailable()) {
+    // TODO: return value needs to match what would be returned from
+    // core_filters.c!
+    return APR_SUCCESS;
+  }
+  mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
+  apr_status_t rv = accumulator->Read(brigade, mode, block, readbytes);
+  if (accumulator->IsComplete() && accumulator->IsEmpty()) {
+    queue_.pop();
+    delete accumulator;
+  }
+  return rv;
+}
+
 SpdyInputFilter::SpdyInputFilter(conn_rec *c)
     : input_(new InputFilterInputStream(c->pool,
                                         c->bucket_alloc)),
-      http_accumulator_(new HttpStreamAccumulator(c->pool,
-                                                  c->bucket_alloc)),
       framer_(new spdy::SpdyFramer()),
-      converter_(new SpdyToHttpConverter(framer_.get(),
-                                         http_accumulator_.get())),
+      factory_(new SpdyToHttpConverterFactory(framer_.get(),
+                                              c->pool,
+                                              c->bucket_alloc)),
+      distributor_(new mod_spdy::SpdyStreamDistributor(framer_.get(),
+                                                       factory_.get())),
       pump_(new SpdyFramePump(input_.get(), framer_.get())) {
-  framer_->set_visitor(converter_.get());
+  framer_->set_visitor(distributor_.get());
 }
 
 SpdyInputFilter::~SpdyInputFilter() {
@@ -54,19 +154,21 @@ apr_status_t SpdyInputFilter::Read(ap_filter_t *filter,
     return APR_SUCCESS;
   }
 
-  if (http_accumulator_->IsEmpty()) {
+  input_->set_filter(filter, block);
+  while (!factory_->IsDataAvailable()) {
     // If there's no data in the accumulator, attempt to pull more
     // data into it by driving the SpdyFramePump. Note that this will
     // not alway succeed; if there is no data available from the next
     // filter (e.g. no data to be read from the socket) then the
     // accumulator will not be populated with new data.
-    input_->set_filter(filter, block);
-    pump_->PumpOneFrame();
-    input_->clear_filter();
+    if (!pump_->PumpOneFrame()) {
+      break;
+    }
   }
+  input_->clear_filter();
 
-  apr_status_t rv = http_accumulator_->Read(brigade, mode, block, readbytes);
-  if (rv == APR_SUCCESS && http_accumulator_->IsEmpty()) {
+  apr_status_t rv = factory_->Read(brigade, mode, block, readbytes);
+  if (rv == APR_SUCCESS && !factory_->IsDataAvailable()) {
     // TODO: not sure this CHECK is always valid. If there's data in the
     // input then we need to pump another frame until we can satisfy the
     // request.

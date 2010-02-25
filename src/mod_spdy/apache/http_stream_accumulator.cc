@@ -75,7 +75,8 @@ HttpStreamAccumulator::HttpStreamAccumulator(
     apr_pool_t *pool, apr_bucket_alloc_t *bucket_alloc)
     : pool_(pool),
       bucket_alloc_(bucket_alloc),
-      brigade_(apr_brigade_create(pool_, bucket_alloc_)) {
+      brigade_(apr_brigade_create(pool_, bucket_alloc_)),
+      is_complete_(false) {
 }
 
 HttpStreamAccumulator::~HttpStreamAccumulator() {
@@ -85,9 +86,9 @@ HttpStreamAccumulator::~HttpStreamAccumulator() {
 void HttpStreamAccumulator::OnStatusLine(const char *method,
                                          const char *url,
                                          const char *version) {
-  // TODO: use something other than apr_uri_t since there is no way to
-  // explicitly free it (and thus it sits in the connection's memory
-  // pool for the lifetime of the connection).
+  CHECK(!is_complete_);
+
+  // TODO: use LocalPool to scope the allocation for apr_uri_t.
   apr_uri_t uri;
   apr_status_t rv = apr_uri_parse(pool_, url, &uri);
   CHECK(rv == APR_SUCCESS);
@@ -117,6 +118,8 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
 }
 
 void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {
+  CHECK(!is_complete_);
+
   const size_t header_line_bufsize =
       strlen(key) +
       kHeaderSeparatorLen +
@@ -133,14 +136,28 @@ void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {
 }
 
 void HttpStreamAccumulator::OnHeadersComplete() {
-  APR_BRIGADE_INSERT_TAIL(brigade_,
-                          apr_bucket_immortal_create(kCRLF,
-                                                     kCRLFLen,
-                                                     brigade_->bucket_alloc));
+  CHECK(!is_complete_);
+
+  FormatAndAppend(brigade_,
+                  kCRLFLen,
+                  "%s",
+                  kCRLF);
 }
 
 void HttpStreamAccumulator::OnBody(const char *data, size_t data_len) {
-  CHECK(false);
+  CHECK(!is_complete_);
+
+  APR_BRIGADE_INSERT_TAIL(brigade_,
+                          apr_bucket_heap_create(data,
+                                                 data_len,
+                                                 NULL,
+                                                 brigade_->bucket_alloc));
+}
+
+void HttpStreamAccumulator::OnComplete() {
+  CHECK(!is_complete_);
+
+  is_complete_ = true;
 }
 
 bool HttpStreamAccumulator::IsEmpty() const {
