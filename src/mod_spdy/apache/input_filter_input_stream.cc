@@ -75,6 +75,16 @@ size_t InputFilterInputStream::Read(char *data, size_t data_len) {
 
   apr_bucket *extra = NULL;
   apr_size_t bytes_read = FinishRead(data, data_len, &extra);
+  for (apr_bucket *bucket = APR_BRIGADE_FIRST(brigade_);
+       bucket != APR_BRIGADE_SENTINEL(brigade_);
+       bucket = APR_BUCKET_NEXT(bucket)) {
+    if (APR_BUCKET_IS_METADATA(bucket)) {
+      // We should be passing all metadata buckets along to the next
+      // filter.
+      LOG(WARNING) << "SpdyInputFilter ignoring metadata bucket: "
+                   << bucket->type != NULL ? bucket->type->name : "NULL";
+    }
+  }
   apr_brigade_cleanup(brigade_);
   if (extra != NULL) {
     APR_BRIGADE_INSERT_TAIL(brigade_, extra);
