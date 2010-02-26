@@ -189,7 +189,7 @@ apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
       if (block == APR_NONBLOCK_READ) {
         return APR_EAGAIN;
       } else {
-        return APR_EOF;
+        return APR_SUCCESS;
       }
     }
   }
@@ -207,10 +207,11 @@ apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
       // bucket read fails, so this should only return APR_SUCCESS
       // since we only use HEAP buckets, and reading from HEAP buckets
       // should never fail.
-      CHECK(rv == APR_SUCCESS);
+      DCHECK(rv == APR_SUCCESS);
       break;
 
     case AP_MODE_READBYTES:
+      DCHECK(readbytes > 0);
       rv = apr_brigade_partition(brigade_, readbytes, &extra);
       if (rv == APR_INCOMPLETE) {
         // If readbytes is greater than the number of bytes in the
