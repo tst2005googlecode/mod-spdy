@@ -40,6 +40,13 @@
               ],
             },
           }],
+          ['OS == "linux"', {
+            'defines': [
+              # We need to define _LARGEFILE64_SOURCE so <sys/types.h>
+              # provides off64_t.
+              '_LARGEFILE64_SOURCE',
+            ],
+          }],
         ],
       },
     },
