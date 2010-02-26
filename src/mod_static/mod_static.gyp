@@ -18,6 +18,7 @@
       'target_name': 'mod_static',
       'type': 'loadable_module',
       'dependencies': [
+        'http_response_proto',
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
       ],
@@ -27,6 +28,48 @@
       'sources': [
         'mod_static.cc',
       ],
+    },
+    {
+      'target_name': 'http_response_proto',
+      'type': '<(library)',
+      'hard_dependency': 1,
+      'dependencies': [
+          '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protobuf',
+          '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protoc',
+      ],
+      'actions': [
+        {
+          'action_name': 'generate_http_response_proto',
+          'inputs': [
+            '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)protoc<(EXECUTABLE_SUFFIX)',
+            '<(DEPTH)/mod_static/http_response.proto',
+          ],
+          'outputs': [
+            '<(SHARED_INTERMEDIATE_DIR)/mod_static/http_response.pb.cc',
+            '<(SHARED_INTERMEDIATE_DIR)/mod_static/http_response.pb.h',
+          ],
+          'action': [
+            '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)protoc<(EXECUTABLE_SUFFIX)',
+            '<(DEPTH)/mod_static/http_response.proto',
+            '--proto_path=<(DEPTH)',
+            '--cpp_out=<(SHARED_INTERMEDIATE_DIR)',
+          ],
+        },
+      ],
+      'sources': [
+        '<(SHARED_INTERMEDIATE_DIR)/mod_static/http_response.pb.cc',
+      ],
+      'include_dirs': [
+        '<(SHARED_INTERMEDIATE_DIR)',
+      ],
+      'direct_dependent_settings': {
+        'include_dirs': [
+        '<(SHARED_INTERMEDIATE_DIR)',
+        ],
+      },
+      'export_dependent_settings': [
+        '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protobuf',
+      ]
     },
   ],
 }

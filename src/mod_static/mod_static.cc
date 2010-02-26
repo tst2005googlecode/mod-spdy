@@ -14,182 +14,134 @@
 
 #include <string>
 
+#include "base/string_util.h"
+#include "mod_static/http_response.pb.h"
+#include "third_party/apache_httpd/include/apr_strings.h"
 #include "third_party/apache_httpd/include/httpd.h"
+#include "third_party/apache_httpd/include/http_core.h"
 #include "third_party/apache_httpd/include/http_config.h"
 #include "third_party/apache_httpd/include/http_log.h"
 #include "third_party/apache_httpd/include/http_protocol.h"
 #include "third_party/apache_httpd/include/http_request.h"
+#include "third_party/chromium/src/net/tools/flip_server/url_to_filename_encoder.h"
 
 namespace {
 
+// Define the static content root directory
+const char* kStaticRoot = HTTPD_ROOT "/htdocs/static/";
+
+// Default handler when the file is not found
 int static_default_handler(const std::string& filename, request_rec* r) {
   ap_set_content_type(r, "text/html; charset=utf-8");
-  apr_table_setn(r->headers_out, "Server", "static");
-  apr_table_setn(r->headers_out, "X-info", "static");
-  apr_table_setn(r->headers_out, "Set-Cookie", "mod_static=1.000");
   ap_rputs("<html><head><title>Wow, cache server</title></head>", r);
-  ap_rputs("<body><h1>Cache Server is running</h1>OK Daniel Song", r);
-  ap_rputs("<hr>", r);
+  ap_rputs("<body><h1>Cache Server is running</h1>OK", r);
+  ap_rputs("<hr>NOT FOUND:", r);
   ap_rputs(filename.c_str(), r);
   ap_rputs("</body></html>", r);
-
   return OK;
 }
 
-const char* get_next_line(const char* buffer, int* size, std::string* line) {
-  line->clear();
-  if (buffer == NULL) {
-    return NULL;
+int send_response(const http_response::HttpResponse& response,
+                  request_rec* r) {
+  const http_response::HttpHeaders& headers = response.parsed_headers();
+  const std::string& protocol_version = headers.protocol_version();
+
+  // Apache2 defaults to set the status line as HTTP/1.1
+  // If the original content was HTTP/1.0, we need to force the server
+  // to use HTTP/1.0
+  if (protocol_version == "HTTP/1.0") {
+    apr_table_set(r->subprocess_env, "force-response-1.0", "1");
   }
 
-  const char* pointer = buffer;
-  for (; *size > 0; --*size, ++pointer) {
-    if (*pointer == '\r' && *(pointer + 1) == '\n') {
-      *size -= 2;
-      return pointer + 2;
-    }
-    line->push_back(*pointer);
-  }
-  return NULL;
-}
-int process_file(const std::string& filename, request_rec* r) {
+  // Set the response status code
+  r->status = headers.status_code();
 
-  apr_file_t* fd = NULL;
-  apr_status_t rv =
-      apr_file_open(&fd, filename.c_str(),
-                    APR_READ | APR_SHARELOCK | APR_SENDFILE_ENABLED,
-                    APR_OS_DEFAULT, r->pool);
-  if (rv != APR_SUCCESS) {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, r,
-                  "Can't open %s", filename.c_str());
-    //return HTTP_NOT_FOUND;
-    return static_default_handler(filename, r);
-  }
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                "Opened %s", filename.c_str());
-
-  apr_finfo_t finfo;
-  rv = apr_file_info_get(&finfo, APR_FINFO_SIZE, fd);
-  if (rv != APR_SUCCESS) {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, r,
-                  "Can't get file size of %s", filename.c_str());
-    //return HTTP_NOT_FOUND;
-    return static_default_handler(filename, r);
-  }
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                "Get file size=%d", finfo.size);
-
-//  apr_size_t sz;
-//  ap_send_fd(fd, r, 0, finfo.size, &sz);
-//  apr_file_close(fd);
-
-  char* buffer = new char[finfo.size];
-  apr_size_t file_size = finfo.size;
-  rv = apr_file_read(fd, buffer, &file_size);
-
-  // loop through the headers
-  bool in_header = true;
-  const char* header = buffer;
-  int size = file_size;
-  std::string line;
-  bool first_line = true;
-  while (in_header) {
-    header = get_next_line(header, &size, &line);
-    if ( first_line ) {
-      if (line.compare(0, 8 ,"HTTP/1.0")) {
-        apr_table_set(r->subprocess_env, "force-response-1.0", "1");
-      }
-      first_line = false;
-      continue;
-    }
-
-    if (line.empty()) {
-      // empty line; end of header
-      break;
-    }
-
-    // parse headers
-    std::size_t pos = line.find(':');
-    if (pos == std::string::npos) {
-      ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, r,
-                   "Unkown header: %s", line.c_str());
-    }
-    std::string header = line.substr(0, pos);
-    std::string value = line.substr(pos + 2); // skip ": "
-    apr_table_add(r->headers_out, header.c_str(), value.c_str());
-    ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                 "%s: %s", header.c_str(), value.c_str());
-  }
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-               "Sending content %d bytes", size);
-
-  // send the body
-  ap_rwrite(header, size, r);
-
-  delete[] buffer;
-  return OK;
-
-}
-
-std::string get_request_filename(request_rec* r) {
-  // convert URI to filename
-  std::string filename;
-
-  char buffer[5] = {0};
-  for (const char* uri = r->unparsed_uri; *uri; ++uri) {
-    if ((*uri >= '0' && *uri <= '9') ||
-        (*uri >= 'A' && *uri <= 'Z') ||
-        (*uri >= 'a' && *uri <= 'z') ||
-        (*uri == '_') ||
-        (*uri == '/')) {
-      filename.append(1, *uri);
+  std::string content_type;
+  int header_size = headers.headers_size();
+  for (int idx = 0; idx < header_size; ++idx) {
+    const http_response::HttpHeader header = headers.headers(idx);
+    std::string lowercase_header = StringToLowerASCII(header.key());
+    if (lowercase_header == "content-encoding") {
+      // Skip original encoding, since the content is decoded.
+      // The content can be gziped with mod_delate.
+    } else if (lowercase_header == "content-length") {
+      // Skip the original content-length. Always set the content-length
+      // before sending the body.
+    } else if (lowercase_header == "content-type") {
+      // ap_set_content_type does not make a copy of the string, we need
+      // to duplicate it.
+      char* ptr = apr_pstrdup(r->pool,  header.value().c_str());
+      ap_set_content_type(r, ptr);
     } else {
-      snprintf(buffer, 4, "x%X", *uri);
-      filename.append(buffer);
+      // apr_table_add makes copies of both head key and value, so we do not
+      // have to duplicate them.
+      apr_table_add(r->headers_out,
+                    header.key().c_str(),
+                    header.value().c_str());
     }
   }
 
-  if (filename.at(filename.size() - 1) == '/') {
-    filename.append("indexx2Ehtml");
+  // Recompute the content-length, because the content is decoded.
+  ap_set_content_length(r, response.decoded_body().size());
+  // Send the body
+  ap_rwrite(response.decoded_body().c_str(),
+            response.decoded_body().size(),
+            r);
+
+  return OK;
+}
+
+// Process decoded file -- ungziped, unchunked
+int process_decoded_file(const std::string& filename, request_rec* r) {
+  FILE* file = fopen(filename.c_str(), "rb");
+  if (file == NULL) {
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, r,
+                  "Can't open file %s", filename.c_str());
+    return static_default_handler(filename, r);
   }
-  // TODO use ServerRoot
-  std::string full_filename("/usr/local/apache2/htdocs/static/");
-  full_filename.append(r->hostname);
-  full_filename.append(filename);
-  return full_filename;
+
+  int fd = fileno(file);
+  http_response::HttpResponse response;
+  if (!response.ParseFromFileDescriptor(fd)) {
+    fclose(file);
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, r,
+                  "Can't parse from fd for %s", filename.c_str());
+    return static_default_handler(filename, r);
+  }
+  fclose(file);
+
+  return send_response(response, r);
+}
+
+
+
+// Convert URI to encoded filename
+std::string get_request_filename(request_rec* r) {
+  std::string hostname(r->hostname);
+  std::string uri(r->unparsed_uri);
+  std::string url = hostname + uri;
+  std::string encoded_filename =
+      net::UrlToFilenameEncoder::Encode(url, kStaticRoot);
+  return encoded_filename;
 }
 
 int static_handler(request_rec* r) {
-  // check if request for static
+  // Check if the request is for our static content generator
+  // Decline the request so that other handler may process
   if (!r->handler || strcmp(r->handler, "static")) {
-    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, r,
+    ap_log_rerror(APLOG_MARK, APLOG_WARNING, APR_SUCCESS, r,
                   "Not static request.");
     return DECLINED;
   }
 
   // Only handle GET request
   if (r->method_number != M_GET) {
-    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, r,
+    ap_log_rerror(APLOG_MARK, APLOG_WARNING, APR_SUCCESS, r,
                   "Not GET request: %d.", r->method_number);
     return HTTP_METHOD_NOT_ALLOWED;
   }
-
-  // TODO remove DEBUG info
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                  "URI(unparsed): %s", r->unparsed_uri);
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                  "URI: %s", r->uri);
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                  "hostname: %s", r->hostname);
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                  "filename: %s", r->filename);
-
   std::string full_filename = get_request_filename(r);
-  ap_log_rerror(APLOG_MARK, APLOG_INFO, APR_SUCCESS, r,
-                  "full_filename: %s", full_filename.c_str());
-
-
-  return process_file(full_filename, r);
+  return process_decoded_file(full_filename, r);
 }
 
 void static_hook(apr_pool_t* p) {
@@ -200,7 +152,6 @@ void static_hook(apr_pool_t* p) {
 }  // namespace
 
 extern "C" {
-
   // Export our module so Apache is able to load us.
   // See http://gcc.gnu.org/wiki/Visibility for more information.
 #if defined(__linux)
@@ -233,5 +184,4 @@ extern "C" {
 #if defined(__linux)
 #pragma GCC visibility pop
 #endif
-
 }
