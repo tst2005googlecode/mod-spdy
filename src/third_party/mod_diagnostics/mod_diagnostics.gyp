@@ -26,6 +26,14 @@
       'sources': [
         'mod_diagnostics.c',
       ],
+      'conditions': [['OS == "mac"', {
+        'xcode_settings': {
+          # We must null out these two variables when building this target,
+          # because it is a loadable_module (-bundle).
+          'DYLIB_COMPATIBILITY_VERSION':'',
+          'DYLIB_CURRENT_VERSION':'',
+        }
+      }]],
     },
   ],
 }
