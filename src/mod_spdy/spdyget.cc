@@ -127,9 +127,14 @@ class FramePrettyPrinter : public spdy::SpdyFramerVisitorInterface {
 }  // namespace
 
 int main(int argc, const char* argv[]) {
-  if (argc > 2) {
-    printf("Usage: %s [url]\n"
-           "If url is not given, defaults to \"http://localhost/\"\n",
+  int port = 80;
+  if (argc == 3) {
+    port = atoi(argv[2]);
+  }
+  if (argc > 3 || port <= 0) {
+    printf("Usage: %s [url] [port]\n"
+           "If url is not given, defaults to \"http://localhost/\"\n"
+           "If port is not given, defaults to \"80\"\n",
            argv[0]);
     return 1;
   }
@@ -142,7 +147,7 @@ int main(int argc, const char* argv[]) {
 
   struct sockaddr_in serv_addr;
   serv_addr.sin_family = AF_INET;
-  serv_addr.sin_port = htons(80);  // port 80
+  serv_addr.sin_port = htons(port);  // port
   serv_addr.sin_addr.s_addr = INADDR_ANY;  // localhost
 
   if (connect(sockfd, reinterpret_cast<sockaddr*>(&serv_addr),
