@@ -53,12 +53,21 @@ apr_status_t InputFilterInputStream::PullBytesFromNextFilter(
     return APR_SUCCESS;
   }
 
-  CHECK(APR_BRIGADE_EMPTY(tmp_brigade_));
+  if (!APR_BRIGADE_EMPTY(tmp_brigade_)) {
+    DCHECK(false);
+    apr_brigade_cleanup(tmp_brigade_);
+  }
   rv = ap_get_brigade(filter_->next,
                       tmp_brigade_,
                       AP_MODE_READBYTES,
                       block_,
                       data_needed);
+
+  // Unfortunately we need to persist this value so it can later be
+  // passed on to downstream filters. Ideally we would return this
+  // value to the caller synchronously. Consider refactoring the
+  // current API to make it unnecessary to persist this value as a
+  // member.
   next_filter_rv_ = rv;
 
   // TODO: only concat data buckets? What about EOF, etc?
@@ -118,7 +127,10 @@ apr_size_t InputFilterInputStream::FinishRead(char *data,
 }
 
 bool InputFilterInputStream::IsEmpty() const {
-  CHECK(APR_BRIGADE_EMPTY(tmp_brigade_));
+  if (!APR_BRIGADE_EMPTY(tmp_brigade_)) {
+    DCHECK(false);
+    apr_brigade_cleanup(tmp_brigade_);
+  }
 
   apr_off_t brigade_len = 0;
   apr_status_t rv = apr_brigade_length(brigade_, 1, &brigade_len);

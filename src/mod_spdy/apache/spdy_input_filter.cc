@@ -49,6 +49,8 @@ class SpdyToHttpConverterFactory
 
   bool IsDataAvailable() const;
 
+  bool HasError() const;
+
   // Read from the HttpStreamAccumulator queue. We read from the first
   // HttpStreamAccumulator in the queue, and do not begin reading from
   // the next HttpStreamAccumulator until the current
@@ -93,6 +95,9 @@ bool SpdyToHttpConverterFactory::IsDataAvailable() const {
     return false;
   }
   mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
+  if (accumulator->HasError()) {
+    return false;
+  }
   const bool is_empty = accumulator->IsEmpty();
   if (is_empty) {
     // There should never be an HttpStreamAccumulator in the queue
@@ -103,10 +108,23 @@ bool SpdyToHttpConverterFactory::IsDataAvailable() const {
   return !is_empty;
 }
 
+bool SpdyToHttpConverterFactory::HasError() const {
+  if (queue_.size() == 0) {
+    return false;
+  }
+  mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
+  return accumulator->HasError();
+}
+
 apr_status_t SpdyToHttpConverterFactory::Read(apr_bucket_brigade *brigade,
                                               ap_input_mode_t mode,
                                               apr_read_type_e block,
                                               apr_off_t readbytes) {
+  if (HasError()) {
+    DCHECK(false);
+    return APR_EGENERAL;
+  }
+
   if (!IsDataAvailable()) {
     // TODO: return value needs to match what would be returned from
     // core_filters.c!
@@ -155,7 +173,7 @@ apr_status_t SpdyInputFilter::Read(ap_filter_t *filter,
   }
 
   input_->set_filter(filter, block);
-  while (!factory_->IsDataAvailable()) {
+  while (!factory_->HasError() && !factory_->IsDataAvailable()) {
     // If there's no data in the accumulator, attempt to pull more
     // data into it by driving the SpdyFramePump. Note that this will
     // not alway succeed; if there is no data available from the next
@@ -167,12 +185,15 @@ apr_status_t SpdyInputFilter::Read(ap_filter_t *filter,
   }
   input_->clear_filter();
 
+  if (factory_->HasError()) {
+    apr_bucket *bucket = apr_bucket_eos_create(filter->c->bucket_alloc);
+    APR_BRIGADE_INSERT_TAIL(brigade, bucket);
+    return APR_EGENERAL;
+  }
+
   apr_status_t rv = factory_->Read(brigade, mode, block, readbytes);
   if (rv == APR_SUCCESS && !factory_->IsDataAvailable()) {
-    // TODO: not sure this CHECK is always valid. If there's data in the
-    // input then we need to pump another frame until we can satisfy the
-    // request.
-    CHECK(input_->IsEmpty());
+    DCHECK(input_->IsEmpty());
 
     // If we've drained the internal buffers, then we should return
     // the status code we received the last time we read from the next

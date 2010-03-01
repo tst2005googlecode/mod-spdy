@@ -44,6 +44,8 @@ class HttpStreamAccumulator : public HttpStreamVisitorInterface {
 
   bool IsComplete() const { return is_complete_; }
 
+  bool HasError() const { return has_error_; }
+
   // Read data from the internal buffer via an
   // ap_in_filter_func-like interface.
   apr_status_t Read(apr_bucket_brigade *brigade,
@@ -56,6 +58,7 @@ class HttpStreamAccumulator : public HttpStreamVisitorInterface {
   apr_bucket_alloc_t *const bucket_alloc_;
   apr_bucket_brigade *brigade_;
   bool is_complete_;
+  bool has_error_;
 };
 
 }  // namespace mod_spdy

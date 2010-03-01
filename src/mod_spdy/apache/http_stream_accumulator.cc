@@ -16,6 +16,7 @@
 
 #include "base/compiler_specific.h"  // for PRINTF_FORMAT()
 #include "base/logging.h"
+#include "mod_spdy/apache/pool_util.h"
 #include "third_party/apache_httpd/include/apr_uri.h"
 
 namespace {
@@ -62,7 +63,9 @@ bool FormatAndAppend(apr_bucket_brigade *brigade,
   }
 
   const apr_off_t bytes_written = brigade_len_after - brigade_len_before;
-  CHECK(bytes_written == bufsize);
+  if (bytes_written != bufsize) {
+    return false;
+  }
 
   return true;
 }
@@ -76,7 +79,8 @@ HttpStreamAccumulator::HttpStreamAccumulator(
     : pool_(pool),
       bucket_alloc_(bucket_alloc),
       brigade_(apr_brigade_create(pool_, bucket_alloc_)),
-      is_complete_(false) {
+      is_complete_(false),
+      has_error_(false) {
 }
 
 HttpStreamAccumulator::~HttpStreamAccumulator() {
@@ -86,12 +90,36 @@ HttpStreamAccumulator::~HttpStreamAccumulator() {
 void HttpStreamAccumulator::OnStatusLine(const char *method,
                                          const char *url,
                                          const char *version) {
-  CHECK(!is_complete_);
+  if (has_error_) {
+    DCHECK(false);
+    return;
+  }
 
-  // TODO: use LocalPool to scope the allocation for apr_uri_t.
+  if (is_complete_) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
+
+  LocalPool local;
+  if (local.status() != APR_SUCCESS) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
+
   apr_uri_t uri;
-  apr_status_t rv = apr_uri_parse(pool_, url, &uri);
-  CHECK(rv == APR_SUCCESS);
+  apr_status_t rv = apr_uri_parse(local.pool(), url, &uri);
+  if (rv != APR_SUCCESS) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
+  if (strlen(uri.hostname) <= 0) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
   const char *path = uri.path;
   if (path == NULL || path[0] == '\0') {
     path = kDefaultPath;
@@ -105,20 +133,32 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
       strlen(version) +
       kCRLFLen;
 
-  FormatAndAppend(brigade_,
-                  status_line_bufsize,
-                  "%s %s %s%s",
-                  method,
-                  path,
-                  version,
-                  kCRLF);
+  if (!FormatAndAppend(brigade_,
+                       status_line_bufsize,
+                       "%s %s %s%s",
+                       method,
+                       path,
+                       version,
+                       kCRLF)) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
 
-  CHECK(strlen(uri.hostname) > 0);
   OnHeader(kHost, uri.hostname);
 }
 
 void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {
-  CHECK(!is_complete_);
+  if (has_error_) {
+    DCHECK(false);
+    return;
+  }
+
+  if (is_complete_) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
 
   const size_t header_line_bufsize =
       strlen(key) +
@@ -126,26 +166,50 @@ void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {
       strlen(value) +
       kCRLFLen;
 
-  FormatAndAppend(brigade_,
-                  header_line_bufsize,
-                  "%s%s%s%s",
-                  key,
-                  kHeaderSeparator,
-                  value,
-                  kCRLF);
+  if (!FormatAndAppend(brigade_,
+                       header_line_bufsize,
+                       "%s%s%s%s",
+                       key,
+                       kHeaderSeparator,
+                       value,
+                       kCRLF)) {
+    DCHECK(false);
+    has_error_ = true;
+  }
 }
 
 void HttpStreamAccumulator::OnHeadersComplete() {
-  CHECK(!is_complete_);
+  if (has_error_) {
+    DCHECK(false);
+    return;
+  }
 
-  FormatAndAppend(brigade_,
-                  kCRLFLen,
-                  "%s",
-                  kCRLF);
+  if (is_complete_) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
+
+  if (!FormatAndAppend(brigade_,
+                       kCRLFLen,
+                       "%s",
+                       kCRLF)) {
+    DCHECK(false);
+    has_error_ = true;
+  }
 }
 
 void HttpStreamAccumulator::OnBody(const char *data, size_t data_len) {
-  CHECK(!is_complete_);
+  if (has_error_) {
+    DCHECK(false);
+    return;
+  }
+
+  if (is_complete_) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
 
   APR_BRIGADE_INSERT_TAIL(brigade_,
                           apr_bucket_heap_create(data,
@@ -155,12 +219,26 @@ void HttpStreamAccumulator::OnBody(const char *data, size_t data_len) {
 }
 
 void HttpStreamAccumulator::OnComplete() {
-  CHECK(!is_complete_);
+  if (has_error_) {
+    DCHECK(false);
+    return;
+  }
+
+  if (is_complete_) {
+    DCHECK(false);
+    has_error_ = true;
+    return;
+  }
 
   is_complete_ = true;
 }
 
 bool HttpStreamAccumulator::IsEmpty() const {
+  if (has_error_) {
+    DCHECK(false);
+    return true;
+  }
+
   if (brigade_ == NULL) {
     return true;
   }
@@ -178,6 +256,11 @@ apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
                                          ap_input_mode_t mode,
                                          apr_read_type_e block,
                                          apr_off_t readbytes) {
+  if (has_error_) {
+    DCHECK(false);
+    return APR_EGENERAL;
+  }
+
   // From ap_core_input_filter().
   if (mode == AP_MODE_INIT) {
     return APR_SUCCESS;
