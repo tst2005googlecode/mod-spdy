@@ -14,7 +14,7 @@
 
 #include "mod_spdy/apache/brigade_output_stream.h"
 
-#include "third_party/apache_httpd/include/http_log.h"
+#include "base/logging.h"
 #include "third_party/apache_httpd/include/util_filter.h"
 
 namespace mod_spdy {
@@ -26,9 +26,9 @@ BrigadeOutputStream::BrigadeOutputStream(ap_filter_t* filter,
 bool BrigadeOutputStream::Write(const char* data, size_t num_bytes) {
   const apr_status_t status = ap_fwrite(filter_, brigade_, data, num_bytes);
   if (status != APR_SUCCESS) {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, status, filter_->r,
-                  "Failed to write data to brigade (%lu bytes)",
-                  static_cast<unsigned long>(num_bytes));
+    LOG(ERROR) << "Failed to write data to brigade ("
+               << static_cast<unsigned long>(num_bytes)
+               << " bytes). Status code: " << status;
   }
   return status == APR_SUCCESS;
 }

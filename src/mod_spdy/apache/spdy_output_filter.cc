@@ -15,7 +15,6 @@
 #include "mod_spdy/apache/spdy_output_filter.h"
 
 #include "base/string_util.h"  // For StringToInt64
-#include "third_party/apache_httpd/include/http_log.h"
 
 #include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/pool_util.h"
@@ -25,7 +24,7 @@
 
 namespace {
 
-spdy::SpdyStreamId GetRequestStreamId(request_rec* request) {
+bool GetRequestStreamId(request_rec* request, spdy::SpdyStreamId *out) {
   apr_table_t* headers = request->headers_in;
   // TODO: The "x-spdy-stream-id" string really ought to be stored in a shared
   //       constant somewhere.  But where?  Anyway, that issue may be obviated
@@ -33,22 +32,17 @@ spdy::SpdyStreamId GetRequestStreamId(request_rec* request) {
   //       the input filter to the output filter.
   const char* value = apr_table_get(headers, "x-spdy-stream-id");
   if (value == NULL) {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, request,
-                  "Request had no x-spdy-stream-id header");
-    DCHECK(false);
-    return 1;
+    LOG(DFATAL) << "Request had no x-spdy-stream-id header.";
+    return false;
   }
-  int64 id;
+  int64 id = 0;
   if (StringToInt64(value, &id)) {
-    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, APR_SUCCESS, request,
-                  "Hooray, x-spdy-stream-id = %d", static_cast<int>(id));
-    return static_cast<spdy::SpdyStreamId>(id);
-  } else {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, request,
-                  "Couldn't parse x-spdy-stream-id: %s", value);
-    DCHECK(false);
-    return 1;
+    *out = static_cast<spdy::SpdyStreamId>(id);
+    return true;
   }
+
+  LOG(DFATAL) << "Couldn't parse x-spdy-stream-id: " << value;
+  return false;
 }
 
 }  // namespace
@@ -102,12 +96,20 @@ apr_status_t SpdyOutputFilter::Write(ap_filter_t* filter,
     }
 
     // Send a SPDY data frame.
-    ok = context_->SendData(GetRequestStreamId(request),
+    spdy::SpdyStreamId stream_id = 0;
+    if (!GetRequestStreamId(request, &stream_id)) {
+      return APR_EGENERAL;
+    }
+    ok = context_->SendData(stream_id,
                             input_data, input_size,
                             is_end_of_stream, &output_stream);
   } else if (!context_->headers_have_been_sent()) {
+    spdy::SpdyStreamId stream_id = 0;
+    if (!GetRequestStreamId(request, &stream_id)) {
+      return APR_EGENERAL;
+    }
     ResponseHeaderPopulator populator(request);
-    ok = context_->SendHeaders(GetRequestStreamId(request), populator,
+    ok = context_->SendHeaders(stream_id, populator,
                                is_end_of_stream, &output_stream);
   }
 

@@ -14,9 +14,16 @@
 
 #include "mod_spdy/apache/log_message_handler.h"
 
+#include "base/debug_util.h"
 #include "base/logging.h"
+#include "mod_spdy/apache/pool_util.h"
 #include "third_party/apache_httpd/include/httpd.h"
 #include "third_party/apache_httpd/include/http_log.h"
+
+// Make sure we don't attempt to use LOG macros here, since doing so
+// would cause us to go into an infinite log loop.
+#undef LOG
+#define LOG USING_LOG_HERE_WOULD_CAUSE_INFINITE_RECURSION
 
 namespace {
 
@@ -30,24 +37,66 @@ int GetApacheLogLevel(int severity) {
       return APLOG_ERR;
     case logging::LOG_ERROR_REPORT:
       return APLOG_CRIT;
+    case logging::LOG_FATAL:
+      return APLOG_ALERT;
     default:
       return APLOG_NOTICE;
-  }  
+  }
 }
 
-bool LogMessageHandler(int severity, 
+bool LogMessageHandler(int severity,
 		       const std::string& str) {
-  // Trim the newline off the end of the message string.
+  const int log_level = GetApacheLogLevel(severity);
+
+#ifdef NDEBUG
+  // In release builds, don't log unless it's high priority (just
+  // silently consume the log message).
+  if (log_level != APLOG_ERR &&
+      log_level != APLOG_CRIT &&
+      log_level != APLOG_ALERT &&
+      log_level != APLOG_EMERG) {
+    return true;
+  }
+#endif
+
   std::string message = str;
+  if (severity == logging::LOG_FATAL) {
+    if (DebugUtil::BeingDebugged()) {
+      DebugUtil::BreakDebugger();
+    } else {
+#ifndef NDEBUG
+      // In debug, dump a stack trace on a fatal.
+      StackTrace trace;
+      std::ostringstream stream;
+      trace.OutputToStream(&stream);
+      message.append(stream.str());
+#endif
+    }
+  }
+
+  // Trim the newline off the end of the message string.
   size_t last_msg_character_index = message.length() - 1;
   if (message[last_msg_character_index] == '\n') {
     message.resize(last_msg_character_index);
   }
-  ap_log_perror(APLOG_MARK, 
-		GetApacheLogLevel(severity),
-		APR_SUCCESS, 
-		NULL,
-		"%s", message.c_str());
+
+  mod_spdy::LocalPool local_pool;
+  if (local_pool.status() == APR_SUCCESS) {
+    ap_log_perror(APLOG_MARK,
+                  log_level,
+                  APR_SUCCESS,
+                  local_pool.pool(),
+                  "%s", message.c_str());
+  } else {
+    fprintf(stderr,
+            "ap_log_perror failed. dumping to console: \n%s", message.c_str());
+  }
+
+  if (severity == logging::LOG_FATAL) {
+    // Crash the process to generate a dump.
+    DebugUtil::BreakDebugger();
+  }
+
   return true;
 }
 

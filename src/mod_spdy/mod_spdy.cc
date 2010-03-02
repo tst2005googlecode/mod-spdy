@@ -44,23 +44,12 @@ namespace {
 ap_filter_rec_t* g_spdy_output_filter;
 ap_filter_rec_t* g_spdy_input_filter;
 
-// Helper that logs information associated with a filter.  Print the given
-// message, prepended with the connection ID and the filter name.
-void TRACE_FILTER(ap_filter_t* f, const char* msg) {
-  ap_log_cerror(APLOG_MARK,    // file/line
-                APLOG_NOTICE,  // level
-                APR_SUCCESS,   // status
-                f->c,          // connection
-                "%ld %s: %s", f->c->id, f->frec->name, msg);
-}
-
 // See TAMB 8.4.2
 apr_status_t spdy_input_filter(ap_filter_t* filter,
                                apr_bucket_brigade* bb,
                                ap_input_mode_t mode,
                                apr_read_type_e block,
                                apr_off_t readbytes) {
-  TRACE_FILTER(filter, "Input");
   mod_spdy::SpdyInputFilter* input_filter =
       static_cast<mod_spdy::SpdyInputFilter*>(filter->ctx);
   return input_filter->Read(filter, bb, mode, block, readbytes);
@@ -69,7 +58,6 @@ apr_status_t spdy_input_filter(ap_filter_t* filter,
 // See TAMB 8.4.1
 apr_status_t spdy_output_filter(ap_filter_t* filter,
                                 apr_bucket_brigade* input_brigade) {
-  TRACE_FILTER(filter, "Output");
   mod_spdy::SpdyOutputFilter* output_filter =
       static_cast<mod_spdy::SpdyOutputFilter*>(filter->ctx);
   return output_filter->Write(filter, input_brigade);
@@ -88,8 +76,7 @@ void spdy_insert_filter_hook(request_rec* request) {
           &spdy_module));  // module with which desired object is associated
 
   if (conn_context == NULL) {
-    ap_log_rerror(APLOG_MARK, APLOG_WARNING, APR_SUCCESS, request,
-                  "No connection context present for mod_spdy");
+    LOG(ERROR) << "No connection context present for mod_spdy.";
     return;
   }
 
@@ -109,9 +96,6 @@ void spdy_insert_filter_hook(request_rec* request) {
  * Invoked once per connection. See http_connection.h for details.
  */
 int spdy_pre_connection_hook(conn_rec* connection, void* csd) {
-  ap_log_cerror(APLOG_MARK, APLOG_NOTICE, APR_SUCCESS, connection,
-                "%ld Registering SPDY filters", connection->id);
-
   // Create a shared context object for this connection; this object will be
   // used by both our input filter and our output filter.
   mod_spdy::ConnectionContext* context =
@@ -160,6 +144,11 @@ const ap_filter_type kSpdyOutputFilterType = AP_FTYPE_TRANSCODE;
 
 void spdy_register_hook(apr_pool_t* p) {
   mod_spdy::InstallLogMessageHandler();
+
+  // Let users know that they are installing an experimental module.
+  LOG(WARNING) << "mod_spdy is currently an experimental Apache module. "
+               << "It is not yet suitable for production environments "
+               << "and may have stability issues.";
 
   // Register a hook to be called for each new connection.  This hook will
   // set up a shared context object and install our input filter for that
