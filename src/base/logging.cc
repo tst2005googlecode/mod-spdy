@@ -39,15 +39,11 @@ typedef pthread_mutex_t* MutexHandle;
 #include <cstring>
 #include <algorithm>
 
-#ifdef USE_FULL_LOGGING
 #include "base/base_switches.h"
 #include "base/command_line.h"
-#endif  // USE_FULL_LOGGING
 #include "base/debug_util.h"
 #include "base/eintr_wrapper.h"
-#ifdef USE_FULL_LOGGING
 #include "base/lock_impl.h"
-#endif  // USE_FULL_LOGGING
 #if defined(OS_POSIX)
 #include "base/safe_strerror_posix.h"
 #endif
@@ -63,8 +59,6 @@ const char* const log_severity_names[LOG_NUM_SEVERITIES] = {
   "INFO", "WARNING", "ERROR", "ERROR_REPORT", "FATAL" };
 
 int min_log_level = 0;
-
-#ifdef USE_FULL_LOGGING
 LogLockingState lock_log_file = LOCK_LOG_FILE;
 
 // The default set here for logging_destination will only be used if
@@ -97,7 +91,6 @@ PathString* log_file_name = NULL;
 
 // this file is lazily opened and the handle may be NULL
 FileHandle log_file = NULL;
-#endif  // USE_FULL_LOGGING
 
 // what should be prepended to each message?
 bool log_process_id = false;
@@ -114,8 +107,6 @@ LogReportHandlerFunction log_report_handler = NULL;
 // A log message handler that gets notified of every log message we process.
 LogMessageHandlerFunction log_message_handler = NULL;
 
-#ifdef USE_FULL_LOGGING
-
 // The lock is used if log file locking is false. It helps us avoid problems
 // with multiple threads writing to the log file at the same time.  Use
 // LockImpl directly instead of using Lock, because Lock makes logging calls.
@@ -128,8 +119,6 @@ MutexHandle log_mutex = NULL;
 #elif defined(OS_POSIX)
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 #endif
-
-#endif // USE_FULL_LOGGING
 
 // Helper functions to wrap platform differences.
 
@@ -170,8 +159,6 @@ uint64 TickCount() {
   return absolute_micro;
 #endif
 }
-
-#ifdef USE_FULL_LOGGING
 
 void CloseFile(FileHandle log) {
 #if defined(OS_WIN)
@@ -267,6 +254,7 @@ void InitLogMutex() {
 #endif
 }
 
+#ifdef ICU_DEPENDENCY
 void InitLogging(const PathChar* new_log_file, LoggingDestination logging_dest,
                  LogLockingState lock_log, OldFileDeletionState delete_old) {
   g_enable_dcheck =
@@ -301,7 +289,7 @@ void InitLogging(const PathChar* new_log_file, LoggingDestination logging_dest,
 
   InitializeLogFileHandle();
 }
-#endif  // USE_FULL_LOGGING
+#endif  // ICU_DEPENDENCY
 
 void SetMinLogLevel(int level) {
   min_log_level = level;
@@ -312,7 +300,6 @@ int GetMinLogLevel() {
 }
 
 void SetLogFilterPrefix(const char* filter)  {
-#ifdef USE_FULL_LOGGING
   if (log_filter_prefix) {
     delete log_filter_prefix;
     log_filter_prefix = NULL;
@@ -320,7 +307,6 @@ void SetLogFilterPrefix(const char* filter)  {
 
   if (filter)
     log_filter_prefix = new std::string(filter);
-#endif  // USE_FULL_LOGGING
 }
 
 void SetLogItems(bool enable_process_id, bool enable_thread_id,
@@ -343,6 +329,7 @@ void SetLogMessageHandler(LogMessageHandlerFunction handler) {
   log_message_handler = handler;
 }
 
+
 // Displays a message box to the user with the error message in it. For
 // Windows programs, it's possible that the message loop is messed up on
 // a fatal error, and creating a MessageBox will cause that message loop
@@ -355,6 +342,7 @@ void DisplayDebugMessage(const std::string& str) {
     return;
 
 #if defined(OS_WIN)
+#ifdef ICU_DEPENDENCY
   // look for the debug dialog program next to our application
   wchar_t prog_name[MAX_PATH];
   GetModuleFileNameW(NULL, prog_name, MAX_PATH);
@@ -382,13 +370,12 @@ void DisplayDebugMessage(const std::string& str) {
     MessageBoxW(NULL, &cmdline[0], L"Fatal error",
                 MB_OK | MB_ICONHAND | MB_TOPMOST);
   }
+#endif
 #else
   fprintf(stderr, "%s\n", str.c_str());
   fflush(stderr);
 #endif
 }
-
-#ifdef USE_FULL_LOGGING
 
 #if defined(OS_WIN)
 LogMessage::SaveLastError::SaveLastError() : last_error_(::GetLastError()) {
@@ -398,8 +385,6 @@ LogMessage::SaveLastError::~SaveLastError() {
   ::SetLastError(last_error_);
 }
 #endif  // defined(OS_WIN)
-
-#endif  // USE_FULL_LOGGING
 
 LogMessage::LogMessage(const char* file, int line, LogSeverity severity,
                        int ctr)
@@ -486,7 +471,6 @@ LogMessage::~LogMessage() {
   if (log_message_handler && log_message_handler(severity_, str_newline))
     return;
 
-#ifdef USE_FULL_LOGGING
   if (log_filter_prefix && severity_ <= kMaxFilteredLogLevel &&
       str_newline.compare(message_start_, log_filter_prefix->size(),
                           log_filter_prefix->data()) != 0) {
@@ -579,8 +563,6 @@ LogMessage::~LogMessage() {
     }
   }
 
-#endif  // USE_FULL_LOGGING
-
   if (severity_ == LOG_FATAL) {
     // display a message or break into the debugger on a fatal error
     if (DebugUtil::BeingDebugged()) {
@@ -617,7 +599,6 @@ LogMessage::~LogMessage() {
       DisplayDebugMessage(stream_.str());
     }
   }
-
 }
 
 #if defined(OS_WIN)
@@ -709,13 +690,11 @@ ErrnoLogMessage::~ErrnoLogMessage() {
 #endif  // OS_WIN
 
 void CloseLogFile() {
-#ifdef USE_FULL_LOGGING
   if (!log_file)
     return;
 
   CloseFile(log_file);
   log_file = NULL;
-#endif  // USE_FULL_LOGGING
 }
 
 void RawLog(int level, const char* message) {
