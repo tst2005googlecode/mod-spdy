@@ -25,5 +25,22 @@
         'spdy/spdy_frame_builder.cc',
       ],
     },
+    {
+      'target_name': 'spdy_test',
+      'type': 'executable',
+      'dependencies': [
+        'spdy',
+        '<(DEPTH)/testing/gmock.gyp:gmock',
+        '<(DEPTH)/testing/gtest.gyp:gtest',
+        '<(DEPTH)/testing/gtest.gyp:gtestmain',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        'spdy/spdy_protocol_test.cc',
+        'spdy/spdy_framer_test.cc',
+      ],
+    },
   ],
 }
