@@ -117,7 +117,12 @@ TEST(SpdyFramePumpTest, OneSynFrame) {
   spdy::SpdyHeaderBlock headers;
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
       generator_framer.CreateSynStream(
-          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_NONE,  // flags
+          true,  // use compression
+          &headers));
 
   const size_t syn_frame_size =
       spdy::SpdyFrame::size() + syn_stream_frame->length();
@@ -194,7 +199,12 @@ TEST(SpdyFramePumpTest, OneSynFrameTrickle) {
   spdy::SpdyHeaderBlock headers;
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
       generator_framer.CreateSynStream(
-          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_NONE,  // flags
+          true,  // use compression
+          &headers));
 
   const size_t syn_frame_size =
       spdy::SpdyFrame::size() + syn_stream_frame->length();

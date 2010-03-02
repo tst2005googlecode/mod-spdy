@@ -81,9 +81,9 @@ TEST(SpdyToHttpConverterTest, UnsupportedControlFrames) {
   EXPECT_DEATH(converter.OnControl(syn_reply_frame.get()), "");
 
   // We don't handle fin stream.
-  scoped_ptr<spdy::SpdyFinStreamControlFrame> fin_stream_frame(
-      generator_framer.CreateFinStream(1, 0));
-  EXPECT_DEATH(converter.OnControl(fin_stream_frame.get()), "");
+  scoped_ptr<spdy::SpdyRstStreamControlFrame> rst_stream_frame(
+      generator_framer.CreateRstStream(1, 0));
+  EXPECT_DEATH(converter.OnControl(rst_stream_frame.get()), "");
 
   // We don't handle nop.
   scoped_ptr<spdy::SpdyControlFrame> nop_frame(
@@ -122,7 +122,12 @@ TEST(SpdyToHttpConverter, MultiFrameStream) {
 
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
       generator_framer.CreateSynStream(
-          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_NONE,  // flags
+          true,  // use compression
+          &headers));
   converter.OnControl(syn_stream_frame.get());
 
   converter.OnStreamFrameData(1, kMethod, strlen(kMethod));
@@ -148,7 +153,12 @@ TEST(SpdyToHttpConverterTest, MultipleSynFrames) {
   for (int i = 0; i < 10; ++i) {
     scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
         generator_framer.CreateSynStream(
-            i, 1, spdy::CONTROL_FLAG_FIN, true, &headers));
+            i,  // stream ID
+            0,  // associated stream ID
+            1,  // priority
+            spdy::CONTROL_FLAG_FIN,  // flags
+            true,  // use compression
+            &headers));
 
     EXPECT_CALL(visitor,
                 OnStatusLine(StrEq(kMethod),
@@ -194,7 +204,12 @@ TEST(SpdyToHttpConverterTest, SynFrameWithHeaders) {
 
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
       generator_framer.CreateSynStream(
-          1, 1, spdy::CONTROL_FLAG_FIN, true, &headers));
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_FIN,  // flags
+          true,  // use compression
+          &headers));
 
   // We expect a call to OnStatusLine(), followed by two calls to
   // OnHeader() (the order of the calls to OnHeader() is

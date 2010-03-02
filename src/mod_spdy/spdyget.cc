@@ -173,7 +173,8 @@ int main(int argc, const char* argv[]) {
     headers["version"] = "HTTP/1.1";
 
     scoped_ptr<spdy::SpdyControlFrame> request_frame(
-        request_framer.CreateSynStream(stream_id,  // stream id
+        request_framer.CreateSynStream(stream_id,  // stream ID
+                                       0,  // associated stream ID
                                        1,  // priority
                                        spdy::CONTROL_FLAG_FIN,  // flags
                                        true,  // use compression

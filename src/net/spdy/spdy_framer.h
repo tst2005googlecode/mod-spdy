@@ -59,7 +59,7 @@ class SpdyFramerVisitorInterface {
   // |len| The length of the data buffer.
   // When the other side has finished sending data on this stream,
   // this method will be called with a zero-length buffer.
-  virtual void OnStreamFrameData(spdy::SpdyStreamId stream_id,
+  virtual void OnStreamFrameData(SpdyStreamId stream_id,
                                  const char* data,
                                  size_t len) = 0;
 };
@@ -84,12 +84,14 @@ class SpdyFramer {
   // SPDY error codes.
   enum SpdyError {
     SPDY_NO_ERROR,
-    SPDY_UNKNOWN_CONTROL_TYPE,       // Control frame is an unknown type.
     SPDY_INVALID_CONTROL_FRAME,      // Control frame is mal-formatted.
     SPDY_CONTROL_PAYLOAD_TOO_LARGE,  // Control frame payload was too large.
     SPDY_ZLIB_INIT_FAILURE,          // The Zlib library could not initialize.
     SPDY_UNSUPPORTED_VERSION,        // Control frame has unsupported version.
     SPDY_DECOMPRESS_FAILURE,         // There was an error decompressing.
+    SPDY_COMPRESS_FAILURE,           // There was an error compressing.
+
+    LAST_ERROR,  // Must be the last entry in the enum.
   };
 
   // Create a new Framer.
@@ -133,19 +135,21 @@ class SpdyFramer {
   bool ParseHeaderBlock(const SpdyFrame* frame, SpdyHeaderBlock* block);
 
   // Create a SpdySynStreamControlFrame.
-  // |stream_id| is the stream for this frame.
-  // |priority| is the priority (0-3) for this frame.
+  // |stream_id| is the id for this stream.
+  // |associated_stream_id| is the associated stream id for this stream.
+  // |priority| is the priority (0-3) for this stream.
   // |flags| is the flags to use with the data.
   //    To mark this frame as the last frame, enable CONTROL_FLAG_FIN.
   // |compressed| specifies whether the frame should be compressed.
   // |headers| is the header block to include in the frame.
   SpdySynStreamControlFrame* CreateSynStream(SpdyStreamId stream_id,
+                                             SpdyStreamId associated_stream_id,
                                              int priority,
                                              SpdyControlFlags flags,
                                              bool compressed,
                                              SpdyHeaderBlock* headers);
 
-  static SpdyFinStreamControlFrame* CreateFinStream(SpdyStreamId stream_id,
+  static SpdyRstStreamControlFrame* CreateRstStream(SpdyStreamId stream_id,
                                                     int status);
 
   // Create a SpdySynReplyControlFrame.
@@ -185,23 +189,28 @@ class SpdyFramer {
   // Compresses a SpdyFrame.
   // On success, returns a new SpdyFrame with the payload compressed.
   // Compression state is maintained as part of the SpdyFramer.
-  // Returned frame must be freed with free().
+  // Returned frame must be freed with "delete".
   // On failure, returns NULL.
   SpdyFrame* CompressFrame(const SpdyFrame* frame);
 
   // Decompresses a SpdyFrame.
   // On success, returns a new SpdyFrame with the payload decompressed.
   // Compression state is maintained as part of the SpdyFramer.
-  // Returned frame must be freed with free().
+  // Returned frame must be freed with "delete".
   // On failure, returns NULL.
   SpdyFrame* DecompressFrame(const SpdyFrame* frame);
 
   // Create a copy of a frame.
+  // Returned frame must be freed with "delete".
   SpdyFrame* DuplicateFrame(const SpdyFrame* frame);
 
   // For debugging.
   static const char* StateToString(int state);
   static const char* ErrorCodeToString(int error_code);
+
+  // Export the compression dictionary
+  static const char kDictionary[];
+  static const int kDictionarySize;
 
  protected:
   FRIEND_TEST(SpdyFramerTest, HeaderBlockBarfsOnOutOfOrderHeaders);

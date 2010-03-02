@@ -67,11 +67,21 @@ TEST(SpdyStreamDistributorTest, Basic) {
   spdy::SpdyHeaderBlock headers;
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame_1(
       generator_framer.CreateSynStream(
-          1, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_NONE,  // flags
+          true,  // use compression
+          &headers));
 
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame_2(
       generator_framer.CreateSynStream(
-          2, 1, spdy::CONTROL_FLAG_NONE, true, &headers));
+          2,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_NONE,  // flags
+          true,  // use compression
+          &headers));
 
   bool deleted_1 = false;
   MockSpdyFramerVisitor *v1 = new MockSpdyFramerVisitor(&deleted_1);
@@ -116,7 +126,12 @@ TEST(SpdyStreamDistributorTest, Basic) {
   v1 = new MockSpdyFramerVisitor(&deleted_1);
   syn_stream_frame_1.reset(
       generator_framer.CreateSynStream(
-          1, 1, spdy::CONTROL_FLAG_FIN, true, &headers));
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_FIN,  // flags
+          true,  // use compression
+          &headers));
 
   // At this point, streams 1 and 2 should have been removed from the
   // SpdyStreamDistributor. So a new SYN frame with stream id 1 should
