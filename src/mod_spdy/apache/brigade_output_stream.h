@@ -32,9 +32,12 @@ class BrigadeOutputStream : public mod_spdy::OutputStreamInterface {
 
   virtual bool Write(const char* data, size_t num_bytes);
 
+  apr_status_t status() { return status_; }
+
  private:
   ap_filter_t* const filter_;
   apr_bucket_brigade* const brigade_;
+  apr_status_t status_;
 
   DISALLOW_COPY_AND_ASSIGN(BrigadeOutputStream);
 };

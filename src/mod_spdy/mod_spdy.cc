@@ -82,7 +82,7 @@ void spdy_insert_filter_hook(request_rec* request) {
 
   // Create a context object for this request's output filter.
   mod_spdy::SpdyOutputFilter* output_filter =
-      new mod_spdy::SpdyOutputFilter(conn_context);
+      new mod_spdy::SpdyOutputFilter(conn_context, request);
   PoolRegisterDelete(request->pool, output_filter);
 
   // Insert the output filter into this request's filter chain.

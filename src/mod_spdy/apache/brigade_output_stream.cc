@@ -21,16 +21,16 @@ namespace mod_spdy {
 
 BrigadeOutputStream::BrigadeOutputStream(ap_filter_t* filter,
                                          apr_bucket_brigade* brigade)
-    : filter_(filter), brigade_(brigade) {}
+    : filter_(filter), brigade_(brigade), status_(APR_SUCCESS) {}
 
 bool BrigadeOutputStream::Write(const char* data, size_t num_bytes) {
-  const apr_status_t status = ap_fwrite(filter_, brigade_, data, num_bytes);
-  if (status != APR_SUCCESS) {
+  status_ = ap_fwrite(filter_, brigade_, data, num_bytes);
+  if (status_ != APR_SUCCESS) {
     LOG(ERROR) << "Failed to write data to brigade ("
                << static_cast<unsigned long>(num_bytes)
-               << " bytes). Status code: " << status;
+               << " bytes).  Status code: " << status_;
   }
-  return status == APR_SUCCESS;
+  return status_ == APR_SUCCESS;
 }
 
 }  // namespace mod_spdy

@@ -12,17 +12,53 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// There are a number of things that every output filter should do, according
+// to <http://httpd.apache.org/docs/2.3/developer/output-filters.html>.  In
+// short, these things are:
+//
+//   - Respect FLUSH and EOS metadata buckets, and pass other metadata buckets
+//     down the chain.  Ignore all buckets after an EOS.
+//
+//   - Don't allocate long-lived memory on every invokation.  In particular, if
+//     you need a temp brigade, allocate it once and then reuse it each time.
+//
+//   - Never pass an empty brigade down the chain, but be ready to accept one
+//     and do nothing.
+//
+//   - Calling apr_brigade_destroy can be dangerous; prefer using
+//     apr_brigade_cleanup instead.
+//
+//   - Don't read the entire brigade into memory at once; the brigade may, for
+//     example, contain a FILE bucket representing a 42 GB file.  Instead, use
+//     apr_bucket_read to read a reasonable portion of the bucket, put the
+//     resulting (small) bucket into a temp brigade, pass it down the chain,
+//     and then clean up the temp brigade before continuing.
+//
+//   - If a bucket is to be saved beyond the scope of the filter invokation
+//     that first received it, it must be "set aside" using the
+//     apr_bucket_setaside macro.
+//
+//   - When reading a bucket, first use a non-blocking read; if it fails with
+//     APR_EAGAIN, send a FLUSH bucket down the chain, and then read the bucket
+//     with a blocking read.
+//
+// This code attempts to follow these rules.
+
 #include "mod_spdy/apache/spdy_output_filter.h"
 
 #include "base/string_util.h"  // For StringToInt64
 
 #include "mod_spdy/apache/brigade_output_stream.h"
-#include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/output_filter_context.h"
 
 namespace {
+
+// TODO The SPDY folks say that smallish (~4kB) data frames are good; however,
+//      we should experiment later on to see what value here performs the best,
+//      and/or alter the logic below that deals with it.
+const size_t kTargetDataFrameBytes = 4096;
 
 bool GetRequestStreamId(request_rec* request, spdy::SpdyStreamId *out) {
   apr_table_t* headers = request->headers_in;
@@ -49,79 +85,168 @@ bool GetRequestStreamId(request_rec* request, spdy::SpdyStreamId *out) {
 
 namespace mod_spdy {
 
-SpdyOutputFilter::SpdyOutputFilter(ConnectionContext* conn_context)
-    : context_(new OutputFilterContext(conn_context)) {}
+SpdyOutputFilter::SpdyOutputFilter(ConnectionContext* conn_context,
+                                   request_rec* request)
+    : context_(new OutputFilterContext(conn_context)),
+      output_brigade_(apr_brigade_create(request->pool,
+                                         request->connection->bucket_alloc)),
+      metadata_brigade_(apr_brigade_create(request->pool,
+                                           request->connection->bucket_alloc)),
+      end_of_stream_(false) {}
 
 SpdyOutputFilter::~SpdyOutputFilter() {}
 
+// Execute the given expression; if it returns a status code other than
+// APR_SUCCESS, log an error and return from the current function with that
+// status code as a value.
+#define RETURN_IF_NOT_SUCCESS(expr)                                  \
+  do {                                                               \
+    const apr_status_t status(expr);                                 \
+    if (status != APR_SUCCESS) {                                     \
+      LOG(ERROR) << #expr << " failed with status code " << status;  \
+      return status;                                                 \
+    }                                                                \
+  } while (false)
+
 apr_status_t SpdyOutputFilter::Write(ap_filter_t* filter,
                                      apr_bucket_brigade* input_brigade) {
-  // Determine whether the input brigade contains an end-of-stream bucket.
-  bool is_end_of_stream = false;
+  // According to the page at
+  //   http://httpd.apache.org/docs/2.3/developer/output-filters.html
+  // we should never pass an empty brigade down the chain, but to be safe, we
+  // should be prepared to accept one and do nothing.
+  if (APR_BRIGADE_EMPTY(input_brigade)) {
+    LOG(WARNING) << "SpdyOutputFilter::Write received an empty brigade.";
+    return APR_SUCCESS;
+  }
+
+  // We shouldn't be getting any more buckets after an EOS, but if we do, we're
+  // supposed to ignore them.
+  if (end_of_stream_) {
+    LOG(ERROR) << "SpdyOutputFilter::Write was called after EOS";
+    return APR_SUCCESS;
+  }
+
+  request_rec* const request = filter->r;
+
   for (apr_bucket* bucket = APR_BRIGADE_FIRST(input_brigade);
        bucket != APR_BRIGADE_SENTINEL(input_brigade);
        bucket = APR_BUCKET_NEXT(bucket)) {
-    if (APR_BUCKET_IS_EOS(bucket)) {
-      is_end_of_stream = true;
-      break;
+    if (APR_BUCKET_IS_METADATA(bucket)) {
+      if (APR_BUCKET_IS_EOS(bucket)) {
+        // EOS bucket -- there should be no more buckets in this stream.
+        if (APR_BUCKET_NEXT(bucket) != APR_BRIGADE_SENTINEL(input_brigade)) {
+          LOG(ERROR) << "SpdyOutputFilter::Write saw buckets after an EOS";
+        }
+        end_of_stream_ = true;
+        return Send(filter, false);
+      } else if (APR_BUCKET_IS_FLUSH(bucket)) {
+        // FLUSH bucket -- call Send() immediately and send a FLUSH bucket.
+        RETURN_IF_NOT_SUCCESS(Send(filter, true));
+      } else {
+        // Unknown metadata bucket -- send it next time we call Send().
+        APR_BUCKET_REMOVE(bucket);
+        RETURN_IF_NOT_SUCCESS(apr_bucket_setaside(bucket, request->pool));
+        APR_BRIGADE_INSERT_TAIL(metadata_brigade_, bucket);
+      }
+    }
+    // Ignore data buckets that represent HTTP headers.
+    // N.B. The sent_bodyct field is not really documented (it seems to be
+    // reserved for the use of core filters) but it seems to do what we want.
+    // It starts out as 0, and is set to 1 by the core HTTP_HEADER filter to
+    // indicate when body data has begun to be sent.
+    else if (request->sent_bodyct) {
+      // Data bucket -- get ready to read.
+      const char* data = NULL;
+      apr_size_t data_length = 0;
+
+      // First, try a non-blocking read.
+      const apr_status_t status = apr_bucket_read(bucket, &data, &data_length,
+                                                  APR_NONBLOCK_READ);
+      if (status == APR_SUCCESS) {
+        data_buffer_.append(data, static_cast<size_t>(data_length));
+      } else if (APR_STATUS_IS_EAGAIN(status)) {
+        // Non-blocking read failed with EAGAIN, so do a blocking read (but
+        // flush first, with a FLUSH bucket, in case we block for a long time).
+        RETURN_IF_NOT_SUCCESS(Send(filter, true));
+        RETURN_IF_NOT_SUCCESS(apr_bucket_read(bucket, &data, &data_length,
+                                              APR_BLOCK_READ));
+        data_buffer_.append(data, static_cast<size_t>(data_length));
+      } else {
+        return status;  // failure
+      }
+
+      // If we've buffered enough data to be worth sending a SPDY data frame,
+      // do so.
+      if (data_buffer_.size() >= kTargetDataFrameBytes) {
+        RETURN_IF_NOT_SUCCESS(Send(filter, false));
+      }
     }
   }
 
-  // Create an output brigade/stream.
-  request_rec* const request = filter->r;
-  apr_bucket_brigade* const output_brigade =
-      apr_brigade_create(request->pool, request->connection->bucket_alloc);
-  BrigadeOutputStream output_stream(filter, output_brigade);
+  // If we haven't sent the headers yet (because we've never called Send()),
+  // then go ahead and do that now; otherwise, we're done.
+  if (!context_->headers_have_been_sent()) {
+    return Send(filter, false);
+  } else {
+    return APR_SUCCESS;
+  }
+}
 
-  // Convert to SPDY.
-  bool ok = true;
-  // N.B. The sent_bodyct field is not really documented (it seems to be
-  // reserved for the use of core filters) but it seems to do what we want.
-  // It starts out as 0, and is set to 1 by the core HTTP_HEADER filter to
-  // indicate when body data has begun to be sent.
-  if (request->sent_bodyct) {
-    LocalPool local;
-    if (local.status() != APR_SUCCESS) {
-      return local.status();
-    }
-
-    // Read all the data from the input brigade.
-    char* input_data = NULL;
-    apr_size_t input_size = 0;
-    const apr_status_t read_status =
-        apr_brigade_pflatten(input_brigade, &input_data, &input_size,
-                             local.pool());
-    if (read_status != APR_SUCCESS) {
-      return read_status;
-    }
-
-    // Send a SPDY data frame.
-    spdy::SpdyStreamId stream_id = 0;
-    if (!GetRequestStreamId(request, &stream_id)) {
-      return APR_EGENERAL;
-    }
-    ok = context_->SendData(stream_id,
-                            input_data, input_size,
-                            is_end_of_stream, &output_stream);
-  } else if (!context_->headers_have_been_sent()) {
-    spdy::SpdyStreamId stream_id = 0;
-    if (!GetRequestStreamId(request, &stream_id)) {
-      return APR_EGENERAL;
-    }
-    ResponseHeaderPopulator populator(request);
-    ok = context_->SendHeaders(stream_id, populator,
-                               is_end_of_stream, &output_stream);
+apr_status_t SpdyOutputFilter::Send(ap_filter_t* filter,
+                                    bool send_flush_bucket) {
+  // TODO: It would be better to store the stream ID in the OutputFilterContext
+  //       object, so that we don't have to reparse it here every time.
+  spdy::SpdyStreamId stream_id = 0;
+  if (!GetRequestStreamId(filter->r, &stream_id)) {
+    return APR_EGENERAL;
   }
 
-  if (is_end_of_stream) {
+  // Prepare a fresh output stream.
+  RETURN_IF_NOT_SUCCESS(apr_brigade_cleanup(output_brigade_));
+  BrigadeOutputStream output_stream(filter, output_brigade_);
+  bool headers_fin = false;  // true if we sent a SYN_REPLY frame with FLAG_FIN
+
+  // Send headers if we haven't yet.
+  if (!context_->headers_have_been_sent()) {
+    ResponseHeaderPopulator populator(filter->r);
+    headers_fin = end_of_stream_ && data_buffer_.empty();
+    context_->SendHeaders(stream_id, populator, headers_fin, &output_stream);
+    RETURN_IF_NOT_SUCCESS(output_stream.status());
+  }
+
+  // If we have data waiting, or if we need to send a frame with FLAG_FIN, send
+  // a data frame.
+  if (!data_buffer_.empty() || (end_of_stream_ && !headers_fin)) {
+    context_->SendData(stream_id, data_buffer_.data(), data_buffer_.size(),
+                       end_of_stream_, &output_stream);
+    RETURN_IF_NOT_SUCCESS(output_stream.status());
+    data_buffer_.clear();
+  }
+
+  // Send any unknown metadata we've got lying around.
+  APR_BRIGADE_CONCAT(output_brigade_, metadata_brigade_);
+  DCHECK(APR_BRIGADE_EMPTY(metadata_brigade_));
+
+  // Send a FLUSH bucket, if necessary.
+  if (send_flush_bucket) {
     APR_BRIGADE_INSERT_TAIL(
-        output_brigade,
-        apr_bucket_eos_create(output_brigade->bucket_alloc));
+        output_brigade_,
+        apr_bucket_flush_create(output_brigade_->bucket_alloc));
   }
 
-  DCHECK(ok);  // TODO: Maybe we should return an error code if ok is false?
+  // Send an EOS bucket, if necessary.
+  if (end_of_stream_) {
+    APR_BRIGADE_INSERT_TAIL(
+        output_brigade_,
+        apr_bucket_eos_create(output_brigade_->bucket_alloc));
+  }
 
-  return ap_pass_brigade(filter->next, output_brigade);
+  // Avoid sending an empty brigade.
+  if (APR_BRIGADE_EMPTY(output_brigade_)) {
+    return APR_SUCCESS;
+  }
+
+  return ap_pass_brigade(filter->next, output_brigade_);
 }
 
 }  // namespace mod_spdy

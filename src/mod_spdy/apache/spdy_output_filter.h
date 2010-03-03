@@ -15,6 +15,8 @@
 #ifndef MOD_SPDY_APACHE_SPDY_OUTPUT_FILTER_H_
 #define MOD_SPDY_APACHE_SPDY_OUTPUT_FILTER_H_
 
+#include <string>
+
 #include "base/basictypes.h"
 #include "base/scoped_ptr.h"
 #include "third_party/apache_httpd/include/apr_buckets.h"
@@ -27,17 +29,26 @@ class OutputFilterContext;
 
 class SpdyOutputFilter {
  public:
-  explicit SpdyOutputFilter(ConnectionContext* conn_context);
+  SpdyOutputFilter(ConnectionContext* conn_context,
+                   request_rec* request);
   ~SpdyOutputFilter();
 
   // Read data from the given brigade and write the result through the given
   // filter. This method is responsible for driving the HTTP to SPDY conversion
   // process.
-  apr_status_t Write(ap_filter_t* filter,
-                     apr_bucket_brigade* input_brigade);
+  apr_status_t Write(ap_filter_t* filter, apr_bucket_brigade* input_brigade);
 
  private:
+  // Send headers, data, and unknown metadata buckets, as necessary.  If
+  // send_flush_bucket is true, also send a FLUSH bucket.  If end_of_stream_ is
+  // true, also send an EOS bucket.
+  apr_status_t Send(ap_filter_t* filter, bool send_flush_bucket);
+
   scoped_ptr<OutputFilterContext> context_;
+  std::string data_buffer_;
+  apr_bucket_brigade* const output_brigade_;
+  apr_bucket_brigade* const metadata_brigade_;
+  bool end_of_stream_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyOutputFilter);
 };
