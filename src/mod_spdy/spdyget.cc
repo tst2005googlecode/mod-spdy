@@ -31,7 +31,6 @@ namespace {
 // Read a line of text from stdin.
 std::string ReadLine() {
   std::string str;
-  char c;
   while (true) {
     const unsigned char c = getchar();
     if (c < ' ' || '\x7f' <= c) {

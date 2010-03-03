@@ -28,7 +28,7 @@
 namespace {
 
 // Define the static content root directory
-const char* kStaticRoot = HTTPD_ROOT "/htdocs/static/";
+const char* kStaticDir = "/static/";
 
 // Default handler when the file is not found
 int static_default_handler(const std::string& filename, request_rec* r) {
@@ -117,11 +117,13 @@ int process_decoded_file(const std::string& filename, request_rec* r) {
 
 // Convert URI to encoded filename
 std::string get_request_filename(request_rec* r) {
+  std::string static_root = ap_document_root(r);
+  static_root.append(kStaticDir);
   std::string hostname(r->hostname);
   std::string uri(r->unparsed_uri);
   std::string url = hostname + uri;
   std::string encoded_filename =
-      net::UrlToFilenameEncoder::Encode(url, kStaticRoot);
+      net::UrlToFilenameEncoder::Encode(url, static_root);
   return encoded_filename;
 }
 
