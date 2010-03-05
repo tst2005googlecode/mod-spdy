@@ -16,28 +16,22 @@
 #define MOD_SPDY_APACHE_BRIGADE_OUTPUT_STREAM_H_
 
 #include "third_party/apache_httpd/include/apr_buckets.h"
-#include "third_party/apache_httpd/include/util_filter.h"
 
 #include "base/basictypes.h"
 #include "mod_spdy/common/output_stream_interface.h"
 
 namespace mod_spdy {
 
-// Implementation of OutputStreamInterface that writes into a bucket brigade
-// using Apache's stdio-style brigade functions (see TAMB 8.11)
+// Implementation of OutputStreamInterface that appends data to the end of a
+// bucket brigade.
 class BrigadeOutputStream : public mod_spdy::OutputStreamInterface {
  public:
-  BrigadeOutputStream(ap_filter_t* filter,
-                      apr_bucket_brigade* brigade);
+  explicit BrigadeOutputStream(apr_bucket_brigade* brigade);
 
   virtual bool Write(const char* data, size_t num_bytes);
 
-  apr_status_t status() { return status_; }
-
  private:
-  ap_filter_t* const filter_;
   apr_bucket_brigade* const brigade_;
-  apr_status_t status_;
 
   DISALLOW_COPY_AND_ASSIGN(BrigadeOutputStream);
 };

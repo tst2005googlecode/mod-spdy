@@ -14,23 +14,20 @@
 
 #include "mod_spdy/apache/brigade_output_stream.h"
 
-#include "base/logging.h"
-#include "third_party/apache_httpd/include/util_filter.h"
-
 namespace mod_spdy {
 
-BrigadeOutputStream::BrigadeOutputStream(ap_filter_t* filter,
-                                         apr_bucket_brigade* brigade)
-    : filter_(filter), brigade_(brigade), status_(APR_SUCCESS) {}
+BrigadeOutputStream::BrigadeOutputStream(apr_bucket_brigade* brigade)
+    : brigade_(brigade) {}
 
 bool BrigadeOutputStream::Write(const char* data, size_t num_bytes) {
-  status_ = ap_fwrite(filter_, brigade_, data, num_bytes);
-  if (status_ != APR_SUCCESS) {
-    LOG(ERROR) << "Failed to write data to brigade ("
-               << static_cast<unsigned long>(num_bytes)
-               << " bytes).  Status code: " << status_;
-  }
-  return status_ == APR_SUCCESS;
+  // Pass NULL for the flush function (and flush function context) here, to
+  // indicate that apr_brigade_write shouldn't try to empty out the brigade,
+  // even if we push a lot of data into it.  Note that apr_brigade_write
+  // promises to always return APR_SUCCESS if we pass NULL for the flush
+  // function, so we don't need to check the return value.
+  apr_brigade_write(brigade_, NULL, NULL, data,
+                    static_cast<apr_size_t>(num_bytes));
+  return true;
 }
 
 }  // namespace mod_spdy

@@ -203,7 +203,7 @@ apr_status_t SpdyOutputFilter::Send(ap_filter_t* filter,
 
   // Prepare a fresh output stream.
   RETURN_IF_NOT_SUCCESS(apr_brigade_cleanup(output_brigade_));
-  BrigadeOutputStream output_stream(filter, output_brigade_);
+  BrigadeOutputStream output_stream(output_brigade_);
   bool headers_fin = false;  // true if we sent a SYN_REPLY frame with FLAG_FIN
 
   // Send headers if we haven't yet.
@@ -211,7 +211,6 @@ apr_status_t SpdyOutputFilter::Send(ap_filter_t* filter,
     ResponseHeaderPopulator populator(filter->r);
     headers_fin = end_of_stream_ && data_buffer_.empty();
     context_->SendHeaders(stream_id, populator, headers_fin, &output_stream);
-    RETURN_IF_NOT_SUCCESS(output_stream.status());
   }
 
   // If we have data waiting, or if we need to send a frame with FLAG_FIN, send
@@ -219,7 +218,6 @@ apr_status_t SpdyOutputFilter::Send(ap_filter_t* filter,
   if (!data_buffer_.empty() || (end_of_stream_ && !headers_fin)) {
     context_->SendData(stream_id, data_buffer_.data(), data_buffer_.size(),
                        end_of_stream_, &output_stream);
-    RETURN_IF_NOT_SUCCESS(output_stream.status());
     data_buffer_.clear();
   }
 
