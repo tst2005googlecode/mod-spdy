@@ -46,6 +46,11 @@ class HttpStreamVisitorInterface {
   // OnHeadersComplete has been called, and after all calls to OnBody have
   // completed.
   virtual void OnComplete() = 0;
+
+  // Called if an abnormal termination of the stream occurs. If
+  // OnTerminate gets called, no other methods will be called on the
+  // visitor.
+  virtual void OnTerminate() = 0;
 };
 
 }  // namespace mod_spdy

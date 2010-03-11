@@ -176,9 +176,10 @@ TEST(SpdyFramePumpTest, OneSynFrame) {
 // will try to read, given the current offset and the size of the
 // frame.
 size_t ComputeExpectedReadLen(size_t offset, size_t syn_frame_size) {
-  // If offset is less than 8, we're trying to read the header
-  // block. Otherwise, we're trying to read to the end of the frame.
-  if (offset < 8) {
+  // If offset is less than the frame size, we're trying to read the
+  // header block. Otherwise, we're trying to read to the end of the
+  // frame.
+  if (offset < spdy::SpdyFrame::size()) {
     return spdy::SpdyFrame::size() - offset;
   } else {
     return syn_frame_size - offset;

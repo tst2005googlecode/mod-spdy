@@ -35,9 +35,15 @@ class SpdyToHttpConverter : public spdy::SpdyFramerVisitorInterface {
   virtual void OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                  const char *data,
                                  size_t len);
- private:
+
+  bool HasError() const { return error_; }
+
+private:
+  void OnSynStream(const spdy::SpdyControlFrame *frame);
+
   spdy::SpdyFramer *const framer_;
   HttpStreamVisitorInterface *const visitor_;
+  bool error_;
 };
 
 }  // namespace mod_spdy

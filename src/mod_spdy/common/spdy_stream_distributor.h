@@ -43,7 +43,14 @@ class SpdyStreamDistributor : public spdy::SpdyFramerVisitorInterface {
                                  const char *data,
                                  size_t len);
 
+  bool HasError() const { return error_; }
+
 private:
+  bool IsStreamControlFrame(const spdy::SpdyControlFrame *frame) const;
+
+  void OnStreamControl(const spdy::SpdyControlFrame *frame);
+  void OnSessionControl(const spdy::SpdyControlFrame *frame);
+
   spdy::SpdyFramerVisitorInterface *GetFramerForStreamId(spdy::SpdyStreamId id);
 
   typedef std::map<spdy::SpdyStreamId, spdy::SpdyFramerVisitorInterface *>
@@ -52,6 +59,7 @@ private:
   StreamIdToVisitorMap map_;
   spdy::SpdyFramer *const framer_;
   SpdyFramerVisitorFactoryInterface *const factory_;
+  bool error_;
 };
 
 }  // namespace mod_spdy

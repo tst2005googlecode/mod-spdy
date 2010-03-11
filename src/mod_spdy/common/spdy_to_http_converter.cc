@@ -30,32 +30,69 @@ namespace mod_spdy {
 
 SpdyToHttpConverter::SpdyToHttpConverter(spdy::SpdyFramer *framer,
                                          HttpStreamVisitorInterface *visitor)
-    : framer_(framer), visitor_(visitor) {
+    : framer_(framer), visitor_(visitor), error_(false) {
 }
 
 SpdyToHttpConverter::~SpdyToHttpConverter() {}
 
 void SpdyToHttpConverter::OnError(spdy::SpdyFramer *framer) {
-  // Not yet supported.
-  CHECK(false);
+  DCHECK(false);
+  visitor_->OnTerminate();
+  error_ = true;
 }
 
 void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
-  // For now we support a subset of SPDY. Crash if we receive a frame
-  // we don't yet know how to process.
-  const bool is_fin = frame->flags() & spdy::CONTROL_FLAG_FIN;
-  CHECK(frame->type() == spdy::SYN_STREAM);
-
-  spdy::SpdyHeaderBlock block;
-  if (!framer_->ParseHeaderBlock(frame, &block)) {
-    // TODO: handle this case
-    CHECK(false);
+  if (HasError()) {
     return;
   }
 
-  CHECK(block.count(kMethod) == 1);
-  CHECK(block.count(kUrl) == 1);
-  CHECK(block.count(kVersion) == 1);
+  // For now we support a subset of SPDY. Log if we receive a frame
+  // we don't yet know how to process.
+  switch (frame->type()) {
+    case spdy::SYN_STREAM:
+      OnSynStream(frame);
+      break;
+
+    case spdy::RST_STREAM:
+      visitor_->OnTerminate();
+      break;
+
+    case spdy::NOOP:
+      // We're supposed to ignore NOOP frames.
+      break;
+
+    // We don't yet support the following frame types.
+    case spdy::HEADERS:
+    case spdy::SYN_REPLY:
+    case spdy::HELLO:
+    case spdy::PING:
+    case spdy::GOAWAY:
+      LOG(DFATAL) << "Received unsupported frame type: " << frame->type();
+      OnError(framer_);
+      break;
+
+    default:
+      LOG(DFATAL) << "Received unexpected frame type: " << frame->type();
+      OnError(framer_);
+      break;
+  }
+}
+
+void SpdyToHttpConverter::OnSynStream(const spdy::SpdyControlFrame *frame) {
+  spdy::SpdyHeaderBlock block;
+  if (!framer_->ParseHeaderBlock(frame, &block)) {
+    LOG(DFATAL) << "Failed to parse header block.";
+    OnError(framer_);
+    return;
+  }
+
+  if (block.count(kMethod) != 1 ||
+      block.count(kUrl) != 1 ||
+      block.count(kVersion) != 1) {
+    LOG(DFATAL) << "SynStream is missing required headers.";
+    OnError(framer_);
+    return;
+  }
 
   // Technically we should decode the URL into a path and a
   // Host. Instead we pass the full URL on to the visitor and leave it
@@ -113,7 +150,7 @@ void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
 
   visitor_->OnHeadersComplete();
 
-  if (is_fin) {
+  if (frame->flags() & spdy::CONTROL_FLAG_FIN) {
     visitor_->OnComplete();
   }
 }
@@ -121,6 +158,10 @@ void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
 void SpdyToHttpConverter::OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                             const char *data,
                                             size_t len) {
+  if (HasError()) {
+    return;
+  }
+
   if (len == 0) {
     visitor_->OnComplete();
   } else {

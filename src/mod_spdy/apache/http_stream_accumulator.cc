@@ -80,7 +80,7 @@ HttpStreamAccumulator::HttpStreamAccumulator(
       bucket_alloc_(bucket_alloc),
       brigade_(apr_brigade_create(pool_, bucket_alloc_)),
       is_complete_(false),
-      has_error_(false) {
+      error_(false) {
 }
 
 HttpStreamAccumulator::~HttpStreamAccumulator() {
@@ -90,21 +90,21 @@ HttpStreamAccumulator::~HttpStreamAccumulator() {
 void HttpStreamAccumulator::OnStatusLine(const char *method,
                                          const char *url,
                                          const char *version) {
-  if (has_error_) {
+  if (error_) {
     DCHECK(false);
     return;
   }
 
   if (is_complete_) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
 
   LocalPool local;
   if (local.status() != APR_SUCCESS) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
 
@@ -112,12 +112,12 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
   apr_status_t rv = apr_uri_parse(local.pool(), url, &uri);
   if (rv != APR_SUCCESS) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
   if (strlen(uri.hostname) <= 0) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
   const char *path = uri.path;
@@ -141,7 +141,7 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
                        version,
                        kCRLF)) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
 
@@ -149,14 +149,14 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
 }
 
 void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {
-  if (has_error_) {
+  if (error_) {
     DCHECK(false);
     return;
   }
 
   if (is_complete_) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
 
@@ -174,19 +174,19 @@ void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {
                        value,
                        kCRLF)) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
   }
 }
 
 void HttpStreamAccumulator::OnHeadersComplete() {
-  if (has_error_) {
+  if (error_) {
     DCHECK(false);
     return;
   }
 
   if (is_complete_) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
 
@@ -195,19 +195,19 @@ void HttpStreamAccumulator::OnHeadersComplete() {
                        "%s",
                        kCRLF)) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
   }
 }
 
 void HttpStreamAccumulator::OnBody(const char *data, size_t data_len) {
-  if (has_error_) {
+  if (error_) {
     DCHECK(false);
     return;
   }
 
   if (is_complete_) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
 
@@ -219,22 +219,27 @@ void HttpStreamAccumulator::OnBody(const char *data, size_t data_len) {
 }
 
 void HttpStreamAccumulator::OnComplete() {
-  if (has_error_) {
+  if (error_) {
     DCHECK(false);
     return;
   }
 
   if (is_complete_) {
     DCHECK(false);
-    has_error_ = true;
+    error_ = true;
     return;
   }
 
   is_complete_ = true;
 }
 
+void HttpStreamAccumulator::OnTerminate() {
+  is_complete_ = true;
+  error_ = true;
+}
+
 bool HttpStreamAccumulator::IsEmpty() const {
-  if (has_error_) {
+  if (error_) {
     DCHECK(false);
     return true;
   }
@@ -256,7 +261,7 @@ apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
                                          ap_input_mode_t mode,
                                          apr_read_type_e block,
                                          apr_off_t readbytes) {
-  if (has_error_) {
+  if (error_) {
     DCHECK(false);
     return APR_EGENERAL;
   }
@@ -323,7 +328,7 @@ apr_status_t HttpStreamAccumulator::Read(apr_bucket_brigade *dest,
       break;
 
     default:
-      // Not supported
+      // Not supported. TODO: must add support for other modes.
       CHECK(false);
   }
 

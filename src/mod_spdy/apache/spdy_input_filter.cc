@@ -63,7 +63,14 @@ class SpdyToHttpConverterFactory
  private:
   typedef std::queue<mod_spdy::HttpStreamAccumulator*> AccumulatorQueue;
 
-  AccumulatorQueue queue_;
+  mod_spdy::HttpStreamAccumulator* GetAccumulator() const;
+
+  // Modifies mutable member queue_
+  void RemoveEmptyAccumulators() const;
+
+  // We need to clean up the queue_ in some const methods, so we make
+  // it mutable.
+  mutable AccumulatorQueue queue_;
   spdy::SpdyFramer *const framer_;
   apr_pool_t *const pool_;
   apr_bucket_alloc_t *const bucket_alloc_;
@@ -91,28 +98,20 @@ spdy::SpdyFramerVisitorInterface *SpdyToHttpConverterFactory::Create(
 }
 
 bool SpdyToHttpConverterFactory::IsDataAvailable() const {
-  if (queue_.size() == 0) {
+  mod_spdy::HttpStreamAccumulator *accumulator = GetAccumulator();
+  if (accumulator == NULL ||
+      accumulator->HasError() ||
+      accumulator->IsEmpty()) {
     return false;
   }
-  mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
-  if (accumulator->HasError()) {
-    return false;
-  }
-  const bool is_empty = accumulator->IsEmpty();
-  if (is_empty) {
-    // There should never be an HttpStreamAccumulator in the queue
-    // that's both empty and complete (it should be removed during a
-    // call to Read()).
-    DCHECK(!accumulator->IsComplete());
-  }
-  return !is_empty;
+  return true;
 }
 
 bool SpdyToHttpConverterFactory::HasError() const {
-  if (queue_.size() == 0) {
+  mod_spdy::HttpStreamAccumulator *accumulator = GetAccumulator();
+  if (accumulator == NULL) {
     return false;
   }
-  mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
   return accumulator->HasError();
 }
 
@@ -130,13 +129,45 @@ apr_status_t SpdyToHttpConverterFactory::Read(apr_bucket_brigade *brigade,
     // core_filters.c!
     return APR_SUCCESS;
   }
-  mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
+
+  mod_spdy::HttpStreamAccumulator *accumulator = GetAccumulator();
   apr_status_t rv = accumulator->Read(brigade, mode, block, readbytes);
-  if (accumulator->IsComplete() && accumulator->IsEmpty()) {
-    queue_.pop();
-    delete accumulator;
-  }
+  RemoveEmptyAccumulators();
   return rv;
+}
+
+// Not really const. Modifies mutable member queue_. This is necessary
+// because we need to clean up the queue state from within const
+// methods. As the internal state of each element in the queue
+// changes, that element might become invalid and need to be removed
+// from the queue (e.g. due to a call to
+// HttpStreamAccumulator::OnTerminate()). We could have OnTerminate()
+// synchronously publish an event to indicate that its state has
+// changed which the queue manager could listen to, but that's overly
+// complex. Instead we use the evil mutable keyword and hide this
+// nastiness in the single method RemoveEmptyAccumulators(), which is
+// marked const even though it changes the state of the mutable
+// queue_.
+void SpdyToHttpConverterFactory::RemoveEmptyAccumulators() const {
+  while (!queue_.empty()) {
+    mod_spdy::HttpStreamAccumulator *accumulator = queue_.front();
+    if (accumulator->IsComplete() &&
+        (accumulator->HasError() || accumulator->IsEmpty())) {
+      queue_.pop();
+      delete accumulator;
+    } else {
+      break;
+    }
+  }
+}
+
+mod_spdy::HttpStreamAccumulator*
+SpdyToHttpConverterFactory::GetAccumulator() const {
+  RemoveEmptyAccumulators();
+  if (queue_.empty()) {
+    return NULL;
+  }
+  return queue_.front();
 }
 
 SpdyInputFilter::SpdyInputFilter(conn_rec *c)
@@ -186,6 +217,9 @@ apr_status_t SpdyInputFilter::Read(ap_filter_t *filter,
   input_->clear_filter();
 
   if (factory_->HasError()) {
+    // TODO(bmcquade): how do we properly signal to the rest of apache
+    // that we've encountered an error and the connection should be
+    // closed?
     apr_bucket *bucket = apr_bucket_eos_create(filter->c->bucket_alloc);
     APR_BRIGADE_INSERT_TAIL(brigade, bucket);
     return APR_EGENERAL;

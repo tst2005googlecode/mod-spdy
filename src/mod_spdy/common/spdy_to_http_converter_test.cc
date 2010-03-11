@@ -17,6 +17,7 @@
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/spdy/spdy_framer.h"
+#include "net/spdy/spdy_frame_builder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -39,231 +40,256 @@ class MockHttpStreamVisitor: public mod_spdy::HttpStreamVisitorInterface {
   MOCK_METHOD0(OnHeadersComplete, void());
   MOCK_METHOD2(OnBody, void(const char *, size_t));
   MOCK_METHOD0(OnComplete, void());
+  MOCK_METHOD0(OnTerminate, void());
 };
 
-// Make it clear that we do not currently handle most callbacks.
-TEST(SpdyToHttpConverterTest, UnsupportedCallbacks) {
-  MockHttpStreamVisitor visitor;
-  spdy::SpdyFramer framer;
-  mod_spdy::SpdyToHttpConverter converter(&framer, &visitor);
-  EXPECT_DEATH(converter.OnError(NULL), "");
+class SpdyToHttpConverterTest : public testing::Test {
+ public:
+  SpdyToHttpConverterTest()
+      : visitor_(),
+        converter_framer_(),
+        generator_framer_(),
+        converter_(&converter_framer_, &visitor_),
+        headers_() {
+  }
+
+ protected:
+  void AddRequiredHeaders() {
+    headers_["method"] = kMethod;
+    headers_["url"] = kUrl;
+    headers_["version"] = kVersion;
+  }
+
+  // Helper to create a stub control frame, until SpdyFramer supports
+  // building all types of frames.
+  spdy::SpdyControlFrame* CreateControlFrame(spdy::SpdyControlType type) {
+    spdy::SpdyFrameBuilder frame;
+    frame.WriteUInt16(spdy::kControlFlagMask | spdy::kSpdyProtocolVersion);
+    frame.WriteUInt16(type);
+    frame.WriteUInt32(0);  // length and flags
+    return static_cast<spdy::SpdyControlFrame*>(frame.take());
+  }
+
+  void AssertErrorOnControl(spdy::SpdyControlFrame *frame) {
+    ASSERT_FALSE(converter_.HasError());
+#ifdef NDEBUG
+    converter_.OnControl(frame);
+    ASSERT_TRUE(converter_.HasError());
+#else
+    EXPECT_DEATH(converter_.OnControl(frame), "");
+#endif
+  }
+
+  void AssertNoErrorOnControl(spdy::SpdyControlFrame *frame) {
+    ASSERT_FALSE(converter_.HasError());
+    converter_.OnControl(frame);
+    ASSERT_FALSE(converter_.HasError());
+  }
+
+  MockHttpStreamVisitor visitor_;
+  spdy::SpdyFramer converter_framer_;
+  spdy::SpdyFramer generator_framer_;
+  mod_spdy::SpdyToHttpConverter converter_;
+  spdy::SpdyHeaderBlock headers_;
+};
+
+TEST_F(SpdyToHttpConverterTest, OnError) {
+  ASSERT_FALSE(converter_.HasError());
+#ifdef NDEBUG
+  converter_.OnError(&converter_framer_);
+  ASSERT_TRUE(converter_.HasError());
+#else
+  EXPECT_DEATH(converter_.OnError(&converter_framer_), "");
+#endif
 }
 
-TEST(SpdyToHttpConverterTest, OnStreamFrameData) {
-  MockHttpStreamVisitor visitor;
-  spdy::SpdyFramer framer;
-  mod_spdy::SpdyToHttpConverter converter(&framer, &visitor);
+TEST_F(SpdyToHttpConverterTest, OnStreamFrameData) {
+  EXPECT_CALL(visitor_, OnBody(Eq(kMultiValue), Eq(sizeof(kMultiValue))));
+  converter_.OnStreamFrameData(1, kMultiValue, sizeof(kMultiValue));
+  testing::Mock::VerifyAndClearExpectations(&visitor_);
 
-  EXPECT_CALL(visitor, OnBody(Eq(kMultiValue), Eq(sizeof(kMultiValue))));
-  converter.OnStreamFrameData(1, kMultiValue, sizeof(kMultiValue));
-  testing::Mock::VerifyAndClearExpectations(&visitor);
-
-  EXPECT_CALL(visitor, OnComplete());
-  converter.OnStreamFrameData(1, NULL, 0);
-  testing::Mock::VerifyAndClearExpectations(&visitor);
+  EXPECT_CALL(visitor_, OnComplete());
+  converter_.OnStreamFrameData(1, NULL, 0);
+  testing::Mock::VerifyAndClearExpectations(&visitor_);
 }
 
-// We also don't currently support most control frames.
-TEST(SpdyToHttpConverterTest, UnsupportedControlFrames) {
-  MockHttpStreamVisitor visitor;
-  spdy::SpdyFramer converter_framer;
-  spdy::SpdyFramer generator_framer;
-  mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
-  spdy::SpdyHeaderBlock headers;
-  headers["method"] = kMethod;
-  headers["url"] = kUrl;
-  headers["version"] = kVersion;
-
-  // We don't handle syn reply.
-  scoped_ptr<spdy::SpdySynReplyControlFrame> syn_reply_frame(
-      generator_framer.CreateSynReply(
-          1, spdy::CONTROL_FLAG_NONE, true, &headers));
-  EXPECT_DEATH(converter.OnControl(syn_reply_frame.get()), "");
-
-  // We don't handle fin stream.
-  scoped_ptr<spdy::SpdyRstStreamControlFrame> rst_stream_frame(
-      generator_framer.CreateRstStream(1, 0));
-  EXPECT_DEATH(converter.OnControl(rst_stream_frame.get()), "");
-
-  // We don't handle nop.
-  scoped_ptr<spdy::SpdyControlFrame> nop_frame(
-      generator_framer.CreateNopFrame());
-  EXPECT_DEATH(converter.OnControl(nop_frame.get()), "");
+// We also don't currently support some control frames.
+TEST_F(SpdyToHttpConverterTest, ErrorOnSynReply) {
+  scoped_ptr<spdy::SpdyControlFrame> frame(
+      generator_framer_.CreateSynReply(
+          1, spdy::CONTROL_FLAG_NONE, true, &headers_));
+  AssertErrorOnControl(frame.get());
 }
 
-TEST(SpdyToHttpConverter, MultiFrameStream) {
+TEST_F(SpdyToHttpConverterTest, ErrorOnHeaders) {
+  scoped_ptr<spdy::SpdyControlFrame> frame(CreateControlFrame(spdy::HEADERS));
+  AssertErrorOnControl(frame.get());
+}
+
+TEST_F(SpdyToHttpConverterTest, BasicRstStream) {
+  EXPECT_CALL(visitor_, OnTerminate());
+  scoped_ptr<spdy::SpdyControlFrame> frame(
+      generator_framer_.CreateRstStream(1, 0));
+  AssertNoErrorOnControl(frame.get());
+}
+
+TEST_F(SpdyToHttpConverterTest, BasicNopFrame) {
+  scoped_ptr<spdy::SpdyControlFrame> frame(generator_framer_.CreateNopFrame());
+  AssertNoErrorOnControl(frame.get());
+}
+
+TEST_F(SpdyToHttpConverterTest, MultiFrameStream) {
+  // We expect all calls to happen in the specified order.
   InSequence seq;
 
-  MockHttpStreamVisitor visitor;
-  spdy::SpdyFramer converter_framer;
-  spdy::SpdyFramer generator_framer;
-  mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
-  spdy::SpdyHeaderBlock headers;
-  headers["method"] = kMethod;
-  headers["url"] = kUrl;
-  headers["version"] = kVersion;
+  AddRequiredHeaders();
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnStatusLine(StrEq(kMethod),
                            StrEq(kUrl),
                            StrEq(kVersion)));
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("x-spdy-stream-id"),
                        StrEq("1")));
 
-  EXPECT_CALL(visitor, OnHeadersComplete());
-
-  EXPECT_CALL(visitor, OnBody(Eq(kMethod), Eq(strlen(kMethod))));
-
-  EXPECT_CALL(visitor, OnBody(Eq(kUrl), Eq(strlen(kUrl))));
-
-  EXPECT_CALL(visitor, OnComplete());
+  EXPECT_CALL(visitor_, OnHeadersComplete());
 
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
-      generator_framer.CreateSynStream(
+      generator_framer_.CreateSynStream(
           1,  // stream ID
           0,  // associated stream ID
           1,  // priority
           spdy::CONTROL_FLAG_NONE,  // flags
           true,  // use compression
-          &headers));
-  converter.OnControl(syn_stream_frame.get());
+          &headers_));
+  converter_.OnControl(syn_stream_frame.get());
 
-  converter.OnStreamFrameData(1, kMethod, strlen(kMethod));
-  converter.OnStreamFrameData(1, kUrl, strlen(kUrl));
-  converter.OnStreamFrameData(1, NULL, 0);
+  EXPECT_CALL(visitor_, OnBody(Eq(kMethod), Eq(strlen(kMethod))));
+  converter_.OnStreamFrameData(1, kMethod, strlen(kMethod));
+
+  EXPECT_CALL(visitor_, OnBody(Eq(kUrl), Eq(strlen(kUrl))));
+  converter_.OnStreamFrameData(1, kUrl, strlen(kUrl));
+
+  EXPECT_CALL(visitor_, OnComplete());
+  converter_.OnStreamFrameData(1, NULL, 0);
 }
 
 // Send multiple SYN frames through the converter, to exercise the
 // inter-frame compression context.
-TEST(SpdyToHttpConverterTest, MultipleSynFrames) {
+TEST_F(SpdyToHttpConverterTest, MultipleSynFrames) {
+  // We expect all calls to happen in the specified order.
   InSequence seq;
 
-  MockHttpStreamVisitor visitor;
-  spdy::SpdyFramer converter_framer;
-  spdy::SpdyFramer generator_framer;
-  mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
-
-  spdy::SpdyHeaderBlock headers;
-  headers["method"] = kMethod;
-  headers["url"] = kUrl;
-  headers["version"] = kVersion;
+  AddRequiredHeaders();
 
   for (int i = 0; i < 10; ++i) {
     scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
-        generator_framer.CreateSynStream(
+        generator_framer_.CreateSynStream(
             i,  // stream ID
             0,  // associated stream ID
             1,  // priority
             spdy::CONTROL_FLAG_FIN,  // flags
             true,  // use compression
-            &headers));
+            &headers_));
 
-    EXPECT_CALL(visitor,
+    EXPECT_CALL(visitor_,
                 OnStatusLine(StrEq(kMethod),
                              StrEq(kUrl),
                              StrEq(kVersion)));
 
-    EXPECT_CALL(visitor,
+    EXPECT_CALL(visitor_,
                 OnHeader(StrEq("x-spdy-stream-id"),
                          StrEq(IntToString(i))));
 
-    EXPECT_CALL(visitor, OnHeadersComplete());
+    EXPECT_CALL(visitor_, OnHeadersComplete());
 
-    EXPECT_CALL(visitor, OnComplete());
+    EXPECT_CALL(visitor_, OnComplete());
 
     // Trigger the calls to the mock object by passing the frame to the
     // converter.
-    converter.OnControl(syn_frame.get());
+    converter_.OnControl(syn_frame.get());
 
-    testing::Mock::VerifyAndClearExpectations(&visitor);
+    testing::Mock::VerifyAndClearExpectations(&visitor_);
   }
 }
 
-TEST(SpdyToHttpConverterTest, SynFrameWithHeaders) {
-  MockHttpStreamVisitor visitor;
-  spdy::SpdyFramer converter_framer;
-  spdy::SpdyFramer generator_framer;
-  mod_spdy::SpdyToHttpConverter converter(&converter_framer, &visitor);
-  spdy::SpdyHeaderBlock headers;
-  headers["method"] = kMethod;
-  headers["url"] = kUrl;
-  headers["version"] = kVersion;
-  headers["foo"] = "bar";
-  headers["spdy"] = "spdy";
+TEST_F(SpdyToHttpConverterTest, SynFrameWithHeaders) {
+  AddRequiredHeaders();
+  headers_["foo"] = "bar";
+  headers_["spdy"] = "spdy";
 
   // Create a multi-valued header to verify that it's processed
   // properly.
   std::string multi_values(kMultiValue, sizeof(kMultiValue));
-  headers["multi"] = multi_values;
+  headers_["multi"] = multi_values;
 
   // Also make sure "junk" headers get skipped over.
-  headers["empty"] = std::string("\0\0\0", 3);
-  headers["empty2"] = "";
+  headers_["empty"] = std::string("\0\0\0", 3);
+  headers_["empty2"] = "";
 
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
-      generator_framer.CreateSynStream(
+      generator_framer_.CreateSynStream(
           1,  // stream ID
           0,  // associated stream ID
           1,  // priority
           spdy::CONTROL_FLAG_FIN,  // flags
           true,  // use compression
-          &headers));
+          &headers_));
 
   // We expect a call to OnStatusLine(), followed by two calls to
   // OnHeader() (the order of the calls to OnHeader() is
   // non-deterministic so we put each in its own Sequence), followed
   // by a final call to OnHeadersComplete() and OnComplete().
   Sequence s1, s2, s3;
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnStatusLine(StrEq(kMethod),
                            StrEq(kUrl),
                            StrEq(kVersion)))
       .InSequence(s1, s2, s3);
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("x-spdy-stream-id"),
                        StrEq("1")))
       .InSequence(s1);
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("foo"),
                        StrEq("bar")))
       .InSequence(s1);
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("spdy"),
                        StrEq("spdy")))
       .InSequence(s2);
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("multi"),
                        StrEq("this")))
       .InSequence(s3);
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("multi"),
                        StrEq("is")))
       .InSequence(s3);
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("multi"),
                        StrEq("four")))
       .InSequence(s3);
 
-  EXPECT_CALL(visitor,
+  EXPECT_CALL(visitor_,
               OnHeader(StrEq("multi"),
                        StrEq("headers")))
       .InSequence(s3);
 
-  EXPECT_CALL(visitor, OnHeadersComplete()).InSequence(s1, s2, s3);
+  EXPECT_CALL(visitor_, OnHeadersComplete()).InSequence(s1, s2, s3);
 
-  EXPECT_CALL(visitor, OnComplete()).InSequence(s1, s2, s3);
+  EXPECT_CALL(visitor_, OnComplete()).InSequence(s1, s2, s3);
 
   // Trigger the calls to the mock object by passing the frame to the
   // converter.
-  converter.OnControl(syn_frame.get());
+  converter_.OnControl(syn_frame.get());
 }
 
 }  // namespace

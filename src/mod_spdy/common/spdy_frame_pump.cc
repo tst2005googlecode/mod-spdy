@@ -29,7 +29,8 @@ SpdyFramePump::SpdyFramePump(InputStreamInterface *input,
     : input_(input),
       framer_(framer),
       buf_(new char[kBufSize]),
-      frame_bytes_consumed_(0) {
+      frame_bytes_consumed_(0),
+      error_(false) {
 }
 
 SpdyFramePump::~SpdyFramePump() {
@@ -38,7 +39,7 @@ SpdyFramePump::~SpdyFramePump() {
 bool SpdyFramePump::PumpOneFrame() {
   // Loop until we reach a frame boundary.
   do {
-    if (framer_->HasError()) {
+    if (HasError()) {
       return false;
     }
     if (!PumpMoreBytes()) {
@@ -50,7 +51,7 @@ bool SpdyFramePump::PumpOneFrame() {
 }
 
 bool SpdyFramePump::HasError() const {
-  return framer_->HasError();
+  return error_ || framer_->HasError();
 }
 
 bool SpdyFramePump::PumpMoreBytes() {
@@ -66,31 +67,45 @@ bool SpdyFramePump::PumpMoreBytes() {
     case spdy::SpdyFramer::SPDY_READING_COMMON_HEADER:
       common_header_bytes_remaining =
           spdy::SpdyFrame::size() - frame_bytes_consumed_;
-      CHECK(common_header_bytes_remaining > 0);
+      if (common_header_bytes_remaining <= 0) {
+        LOG(DFATAL) << "Unable to make progress while reading common header.";
+        error_ = true;
+        return false;
+      }
       return PumpAtMost(common_header_bytes_remaining);
 
     case spdy::SpdyFramer::SPDY_INTERPRET_CONTROL_FRAME_COMMON_HEADER:
     case spdy::SpdyFramer::SPDY_CONTROL_FRAME_PAYLOAD:
     case spdy::SpdyFramer::SPDY_FORWARD_STREAM_FRAME:
     case spdy::SpdyFramer::SPDY_IGNORE_REMAINING_PAYLOAD:
-      CHECK(framer_->remaining_payload() > 0);
+      if (framer_->remaining_payload() <= 0) {
+        LOG(DFATAL) << "Unable to make progress while reading payload.";
+        error_ = true;
+        return false;
+      }
       return PumpAtMost(framer_->remaining_payload());
 
     // These should never happen.
     case spdy::SpdyFramer::SPDY_DONE:
     case spdy::SpdyFramer::SPDY_ERROR:
-      CHECK(false);
+      LOG(DFATAL) << "Encountered unexpected framer state " << framer_->state();
+      error_ = true;
       return false;
 
     default:
-      CHECK(false);
+      LOG(DFATAL) << "Encountered unknown framer state " << framer_->state();
+      error_ = true;
       return false;
   }
 }
 
 bool SpdyFramePump::PumpAtMost(size_t num_bytes) {
   num_bytes = std::min(num_bytes, kBufSize);
-  CHECK(num_bytes > 0);
+  if (num_bytes <= 0) {
+    DCHECK(false);
+    error_ = true;
+    return false;
+  }
   const size_t bytes_available = input_->Read(buf_.get(), num_bytes);
   if (bytes_available == 0) {
     // Nothing to read. Abort early.
@@ -104,7 +119,12 @@ bool SpdyFramePump::PumpAtMost(size_t num_bytes) {
   // For now we expect the SpdyFramer to consume all available bytes.
   // TODO: find out if it's possible for the SpdyFramer to refuse to
   // consume some bytes.
-  CHECK(actual_bytes_consumed == bytes_available);
+  if (actual_bytes_consumed != bytes_available) {
+    LOG(DFATAL) << "SpdyFramer consumed " << actual_bytes_consumed
+                << " bytes of " << bytes_available << " total bytes.";
+    error_ = true;
+    return false;
+  }
 
   // Indicate whether we consumed as many bytes as expected.
   return actual_bytes_consumed == num_bytes;

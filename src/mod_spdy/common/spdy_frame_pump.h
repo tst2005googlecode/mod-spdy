@@ -54,6 +54,7 @@ class SpdyFramePump {
   spdy::SpdyFramer *const framer_;
   scoped_array<char> buf_;
   size_t frame_bytes_consumed_;
+  bool error_;
 };
 
 }  // namespace mod_spdy

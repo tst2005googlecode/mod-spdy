@@ -38,13 +38,14 @@ class HttpStreamAccumulator : public HttpStreamVisitorInterface {
   virtual void OnHeadersComplete();
   virtual void OnBody(const char *data, size_t data_len);
   virtual void OnComplete();
+  virtual void OnTerminate();
 
   // Is the internal buffer empty?
   bool IsEmpty() const;
 
   bool IsComplete() const { return is_complete_; }
 
-  bool HasError() const { return has_error_; }
+  bool HasError() const { return error_; }
 
   // Read data from the internal buffer via an
   // ap_in_filter_func-like interface.
@@ -58,7 +59,7 @@ class HttpStreamAccumulator : public HttpStreamVisitorInterface {
   apr_bucket_alloc_t *const bucket_alloc_;
   apr_bucket_brigade *brigade_;
   bool is_complete_;
-  bool has_error_;
+  bool error_;
 };
 
 }  // namespace mod_spdy
