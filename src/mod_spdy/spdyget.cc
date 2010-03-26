@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 
 #include <cstdio>
+#include <set>
 #include <string>
 
 #include "base/basictypes.h"
@@ -85,14 +86,36 @@ class FramePrettyPrinter : public spdy::SpdyFramerVisitorInterface {
   }
 
   virtual void OnControl(const spdy::SpdyControlFrame* frame) {
+    // Display frame type.
     const spdy::SpdyControlType type = frame->type();
-    printf("Control frame (stream %d) (type %d %s)\n",
-           static_cast<int>(frame->stream_id()),
-           static_cast<int>(type),
+    const spdy::SpdyStreamId stream_id = frame->stream_id();
+    printf("Control frame (stream %d) (type %d %s)",
+           static_cast<int>(stream_id), static_cast<int>(type),
            (type == spdy::SYN_STREAM ? "SYN_STREAM" :
             type == spdy::SYN_REPLY ? "SYN_REPLY" :
             "<unknown>"));
-    // TODO: Display flags/priority/other info
+    // Display priority (if applicable).
+    if (type == spdy::SYN_STREAM) {
+      printf(" (priority=%d)", static_cast<int>(
+          reinterpret_cast<const spdy::SpdySynStreamControlFrame*>(frame)->
+          priority()));
+    }
+    // Display flags.
+    int flags = frame->flags();
+    printf(" (flags:");
+    if (flags) {
+      if (flags & spdy::CONTROL_FLAG_FIN) {
+        printf(" FIN");
+        pending_streams_.erase(stream_id);
+      }
+      if (flags & spdy::CONTROL_FLAG_UNIDIRECTIONAL) {
+        printf(" UNIDIRECTIONAL");
+      }
+    } else {
+      printf(" none");
+    }
+    printf(")\n");
+    // Display headers (if applicable).
     if (type == spdy::SYN_REPLY || type == spdy::SYN_STREAM) {
       spdy::SpdyHeaderBlock headers;
       const bool ok = framer_->ParseHeaderBlock(frame, &headers);
@@ -110,18 +133,48 @@ class FramePrettyPrinter : public spdy::SpdyFramerVisitorInterface {
   virtual void OnStreamFrameData(spdy::SpdyStreamId stream_id,
                                  const char* data,
                                  size_t len) {
-    printf("Data frame (stream %d) (%d bytes)\n",
-           static_cast<int>(stream_id),
-           static_cast<int>(len));
-    const std::string str(data, len);
-    HexDump(str);
+    if (len == 0) {
+      pending_streams_.erase(stream_id);
+    } else {
+      printf("Data frame (stream %d) (%d bytes)\n",
+             static_cast<int>(stream_id),
+             static_cast<int>(len));
+      const std::string str(data, len);
+      HexDump(str);
+    }
+  }
+
+  // Are we still waiting for any streams to finish?
+  bool HasPendingStreams() const {
+    return !pending_streams_.empty();
+  }
+
+  // Indicate a stream that we initiated.  We keep a set, so that in the future
+  // we can request multiple streams at once and wait for them all to finish.
+  void PendStream(spdy::SpdyStreamId stream_id) {
+    pending_streams_.insert(stream_id);
   }
 
  private:
   spdy::SpdyFramer* framer_;
+  std::set<spdy::SpdyStreamId> pending_streams_;
 
   DISALLOW_COPY_AND_ASSIGN(FramePrettyPrinter);
 };
+
+// Send data over a socket.
+bool SendData(int sockfd, const std::string& data) {
+  size_t start = 0;
+  while (start < data.size()) {
+    ssize_t bytes_written = write(sockfd, data.data() + start,
+                                  data.size() - start);
+    if (bytes_written < 0) {
+      return false;
+    }
+    start += bytes_written;
+  }
+  return true;
+}
 
 }  // namespace
 
@@ -166,6 +219,7 @@ int main(int argc, const char* argv[]) {
   spdy::SpdyStreamId stream_id = 1;
 
   while (true) {
+    // Compose the request data.
     spdy::SpdyHeaderBlock headers;
     headers["method"] = "GET";
     headers["url"] = url;
@@ -185,28 +239,31 @@ int main(int argc, const char* argv[]) {
                                    spdy::SpdyFrame::size() +
                                    request_frame->length());
 
-    printf("Sending %d bytes\n", request_data.size());
-    HexDump(request_data);
-
-    if (write(sockfd, request_data.data(), request_data.size()) < 0) {
+    // Send the request data.
+    printf("\nSending %d bytes...\n", request_data.size());
+    if (!SendData(sockfd, request_data)) {
       printf("Error while writing\n");
       return 1;
     }
+    response_visitor.PendStream(stream_id);
 
-    char buffer[4096];  // Just assume responses will be no bigger than this.
-    const int bytes_read = read(sockfd, buffer, sizeof(buffer));
-    if (bytes_read < 0) {
-      printf("Error while reading\n");
-      return 1;
+    // Receive the response data.
+    printf("Awaiting response...\n\n");
+    size_t total_response_bytes = 0;
+    while (response_visitor.HasPendingStreams()) {
+      char buffer[1024];
+      const ssize_t bytes_read = read(sockfd, buffer, sizeof(buffer));
+      if (bytes_read < 0) {
+        printf("Error while reading (%d)\n", bytes_read);
+        return 1;
+      }
+      total_response_bytes += bytes_read;
+      response_framer.ProcessInput(buffer, bytes_read);
     }
 
-    const std::string response_data(buffer, bytes_read);
+    printf("\nReceived %d bytes total.\n", total_response_bytes);
 
-    printf("\nReceived %d bytes\n", response_data.size());
-    HexDump(response_data);
-
-    response_framer.ProcessInput(response_data.data(), response_data.size());
-
+    // Rinse, repeat.
     printf("\nNext url (blank for same, Q to quit):\n");
     std::string next_url = ReadLine();
     if (next_url == "Q") {
