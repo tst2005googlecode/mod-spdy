@@ -36,13 +36,14 @@ extern "C" {
 
 namespace {
 
-// These two global variables store the filter handles for our input and output
-// filters.  Normally, global variables would be very dangerous in a concurrent
-// environment like Apache, but these ones are okay because they are assigned
-// just once, at start-up (during which Apache is running single-threaded; see
-// TAMB 2.2.1), and are read-only thereafter.
+// These global variables store the filter handles for our filters.  Normally,
+// global variables would be very dangerous in a concurrent environment like
+// Apache, but these ones are okay because they are assigned just once, at
+// start-up (during which Apache is running single-threaded; see TAMB 2.2.1),
+// and are read-only thereafter.
 ap_filter_rec_t* g_spdy_output_filter;
 ap_filter_rec_t* g_spdy_input_filter;
+ap_filter_rec_t* g_anti_chunking_filter;
 
 // See TAMB 8.4.2
 apr_status_t spdy_input_filter(ap_filter_t* filter,
@@ -58,9 +59,51 @@ apr_status_t spdy_input_filter(ap_filter_t* filter,
 // See TAMB 8.4.1
 apr_status_t spdy_output_filter(ap_filter_t* filter,
                                 apr_bucket_brigade* input_brigade) {
+  // Make sure nothing unexpected has happened to the transfer encoding between
+  // here and our anti-chunking filter.
+  request_rec* request = filter->r;
+  if (filter->r->chunked != 0) {
+    LOG(DFATAL) << "spdy_output_filter: request->chunked == "
+                << request->chunked << " in request "
+                << request->the_request;
+  }
+  const char* transfer_encoding =
+      apr_table_get(filter->r->headers_out, "Transfer-Encoding");
+  if (transfer_encoding != NULL && strcmp(transfer_encoding, "chunked")) {
+    LOG(DFATAL) << "anti_chunking_filter: transfer_encoding == \""
+                << transfer_encoding << "\"" << " in request "
+                << request->the_request;
+  }
+  // Remove the transfer-encoding header so that it does not appear in our SPDY
+  // headers.
+  apr_table_unset(request->headers_out, "Transfer-Encoding");
   mod_spdy::SpdyOutputFilter* output_filter =
       static_cast<mod_spdy::SpdyOutputFilter*>(filter->ctx);
   return output_filter->Write(filter, input_brigade);
+}
+
+apr_status_t anti_chunking_filter(ap_filter_t* filter,
+                                  apr_bucket_brigade* input_brigade) {
+  request_rec* request = filter->r;
+  // Make sure no one is already trying to chunk the data in this request.
+  if (request->chunked != 0) {
+    LOG(DFATAL) << "anti_chunking_filter: request->chunked == "
+                << request->chunked << " in request "
+                << request->the_request;
+  }
+  const char* transfer_encoding =
+      apr_table_get(request->headers_out, "Transfer-Encoding");
+  if (transfer_encoding != NULL) {
+    LOG(DFATAL) << "anti_chunking_filter: transfer_encoding == \""
+                << transfer_encoding << "\"" << " in request "
+                << request->the_request;
+  }
+  // Setting the Transfer-Encoding header to "chunked" here will trick the core
+  // HTTP_HEADER filter into not inserting the CHUNK filter.
+  apr_table_setn(request->headers_out, "Transfer-Encoding", "chunked");
+  // This filter only needs to run once, so now that it has run, remove it.
+  ap_remove_output_filter(filter);
+  return ap_pass_brigade(filter->next, input_brigade);
 }
 
 // Invoked once per request.  See http_request.h for details.
@@ -85,11 +128,13 @@ void spdy_insert_filter_hook(request_rec* request) {
       new mod_spdy::SpdyOutputFilter(conn_context, request);
   PoolRegisterDelete(request->pool, output_filter);
 
-  // Insert the output filter into this request's filter chain.
+  // Insert our output filters into this request's filter chain.
   ap_add_output_filter_handle(g_spdy_output_filter,  // filter handle
                               output_filter,  // context (any void* we want)
                               request,        // request object
                               connection);    // connection object
+  ap_add_output_filter_handle(g_anti_chunking_filter,
+                              NULL, request, connection);
 }
 
 /**
@@ -193,6 +238,14 @@ void spdy_register_hook(apr_pool_t* p) {
       spdy_output_filter,      // filter function
       NULL,                    // init function (n/a in our case)
       kSpdyOutputFilterType);  // filter type
+
+  // This output filter is a hack to ensure that Httpd doesn't try to chunk our
+  // output data (which would _not_ mix well with SPDY).  Using a filter type
+  // of PROTOCOL-1 ensures that it runs just before the core HTTP_HEADER filter
+  // (which is responsible for inserting the CHUNK filter).
+  g_anti_chunking_filter = ap_register_output_filter(
+      "SPDY-ANTICHUNK", anti_chunking_filter, NULL,
+      static_cast<ap_filter_type>(AP_FTYPE_PROTOCOL - 1));
 }
 
 }  // namespace
