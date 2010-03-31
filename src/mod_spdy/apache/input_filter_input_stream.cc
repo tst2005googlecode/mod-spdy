@@ -91,7 +91,7 @@ size_t InputFilterInputStream::Read(char *data, size_t data_len) {
       // We should be passing all metadata buckets along to the next
       // filter.
       LOG(WARNING) << "SpdyInputFilter ignoring metadata bucket: "
-                   << bucket->type != NULL ? bucket->type->name : "NULL";
+                   << (bucket->type != NULL ? bucket->type->name : "NULL");
     }
   }
   apr_brigade_cleanup(brigade_);

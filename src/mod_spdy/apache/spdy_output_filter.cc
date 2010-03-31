@@ -55,9 +55,11 @@
 
 namespace {
 
+// This is the number of bytes we want to send per data frame.  We never send
+// data frames larger than this, but we might send smaller ones if we have to
+// flush early.
 // TODO The SPDY folks say that smallish (~4kB) data frames are good; however,
-//      we should experiment later on to see what value here performs the best,
-//      and/or alter the logic below that deals with it.
+//      we should experiment later on to see what value here performs the best.
 const size_t kTargetDataFrameBytes = 4096;
 
 bool GetRequestStreamId(request_rec* request, spdy::SpdyStreamId *out) {
@@ -213,9 +215,39 @@ apr_status_t SpdyOutputFilter::Send(ap_filter_t* filter,
     context_->SendHeaders(stream_id, populator, headers_fin, &output_stream);
   }
 
-  // If we have data waiting, or if we need to send a frame with FLAG_FIN, send
-  // a data frame.
-  if (!data_buffer_.empty() || (end_of_stream_ && !headers_fin)) {
+  // If we have (strictly) more than one frame's worth of data waiting, send it
+  // down the filter chain, kTargetDataFrameBytes bytes at a time.  If we are
+  // left with _exactly_ kTargetDataFrameBytes bytes of data, we'll deal with
+  // that in the next code block (see the comment there to explain why).
+  if (data_buffer_.size() > kTargetDataFrameBytes) {
+    const char* start = data_buffer_.data();
+    size_t size = data_buffer_.size();
+    while (size > kTargetDataFrameBytes) {
+      context_->SendData(stream_id, start, kTargetDataFrameBytes,
+                         false, &output_stream);
+      RETURN_IF_NOT_SUCCESS(ap_pass_brigade(filter->next, output_brigade_));
+      RETURN_IF_NOT_SUCCESS(apr_brigade_cleanup(output_brigade_));
+      start += kTargetDataFrameBytes;
+      size -= kTargetDataFrameBytes;
+    }
+    data_buffer_.erase(0, data_buffer_.size() - size);
+  }
+
+  // We need to send a data frame with _all_ the rest of our buffered data if:
+  //   1) we're at the end of the stream and haven't yet sent a FLAG_FIN,
+  //   2) we're supposed to flush and the buffer is nonempty, or
+  //   3) we have (at least) a full data frame's worth in the buffer.
+  //
+  // Note that because of the previous code block, condition (3) will only be
+  // true if we have exactly kTargetDataFrameBytes of data (hence the DCHECK).
+  // Dealing with this case here instead of in the above block makes it easier
+  // to make sure we correctly set FLAG_FIN on the final data frame, which is
+  // why the above block uses a strict, > comparison rather than a non-strict,
+  // >= comparison.
+  if ((end_of_stream_ && !headers_fin) ||
+      (send_flush_bucket && !data_buffer_.empty()) ||
+      data_buffer_.size() >= kTargetDataFrameBytes) {
+    DCHECK(data_buffer_.size() == kTargetDataFrameBytes);
     context_->SendData(stream_id, data_buffer_.data(), data_buffer_.size(),
                        end_of_stream_, &output_stream);
     data_buffer_.clear();
