@@ -110,24 +110,26 @@
       ],
     },
   ],
-  'conditions': [
-    [ 'OS != "win"', {
-      'targets': [
-        {
-          'target_name': 'spdyget',
-          'type': 'executable',
-          'dependencies': [
-            '<(DEPTH)/base/base.gyp:base',
-            '<(DEPTH)/net/net.gyp:spdy',
-          ],
-          'include_dirs': [
-            '<(DEPTH)',
-          ],
-          'sources': [
-            'spdyget.cc',
-          ],
-        },
-      ],
-    }],
-  ],
+  # Spdyget has been disabled for now, due to incompatible changes in the
+  # spdy_framer API.
+#   'conditions': [
+#     [ 'OS != "win"', {
+#       'targets': [
+#         {
+#           'target_name': 'spdyget',
+#           'type': 'executable',
+#           'dependencies': [
+#             '<(DEPTH)/base/base.gyp:base',
+#             '<(DEPTH)/net/net.gyp:spdy',
+#           ],
+#           'include_dirs': [
+#             '<(DEPTH)',
+#           ],
+#           'sources': [
+#             'spdyget.cc',
+#           ],
+#         },
+#       ],
+#     }],
+#   ],
 }

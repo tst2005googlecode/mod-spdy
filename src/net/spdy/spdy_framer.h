@@ -10,8 +10,10 @@
 #else
 #include <arpa/inet.h>
 #endif
+#include <list>
 #include <map>
 #include <string>
+#include <utility>
 
 #include "base/basictypes.h"
 #include "base/logging.h"
@@ -23,7 +25,9 @@ typedef struct z_stream_s z_stream;  // Forward declaration for zlib.
 
 namespace net {
 class HttpNetworkLayer;
+class HttpNetworkTransactionTest;
 class SpdyNetworkTransactionTest;
+class SpdySessionTest;
 }
 
 namespace spdy {
@@ -39,6 +43,10 @@ void FramerSetEnableCompressionHelper(SpdyFramer* framer, bool compress);
 // A datastructure for holding a set of headers from either a
 // SYN_STREAM or SYN_REPLY frame.
 typedef std::map<std::string, std::string> SpdyHeaderBlock;
+
+// A datastructure for holding a set of ID/value pairs for a SETTINGS frame.
+typedef std::pair<spdy::SettingsFlagsAndId, uint32> SpdySetting;
+typedef std::list<SpdySetting> SpdySettings;
 
 // SpdyFramerVisitorInterface is a set of callbacks for the SpdyFramer.
 // Implement this interface to receive event callbacks as frames are
@@ -152,6 +160,23 @@ class SpdyFramer {
   static SpdyRstStreamControlFrame* CreateRstStream(SpdyStreamId stream_id,
                                                     int status);
 
+  // Creates an instance of SpdyGoAwayControlFrame. The GOAWAY frame is used
+  // prior to the shutting down of the TCP connection, and includes the
+  // stream_id of the last stream the sender of the frame is willing to process
+  // to completion.
+  static SpdyGoAwayControlFrame* CreateGoAway(
+      SpdyStreamId last_accepted_stream_id);
+
+  // Creates an instance of SpdySettingsControlFrame. The SETTINGS frame is
+  // used to communicate name/value pairs relevant to the communication channel.
+  // TODO(mbelshe): add the name/value pairs!!
+  static SpdySettingsControlFrame* CreateSettings(const SpdySettings& values);
+
+  // Given a SpdySettingsControlFrame, extract the settings.
+  // Returns true on successful parse, false otherwise.
+  static bool ParseSettings(const SpdySettingsControlFrame* frame,
+      SpdySettings* settings);
+
   // Create a SpdySynReplyControlFrame.
   // |stream_id| is the stream for this frame.
   // |flags| is the flags to use with the data.
@@ -204,6 +229,9 @@ class SpdyFramer {
   // Returned frame must be freed with "delete".
   SpdyFrame* DuplicateFrame(const SpdyFrame* frame);
 
+  // Returns true if a frame could be compressed.
+  bool IsCompressible(const SpdyFrame* frame) const;
+
   // For debugging.
   static const char* StateToString(int state);
   static const char* ErrorCodeToString(int error_code);
@@ -215,7 +243,9 @@ class SpdyFramer {
  protected:
   FRIEND_TEST(SpdyFramerTest, HeaderBlockBarfsOnOutOfOrderHeaders);
   friend class net::SpdyNetworkTransactionTest;
+  friend class net::HttpNetworkTransactionTest;
   friend class net::HttpNetworkLayer;  // This is temporary for the server.
+  friend class net::SpdySessionTest;
   friend class test::TestSpdyVisitor;
   friend void test::FramerSetEnableCompressionHelper(SpdyFramer* framer,
                                                      bool compress);

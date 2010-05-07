@@ -14,7 +14,7 @@
 
 vars = {
   "chromium_trunk": "http://src.chromium.org/svn/trunk",
-  "chromium_revision": "@40280",
+  "chromium_revision": "@46690",
 }
 
 deps = {
@@ -26,7 +26,7 @@ deps = {
     Var("chromium_trunk") + "/src/testing" + Var("chromium_revision"),
 
   "src/testing/gtest":
-    "http://googletest.googlecode.com/svn/trunk@359",
+    "http://googletest.googlecode.com/svn/trunk@408",
 
   "src/third_party/chromium/src/base":
     Var("chromium_trunk") + "/src/base" + Var("chromium_revision"),
@@ -43,7 +43,7 @@ deps = {
      Var("chromium_revision")),
 
   "src/third_party/protobuf2/src":
-    "http://protobuf.googlecode.com/svn/trunk@305",
+    "http://protobuf.googlecode.com/svn/trunk@327",
 
   "src/third_party/scons":
     Var("chromium_trunk") + "/src/third_party/scons" + Var("chromium_revision"),
@@ -58,7 +58,7 @@ deps = {
     Var("chromium_trunk") + "/src/tools/grit" + Var("chromium_revision"),
 
   "src/tools/gyp":
-    "http://gyp.googlecode.com/svn/trunk@790",
+    "http://gyp.googlecode.com/svn/trunk@818",
 }
 
 

@@ -50,7 +50,7 @@ void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
   // we don't yet know how to process.
   switch (frame->type()) {
     case spdy::SYN_STREAM:
-      OnSynStream(frame);
+      OnSynStream(static_cast<const spdy::SpdySynStreamControlFrame*>(frame));
       break;
 
     case spdy::RST_STREAM:
@@ -64,7 +64,7 @@ void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
     // We don't yet support the following frame types.
     case spdy::HEADERS:
     case spdy::SYN_REPLY:
-    case spdy::HELLO:
+    case spdy::SETTINGS:
     case spdy::PING:
     case spdy::GOAWAY:
       LOG(DFATAL) << "Received unsupported frame type: " << frame->type();
@@ -78,7 +78,8 @@ void SpdyToHttpConverter::OnControl(const spdy::SpdyControlFrame *frame) {
   }
 }
 
-void SpdyToHttpConverter::OnSynStream(const spdy::SpdyControlFrame *frame) {
+void SpdyToHttpConverter::
+OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
   spdy::SpdyHeaderBlock block;
   if (!framer_->ParseHeaderBlock(frame, &block)) {
     LOG(DFATAL) << "Failed to parse header block.";

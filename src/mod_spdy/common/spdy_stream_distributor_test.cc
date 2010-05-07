@@ -101,8 +101,8 @@ class SpdyStreamDistributorTest : public testing::Test {
   spdy::SpdyHeaderBlock headers_;
 };
 
-TEST_F(SpdyStreamDistributorTest, ErrorOnHello) {
-  scoped_ptr<spdy::SpdyControlFrame> frame(CreateControlFrame(spdy::HELLO));
+TEST_F(SpdyStreamDistributorTest, ErrorOnSettings) {
+  scoped_ptr<spdy::SpdyControlFrame> frame(CreateControlFrame(spdy::SETTINGS));
   AssertErrorOnControl(frame.get());
 }
 

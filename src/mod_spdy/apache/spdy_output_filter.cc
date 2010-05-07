@@ -247,7 +247,6 @@ apr_status_t SpdyOutputFilter::Send(ap_filter_t* filter,
   if ((end_of_stream_ && !headers_fin) ||
       (send_flush_bucket && !data_buffer_.empty()) ||
       data_buffer_.size() >= kTargetDataFrameBytes) {
-    DCHECK(data_buffer_.size() == kTargetDataFrameBytes);
     context_->SendData(stream_id, data_buffer_.data(), data_buffer_.size(),
                        end_of_stream_, &output_stream);
     data_buffer_.clear();

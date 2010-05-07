@@ -39,7 +39,7 @@ class SpdyToHttpConverter : public spdy::SpdyFramerVisitorInterface {
   bool HasError() const { return error_; }
 
 private:
-  void OnSynStream(const spdy::SpdyControlFrame *frame);
+  void OnSynStream(const spdy::SpdySynStreamControlFrame *frame);
 
   spdy::SpdyFramer *const framer_;
   HttpStreamVisitorInterface *const visitor_;

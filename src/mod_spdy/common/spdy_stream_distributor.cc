@@ -16,6 +16,33 @@
 
 #include "base/stl_util-inl.h"
 
+namespace {
+
+// Hopefully, the spdy_protocol API will be fixed at some point so that this
+// function is no longer needed.
+spdy::SpdyStreamId
+GetControlFrameStreamId(const spdy::SpdyControlFrame* frame) {
+  switch (frame->type()) {
+    case spdy::SYN_STREAM:
+      return static_cast<const spdy::SpdySynStreamControlFrame*>(frame)->
+          stream_id();
+
+    case spdy::SYN_REPLY:
+      return static_cast<const spdy::SpdySynReplyControlFrame*>(frame)->
+          stream_id();
+
+    case spdy::RST_STREAM:
+      return static_cast<const spdy::SpdyRstStreamControlFrame*>(frame)->
+          stream_id();
+
+    default:
+      LOG(DFATAL) << "Unexpected frame type " << frame->type();
+      return 0;
+  }
+}
+
+}  // namespace
+
 namespace mod_spdy {
 
 SpdyFramerVisitorFactoryInterface::SpdyFramerVisitorFactoryInterface() {}
@@ -57,7 +84,7 @@ bool SpdyStreamDistributor::IsStreamControlFrame(
     case spdy::HEADERS:
       return true;
 
-    case spdy::HELLO:
+    case spdy::SETTINGS:
     case spdy::NOOP:
     case spdy::PING:
     case spdy::GOAWAY:
@@ -71,7 +98,7 @@ bool SpdyStreamDistributor::IsStreamControlFrame(
 
 void SpdyStreamDistributor::OnStreamControl(
     const spdy::SpdyControlFrame *frame) {
-  const spdy::SpdyStreamId stream_id = frame->stream_id();
+  const spdy::SpdyStreamId stream_id = GetControlFrameStreamId(frame);
   const bool have_stream_visitor = map_.count(stream_id) == 1;
   const bool is_syn_stream = frame->type() == spdy::SYN_STREAM;
   if (is_syn_stream == have_stream_visitor) {
@@ -97,7 +124,7 @@ void SpdyStreamDistributor::OnSessionControl(
       // Nothing to do.
       break;
 
-    // TODO: handle HELLO, PING, and GOAWAY
+    // TODO: handle SETTINGS, PING, and GOAWAY
 
     default:
       LOG(DFATAL) << "Unexpected frame type: " << frame->type();

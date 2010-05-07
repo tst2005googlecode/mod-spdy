@@ -240,7 +240,7 @@ size_t SpdyFramer::ProcessCommonHeader(const char* data, size_t len) {
 
     // This is just a sanity check for help debugging early frame errors.
     if (remaining_payload_ > 1000000u) {
-      LOG(ERROR) <<
+      LOG(WARNING) <<
           "Unexpectedly large frame.  Spdy session is likely corrupt.";
     }
 
@@ -296,10 +296,19 @@ void SpdyFramer::ProcessControlFrameHeader() {
       // NOOP.  Swallow it.
       CHANGE_STATE(SPDY_AUTO_RESET);
       return;
+    case GOAWAY:
+      if (current_control_frame.length() !=
+          SpdyGoAwayControlFrame::size() - SpdyFrame::size())
+        set_error(SPDY_INVALID_CONTROL_FRAME);
+      break;
+    case SETTINGS:
+      if (current_control_frame.length() <
+          SpdySettingsControlFrame::size() - SpdyControlFrame::size())
+        set_error(SPDY_INVALID_CONTROL_FRAME);
+      break;
     default:
       LOG(WARNING) << "Valid spdy control frame with unknown type: "
-                   << current_control_frame.type()
-                   << ".  This should never happen";
+                   << current_control_frame.type();
       DCHECK(false);
       set_error(SPDY_INVALID_CONTROL_FRAME);
       break;
@@ -341,8 +350,11 @@ size_t SpdyFramer::ProcessControlFramePayload(const char* data, size_t len) {
 
     // If this is a FIN, tell the caller.
     if (control_frame.type() == SYN_REPLY &&
-        control_frame.flags() & CONTROL_FLAG_FIN)
-      visitor_->OnStreamFrameData(control_frame.stream_id(), NULL, 0);
+        control_frame.flags() & CONTROL_FLAG_FIN) {
+      visitor_->OnStreamFrameData(reinterpret_cast<SpdySynReplyControlFrame*>(
+                                      &control_frame)->stream_id(),
+                                  NULL, 0);
+    }
 
     CHANGE_STATE(SPDY_IGNORE_REMAINING_PAYLOAD);
   } while (false);
@@ -359,7 +371,7 @@ size_t SpdyFramer::ProcessDataFramePayload(const char* data, size_t len) {
       if (current_data_frame.flags() & DATA_FLAG_COMPRESSED) {
         // TODO(mbelshe): Assert that the decompressor is init'ed.
         if (!InitializeDecompressor())
-          return NULL;
+          return 0;
 
         size_t decompressed_max_size = amount_to_forward * 100;
         scoped_array<char> decompressed(new char[decompressed_max_size]);
@@ -475,6 +487,26 @@ bool SpdyFramer::ParseHeaderBlock(const SpdyFrame* frame,
   return false;
 }
 
+/* static */
+bool SpdyFramer::ParseSettings(const SpdySettingsControlFrame* frame,
+                               SpdySettings* settings) {
+  DCHECK_EQ(frame->type(), SETTINGS);
+  DCHECK(settings);
+
+  SpdyFrameBuilder parser(frame->header_block(), frame->header_block_len());
+  void* iter = NULL;
+  for (size_t index = 0; index < frame->num_entries(); ++index) {
+    uint32 id;
+    uint32 value;
+    if (!parser.ReadUInt32(&iter, &id))
+      return false;
+    if (!parser.ReadUInt32(&iter, &value))
+      return false;
+    settings->insert(settings->end(), std::make_pair(id, value));
+  }
+  return true;
+}
+
 SpdySynStreamControlFrame* SpdyFramer::CreateSynStream(
     SpdyStreamId stream_id, SpdyStreamId associated_stream_id, int priority,
     SpdyControlFlags flags, bool compressed, SpdyHeaderBlock* headers) {
@@ -520,6 +552,37 @@ SpdyRstStreamControlFrame* SpdyFramer::CreateRstStream(SpdyStreamId stream_id,
   frame.WriteUInt32(stream_id);
   frame.WriteUInt32(status);
   return reinterpret_cast<SpdyRstStreamControlFrame*>(frame.take());
+}
+
+/* static */
+SpdyGoAwayControlFrame* SpdyFramer::CreateGoAway(
+    SpdyStreamId last_accepted_stream_id) {
+  SpdyFrameBuilder frame;
+  frame.WriteUInt16(kControlFlagMask | kSpdyProtocolVersion);
+  frame.WriteUInt16(GOAWAY);
+  size_t go_away_size = SpdyGoAwayControlFrame::size() - SpdyFrame::size();
+  frame.WriteUInt32(go_away_size);
+  frame.WriteUInt32(last_accepted_stream_id);
+  return reinterpret_cast<SpdyGoAwayControlFrame*>(frame.take());
+}
+
+/* static */
+SpdySettingsControlFrame* SpdyFramer::CreateSettings(
+    const SpdySettings& values) {
+  SpdyFrameBuilder frame;
+  frame.WriteUInt16(kControlFlagMask | kSpdyProtocolVersion);
+  frame.WriteUInt16(SETTINGS);
+  size_t settings_size = SpdySettingsControlFrame::size() - SpdyFrame::size() +
+      8 * values.size();
+  frame.WriteUInt32(settings_size);
+  frame.WriteUInt32(values.size());
+  SpdySettings::const_iterator it = values.begin();
+  while (it != values.end()) {
+    frame.WriteUInt32(it->first.id_);
+    frame.WriteUInt32(it->second);
+    ++it;
+  }
+  return reinterpret_cast<SpdySettingsControlFrame*>(frame.take());
 }
 
 SpdySynReplyControlFrame* SpdyFramer::CreateSynReply(SpdyStreamId stream_id,
@@ -586,7 +649,13 @@ SpdyControlFrame* SpdyFramer::CreateNopFrame() {
   return reinterpret_cast<SpdyControlFrame*>(frame.take());
 }
 
-static const int kCompressorLevel = Z_DEFAULT_COMPRESSION;
+// The following compression setting are based on Brian Olson's analysis. See
+// https://groups.google.com/group/spdy-dev/browse_thread/thread/dfaf498542fac792
+// for more details.
+static const int kCompressorLevel = 9;
+static const int kCompressorWindowSizeInBits = 11;
+static const int kCompressorMemLevel = 1;
+
 // This is just a hacked dictionary to use for shrinking HTTP-like headers.
 // TODO(mbelshe): Use a scientific methodology for computing the dictionary.
 const char SpdyFramer::kDictionary[] =
@@ -614,7 +683,12 @@ bool SpdyFramer::InitializeCompressor() {
   compressor_.reset(new z_stream);
   memset(compressor_.get(), 0, sizeof(z_stream));
 
-  int success = deflateInit(compressor_.get(), kCompressorLevel);
+  int success = deflateInit2(compressor_.get(),
+                             kCompressorLevel,
+                             Z_DEFLATED,
+                             kCompressorWindowSizeInBits,
+                             kCompressorMemLevel,
+                             Z_DEFAULT_STRATEGY);
   if (success == Z_OK)
     success = deflateSetDictionary(compressor_.get(),
                                    reinterpret_cast<const Bytef*>(kDictionary),
@@ -816,6 +890,24 @@ SpdyFrame* SpdyFramer::DuplicateFrame(const SpdyFrame* frame) {
   SpdyFrame* new_frame = new SpdyFrame(size);
   memcpy(new_frame->data(), frame->data(), size);
   return new_frame;
+}
+
+bool SpdyFramer::IsCompressible(const SpdyFrame* frame) const {
+  // The important frames to compress are those which contain large
+  // amounts of compressible data - namely the headers in the SYN_STREAM
+  // and SYN_REPLY.
+  // TODO(mbelshe): Reconcile this with the spec when the spec is
+  // explicit about which frames compress and which do not.
+  if (frame->is_control_frame()) {
+    const SpdyControlFrame* control_frame =
+        reinterpret_cast<const SpdyControlFrame*>(frame);
+    return control_frame->type() == SYN_STREAM ||
+           control_frame->type() == SYN_REPLY;
+  }
+
+  const SpdyDataFrame* data_frame =
+      reinterpret_cast<const SpdyDataFrame*>(frame);
+  return (data_frame->flags() & DATA_FLAG_COMPRESSED) != 0;
 }
 
 void SpdyFramer::set_enable_compression(bool value) {
