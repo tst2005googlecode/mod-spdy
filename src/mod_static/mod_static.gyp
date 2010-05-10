@@ -13,6 +13,9 @@
 # limitations under the License.
 
 {
+  'variables': {
+    'protoc_out_dir': '<(SHARED_INTERMEDIATE_DIR)/protoc_out',
+  },
   'targets': [
     {
       'target_name': 'mod_static',
@@ -27,6 +30,7 @@
       ],
       'sources': [
         'mod_static.cc',
+        '<(protoc_out_dir)/mod_static/http_response.pb.cc',
       ],
       'conditions': [['OS == "mac"', {
         'xcode_settings': {
@@ -39,45 +43,48 @@
     },
     {
       'target_name': 'http_response_proto',
-      'type': '<(library)',
-      'hard_dependency': 1,
-      'dependencies': [
-          '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protobuf',
-          '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protoc',
+      'type': 'none',
+      'sources': [
+        'http_response.proto',
       ],
-      'actions': [
+      'rules': [
         {
-          'action_name': 'generate_http_response_proto',
+          'rule_name': 'genproto',
+          'extension': 'proto',
           'inputs': [
             '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)protoc<(EXECUTABLE_SUFFIX)',
-            '<(DEPTH)/mod_static/http_response.proto',
           ],
+          'variables': {
+            # The protoc compiler requires a proto_path argument with the
+            # directory containing the .proto file.
+            # There's no generator variable that corresponds to this, so fake it.
+            'rule_input_relpath': '.',
+          },
           'outputs': [
-            '<(SHARED_INTERMEDIATE_DIR)/mod_static/http_response.pb.cc',
-            '<(SHARED_INTERMEDIATE_DIR)/mod_static/http_response.pb.h',
+            '<(protoc_out_dir)/mod_static/<(rule_input_relpath)/<(RULE_INPUT_ROOT).pb.h',
+            '<(protoc_out_dir)/mod_static/<(rule_input_relpath)/<(RULE_INPUT_ROOT).pb.cc',
           ],
           'action': [
             '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)protoc<(EXECUTABLE_SUFFIX)',
-            '<(DEPTH)/mod_static/http_response.proto',
-            '--proto_path=<(DEPTH)',
-            '--cpp_out=<(SHARED_INTERMEDIATE_DIR)',
+            '--proto_path=./<(rule_input_relpath)',
+            './<(rule_input_relpath)/<(RULE_INPUT_ROOT)<(RULE_INPUT_EXT)',
+            '--cpp_out=<(protoc_out_dir)/mod_static/<(rule_input_relpath)',
           ],
+          'message': 'Generating C++ code from <(RULE_INPUT_PATH)',
         },
       ],
-      'sources': [
-        '<(SHARED_INTERMEDIATE_DIR)/mod_static/http_response.pb.cc',
-      ],
-      'include_dirs': [
-        '<(SHARED_INTERMEDIATE_DIR)',
+      'dependencies': [
+        '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protobuf_lite',
+        '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protoc#host',
       ],
       'direct_dependent_settings': {
         'include_dirs': [
-        '<(SHARED_INTERMEDIATE_DIR)',
-        ],
+          '<(protoc_out_dir)',
+        ]
       },
       'export_dependent_settings': [
-        '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protobuf',
-      ]
+        '<(DEPTH)/third_party/protobuf2/protobuf.gyp:protobuf_lite',
+      ],
     },
   ],
 }
