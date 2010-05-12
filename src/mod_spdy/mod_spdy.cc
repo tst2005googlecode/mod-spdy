@@ -141,6 +141,12 @@ void spdy_insert_filter_hook(request_rec* request) {
  * Invoked once per connection. See http_connection.h for details.
  */
 int spdy_pre_connection_hook(conn_rec* connection, void* csd) {
+  // If this is not an inbound connection, for example one generated
+  // by mod_proxy, then do not filter it.
+  if (connection->local_addr->port != connection->base_server->port) {
+    return OK;
+  }
+
   // Create a shared context object for this connection; this object will be
   // used by both our input filter and our output filter.
   mod_spdy::ConnectionContext* context =
