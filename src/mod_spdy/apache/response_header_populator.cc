@@ -53,6 +53,9 @@ void ResponseHeaderPopulator::Populate(spdy::SpdyHeaderBlock* headers) const {
       "status", IntToString(request_->status), headers);
   HeaderPopulatorInterface::MergeInHeader(
       "version", request_->protocol, headers);
+  // Finally remove SPDY-ignored headers.
+  headers->erase("connection");
+  headers->erase("keep-alive");
 }
 
 }  // namespace mod_spdy

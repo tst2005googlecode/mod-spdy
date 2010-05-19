@@ -23,6 +23,8 @@ namespace {
 const char *kMethod = "method";
 const char *kUrl = "url";
 const char *kVersion = "version";
+const char *kConnection = "connection";
+const char *kKeepAlive = "keep-alive";
 
 }  // namespace
 
@@ -127,6 +129,13 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
     if (key == kMethod ||
         key == kUrl ||
         key == kVersion) {
+      // A SPDY-specific header. Do not emit it to the HttpStreamVisitorInterface.
+      continue;
+    }
+
+    if (key == kConnection ||
+        key == kKeepAlive) {
+      // Skip headers that are ignored by SPDY.
       continue;
     }
 
@@ -147,6 +156,12 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
       }
       visitor_->OnHeader(key.c_str(), tval.c_str());
     }
+  }
+
+  // Explicitly set Keep-Alive on HTTP/1.0 requests
+  // to prevent Apache from closing the socket
+  if (block[kVersion] == "HTTP/1.0") {
+    visitor_->OnHeader(kConnection, "Keep-Alive");
   }
 
   visitor_->OnHeadersComplete();
