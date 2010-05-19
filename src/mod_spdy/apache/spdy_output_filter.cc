@@ -213,6 +213,7 @@ apr_status_t SpdyOutputFilter::Send(ap_filter_t* filter,
     ResponseHeaderPopulator populator(filter->r);
     headers_fin = end_of_stream_ && data_buffer_.empty();
     context_->SendHeaders(stream_id, populator, headers_fin, &output_stream);
+    data_buffer_.clear();
   }
 
   // If we have (strictly) more than one frame's worth of data waiting, send it

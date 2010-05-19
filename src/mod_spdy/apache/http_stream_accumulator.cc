@@ -120,15 +120,17 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
     error_ = true;
     return;
   }
-  const char *path = uri.path;
-  if (path == NULL || path[0] == '\0') {
-    path = kDefaultPath;
-  }
 
+  // We are using the full URL in the request line
+  // instead of the path for compatibility with
+  // mod_proxy (which requires the full URL).  This
+  // approach appears to work fine even when mod_proxy
+  // is not enabled, but there might be unintended
+  // consequences.
   const size_t status_line_bufsize =
       strlen(method) +
       kSpaceLen +
-      strlen(path) +
+      strlen(url) +
       kSpaceLen +
       strlen(version) +
       kCRLFLen;
@@ -137,7 +139,7 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
                        status_line_bufsize,
                        "%s %s %s%s",
                        method,
-                       path,
+                       url,
                        version,
                        kCRLF)) {
     DCHECK(false);
