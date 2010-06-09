@@ -17,7 +17,7 @@
 #include "base/compiler_specific.h"  // for PRINTF_FORMAT()
 #include "base/logging.h"
 #include "mod_spdy/apache/pool_util.h"
-#include "third_party/apache_httpd/include/apr_uri.h"
+#include "third_party/apache/aprutil/src/include/apr_uri.h"
 
 namespace {
 

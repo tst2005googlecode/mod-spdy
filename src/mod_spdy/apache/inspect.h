@@ -20,8 +20,8 @@
 #include <vector>
 
 #include "base/basictypes.h"
-#include "third_party/apache_httpd/include/httpd.h"
-#include "third_party/apache_httpd/include/util_filter.h"
+#include "third_party/apache/httpd/src/include/httpd.h"
+#include "third_party/apache/httpd/src/include/util_filter.h"
 
 namespace mod_spdy {
 

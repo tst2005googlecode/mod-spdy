@@ -15,11 +15,11 @@
 // References to "TAMB" below refer to _The Apache Modules Book_ by Nick Kew
 // (ISBN: 0-13-240967-4).
 
-#include "third_party/apache_httpd/include/httpd.h"
-#include "third_party/apache_httpd/include/http_connection.h"
-#include "third_party/apache_httpd/include/http_config.h"
-#include "third_party/apache_httpd/include/http_log.h"
-#include "third_party/apache_httpd/include/http_request.h"
+#include "third_party/apache/httpd/src/include/httpd.h"
+#include "third_party/apache/httpd/src/include/http_connection.h"
+#include "third_party/apache/httpd/src/include/http_config.h"
+#include "third_party/apache/httpd/src/include/http_log.h"
+#include "third_party/apache/httpd/src/include/http_request.h"
 
 #include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/log_message_handler.h"

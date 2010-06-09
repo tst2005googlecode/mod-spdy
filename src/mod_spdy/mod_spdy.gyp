@@ -45,7 +45,7 @@
       'dependencies': [
         'spdy_common',
         '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+        '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
       'include_dirs': [
         '<(DEPTH)',
@@ -53,7 +53,7 @@
       'export_dependent_settings': [
         'spdy_common',
         '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+        '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
       'sources': [
         'apache/brigade_output_stream.cc',
@@ -73,7 +73,7 @@
         'spdy_apache',
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/net/net.gyp:spdy',
-        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+        '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
       'include_dirs': [
         '<(DEPTH)',

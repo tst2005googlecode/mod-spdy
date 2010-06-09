@@ -23,7 +23,7 @@
       'dependencies': [
         'http_response_proto',
         '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+        '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
       'include_dirs': [
         '<(DEPTH)',

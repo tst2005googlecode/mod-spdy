@@ -16,8 +16,8 @@
 #define MOD_SPDY_APACHE_SPDY_INPUT_FILTER_H_
 
 #include "base/scoped_ptr.h"
-#include "third_party/apache_httpd/include/apr_buckets.h"
-#include "third_party/apache_httpd/include/util_filter.h"
+#include "third_party/apache/aprutil/src/include/apr_buckets.h"
+#include "third_party/apache/httpd/src/include/util_filter.h"
 
 namespace spdy {
 class SpdyFramer;

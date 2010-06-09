@@ -16,13 +16,13 @@
 
 #include "base/string_util.h"
 #include "mod_static/http_response.pb.h"
-#include "third_party/apache_httpd/include/apr_strings.h"
-#include "third_party/apache_httpd/include/httpd.h"
-#include "third_party/apache_httpd/include/http_core.h"
-#include "third_party/apache_httpd/include/http_config.h"
-#include "third_party/apache_httpd/include/http_log.h"
-#include "third_party/apache_httpd/include/http_protocol.h"
-#include "third_party/apache_httpd/include/http_request.h"
+#include "third_party/apache/apr/src/include/apr_strings.h"
+#include "third_party/apache/httpd/src/include/httpd.h"
+#include "third_party/apache/httpd/src/include/http_core.h"
+#include "third_party/apache/httpd/src/include/http_config.h"
+#include "third_party/apache/httpd/src/include/http_log.h"
+#include "third_party/apache/httpd/src/include/http_protocol.h"
+#include "third_party/apache/httpd/src/include/http_request.h"
 #include "third_party/chromium/src/net/tools/flip_server/url_to_filename_encoder.h"
 
 namespace {

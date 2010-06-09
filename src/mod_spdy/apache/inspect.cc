@@ -16,7 +16,7 @@
 
 #include "base/logging.h"
 #include "base/string_util.h"
-#include "third_party/apache_httpd/include/http_log.h"
+#include "third_party/apache/httpd/src/include/http_log.h"
 
 #include "mod_spdy/apache/pool_util.h"
 

@@ -15,8 +15,8 @@
 #include "mod_spdy/apache/input_filter_input_stream.h"
 
 #include "base/logging.h"
-#include "third_party/apache_httpd/include/apr_buckets.h"
-#include "third_party/apache_httpd/include/util_filter.h"
+#include "third_party/apache/aprutil/src/include/apr_buckets.h"
+#include "third_party/apache/httpd/src/include/util_filter.h"
 
 namespace mod_spdy {
 

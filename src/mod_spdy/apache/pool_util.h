@@ -16,7 +16,7 @@
 #define MOD_SPDY_APACHE_POOL_UTIL_H_
 
 #include "base/logging.h"
-#include "third_party/apache_httpd/include/apr_pools.h"
+#include "third_party/apache/apr/src/include/apr_pools.h"
 
 namespace mod_spdy {
 

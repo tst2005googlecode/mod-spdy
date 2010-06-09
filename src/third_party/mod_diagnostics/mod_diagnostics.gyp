@@ -18,7 +18,7 @@
       'target_name': 'mod_diagnostics',
       'type': 'loadable_module',
       'dependencies': [
-        '<(DEPTH)/third_party/apache_httpd/apache_httpd.gyp:apache_httpd',
+        '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
       'include_dirs': [
         '<(DEPTH)',
