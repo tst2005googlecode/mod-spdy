@@ -81,11 +81,6 @@
         'src/buckets/apr_buckets_refcount.c',
         'src/buckets/apr_buckets_simple.c',
         'src/buckets/apr_buckets_socket.c',
-        'src/crypto/apr_md4.c',
-        'src/crypto/apr_md5.c',
-        'src/crypto/apr_sha1.c',
-        'src/crypto/getuuid.c',
-        'src/crypto/uuid.c',
         'src/dbm/apr_dbm.c',
         'src/dbm/apr_dbm_sdbm.c',
         'src/dbm/sdbm/sdbm.c',
@@ -107,7 +102,6 @@
         'src/strmatch/apr_strmatch.c',
         'src/uri/apr_uri.c',
         'src/xlate/xlate.c',
-        'src/xml/apr_xml.c',
       ],
       'conditions': [
        ['OS!="win"', {

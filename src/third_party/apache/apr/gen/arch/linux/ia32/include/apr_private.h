@@ -696,7 +696,7 @@
 /* #undef HAVE_UUID_H */
 
 /* Define to 1 if you have the <uuid/uuid.h> header file. */
-#define HAVE_UUID_UUID_H 1
+/* #undef HAVE_UUID_UUID_H */
 
 /* Define if C compiler supports VLA */
 #define HAVE_VLA 1
@@ -936,4 +936,3 @@
  */
 #include "../apr_private_common.h"
 #endif /* APR_PRIVATE_H */
-

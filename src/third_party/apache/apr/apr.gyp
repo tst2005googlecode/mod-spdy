@@ -87,6 +87,10 @@
                 '-pthread',
                 '-Wall',
               ],
+              'link_settings': {
+                'libraries': [
+                  '-ldl',
+              ]},
             }],
           ],
           'sources': [
