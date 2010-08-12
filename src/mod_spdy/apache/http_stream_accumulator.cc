@@ -14,10 +14,10 @@
 
 #include "mod_spdy/apache/http_stream_accumulator.h"
 
+#include "apr_uri.h"
 #include "base/compiler_specific.h"  // for PRINTF_FORMAT()
 #include "base/logging.h"
 #include "mod_spdy/apache/pool_util.h"
-#include "third_party/apache/aprutil/src/include/apr_uri.h"
 
 namespace {
 

@@ -15,7 +15,7 @@
 #ifndef MOD_SPDY_APACHE_BRIGADE_OUTPUT_STREAM_H_
 #define MOD_SPDY_APACHE_BRIGADE_OUTPUT_STREAM_H_
 
-#include "third_party/apache/aprutil/src/include/apr_buckets.h"
+#include "apr_buckets.h"
 
 #include "base/basictypes.h"
 #include "mod_spdy/common/output_stream_interface.h"

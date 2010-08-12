@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include "base/basictypes.h"
-#include "third_party/apache/httpd/src/include/httpd.h"  // for request_rec
+#include "httpd.h"  // for request_rec
 
 #include "mod_spdy/common/header_populator_interface.h"
 

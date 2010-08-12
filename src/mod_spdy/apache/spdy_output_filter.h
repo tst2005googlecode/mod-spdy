@@ -17,10 +17,10 @@
 
 #include <string>
 
+#include "apr_buckets.h"
 #include "base/basictypes.h"
 #include "base/scoped_ptr.h"
-#include "third_party/apache/aprutil/src/include/apr_buckets.h"
-#include "third_party/apache/httpd/src/include/util_filter.h"
+#include "util_filter.h"
 
 namespace mod_spdy {
 
