@@ -18,6 +18,10 @@
 #include "base/logging.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "httpd.h"
+
+// When HAVE_SYSLOG is defined, apache http_log.h will include syslog.h, which
+// #defined LOG_* as numbers. This conflicts with what we are using those here.
+#undef HAVE_SYSLOG
 #include "http_log.h"
 
 // Make sure we don't attempt to use LOG macros here, since doing so

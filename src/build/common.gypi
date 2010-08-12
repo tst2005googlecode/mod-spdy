@@ -26,6 +26,7 @@
     'use_system_libjpeg': 0,
     'use_system_libpng': 0,
     'use_system_zlib': 0,
+    'use_system_apache_dev': 0,
 
     # .gyp files should set chromium_code to 1 if they build Chromium-specific
     # code, as opposed to external code.  This variable is used to control

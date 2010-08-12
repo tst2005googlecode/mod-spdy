@@ -18,28 +18,127 @@
 
 {
   'variables': {
-    'aprutil_root': '<(DEPTH)/third_party/apache/aprutil',
-    'aprutil_src_root': '<(aprutil_root)/src',
-    'aprutil_gen_os_root': '<(aprutil_root)/gen/arch/<(OS)',
-    'aprutil_gen_arch_root': '<(aprutil_gen_os_root)/<(target_arch)',
+    'conditions': [
+      [ 'OS=="linux"', {
+        # Link to system .so.
+        'use_system_apache_dev%': 1,
+      }, {  # OS!="linux"
+        'use_system_apache_dev%': 0,
+      }],
+    ],
   },
-  'targets': [
-    {
-      'target_name': 'include',
-      'type': 'none',
-      'direct_dependent_settings': {
-        'include_dirs': [
-          '<(aprutil_src_root)/include',
-          '<(aprutil_gen_arch_root)/include',
-        ],
-        'conditions': [
-          ['OS=="mac"', {
-            'defines': [
-              'HAVE_CONFIG_H',
-              'DARWIN',
-              'SIGPROCMASK_SETS_THREAD_MASK',
-            ]}],
-          ['OS=="linux"', {
+
+  'conditions': [
+    ['use_system_apache_dev==0', {
+      'variables': {
+        'aprutil_root': '<(DEPTH)/third_party/apache/aprutil',
+        'aprutil_src_root': '<(aprutil_root)/src',
+        'aprutil_gen_os_root': '<(aprutil_root)/gen/arch/<(OS)',
+        'aprutil_gen_arch_root': '<(aprutil_gen_os_root)/<(target_arch)',
+      },
+      'targets': [
+        {
+          'target_name': 'include',
+          'type': 'none',
+          'direct_dependent_settings': {
+            'include_dirs': [
+              '<(aprutil_src_root)/include',
+              '<(aprutil_gen_arch_root)/include',
+            ],
+            'conditions': [
+              ['OS=="mac"', {
+                'defines': [
+                  'HAVE_CONFIG_H',
+                  'DARWIN',
+                  'SIGPROCMASK_SETS_THREAD_MASK',
+                ]}],
+              ['OS=="linux"', {
+                'defines': [
+                  # We need to define _LARGEFILE64_SOURCE so <sys/types.h>
+                  # provides off64_t.
+                  '_LARGEFILE64_SOURCE',
+                  'HAVE_CONFIG_H',
+                  'LINUX=2',
+                  '_REENTRANT',
+                  '_GNU_SOURCE',
+                ],
+              }],
+            ],
+          },
+        },
+        {
+          'target_name': 'aprutil',
+          'type': '<(library)',
+          'dependencies': [
+            'include',
+            '<(DEPTH)/third_party/apache/apr/apr.gyp:apr',
+          ],
+          'export_dependent_settings': [
+            'include',
+          ],
+          'include_dirs': [
+            '<(aprutil_src_root)/include/private',
+            '<(aprutil_gen_arch_root)/include/private',
+          ],
+          'sources': [
+            'src/buckets/apr_brigade.c',
+            'src/buckets/apr_buckets.c',
+            'src/buckets/apr_buckets_alloc.c',
+            'src/buckets/apr_buckets_eos.c',
+            'src/buckets/apr_buckets_file.c',
+            'src/buckets/apr_buckets_flush.c',
+            'src/buckets/apr_buckets_heap.c',
+            'src/buckets/apr_buckets_mmap.c',
+            'src/buckets/apr_buckets_pipe.c',
+            'src/buckets/apr_buckets_pool.c',
+            'src/buckets/apr_buckets_refcount.c',
+            'src/buckets/apr_buckets_simple.c',
+            'src/buckets/apr_buckets_socket.c',
+            'src/dbm/apr_dbm.c',
+            'src/dbm/apr_dbm_sdbm.c',
+            'src/dbm/sdbm/sdbm.c',
+            'src/dbm/sdbm/sdbm_hash.c',
+            'src/dbm/sdbm/sdbm_lock.c',
+            'src/dbm/sdbm/sdbm_pair.c',
+            'src/encoding/apr_base64.c',
+            'src/hooks/apr_hooks.c',
+            'src/ldap/apr_ldap_stub.c',
+            'src/ldap/apr_ldap_url.c',
+            'src/memcache/apr_memcache.c',
+            'src/misc/apr_date.c',
+            'src/misc/apr_queue.c',
+            'src/misc/apr_reslist.c',
+            'src/misc/apr_rmm.c',
+            'src/misc/apr_thread_pool.c',
+            'src/misc/apu_dso.c',
+            'src/misc/apu_version.c',
+            'src/strmatch/apr_strmatch.c',
+            'src/uri/apr_uri.c',
+            'src/xlate/xlate.c',
+          ],
+          'conditions': [
+           ['OS!="win"', {
+              'conditions': [
+                ['OS=="linux"', {
+                  'cflags': [
+                    '-pthread',
+                    '-Wall',
+                  ],
+                }],
+              ],
+            }],
+          ],
+        }
+      ],
+    }, { # use_system_apache_dev
+      'targets': [
+        {
+          'target_name': 'include',
+          'type': 'none',
+          'direct_dependent_settings': {
+            'include_dirs': [
+              '/usr/include/apr-1.0',
+            ],
             'defines': [
               # We need to define _LARGEFILE64_SOURCE so <sys/types.h>
               # provides off64_t.
@@ -49,73 +148,25 @@
               '_REENTRANT',
               '_GNU_SOURCE',
             ],
-          }],
-        ],
-      },
-    },
-    {
-      'target_name': 'aprutil',
-      'type': '<(library)',
-      'dependencies': [
-        'include',
-        '<(DEPTH)/third_party/apache/apr/apr.gyp:apr',
-      ],
-      'export_dependent_settings': [
-        'include',
-      ],
-      'include_dirs': [
-        '<(aprutil_src_root)/include/private',
-        '<(aprutil_gen_arch_root)/include/private',
-      ],
-      'sources': [
-        'src/buckets/apr_brigade.c',
-        'src/buckets/apr_buckets.c',
-        'src/buckets/apr_buckets_alloc.c',
-        'src/buckets/apr_buckets_eos.c',
-        'src/buckets/apr_buckets_file.c',
-        'src/buckets/apr_buckets_flush.c',
-        'src/buckets/apr_buckets_heap.c',
-        'src/buckets/apr_buckets_mmap.c',
-        'src/buckets/apr_buckets_pipe.c',
-        'src/buckets/apr_buckets_pool.c',
-        'src/buckets/apr_buckets_refcount.c',
-        'src/buckets/apr_buckets_simple.c',
-        'src/buckets/apr_buckets_socket.c',
-        'src/dbm/apr_dbm.c',
-        'src/dbm/apr_dbm_sdbm.c',
-        'src/dbm/sdbm/sdbm.c',
-        'src/dbm/sdbm/sdbm_hash.c',
-        'src/dbm/sdbm/sdbm_lock.c',
-        'src/dbm/sdbm/sdbm_pair.c',
-        'src/encoding/apr_base64.c',
-        'src/hooks/apr_hooks.c',
-        'src/ldap/apr_ldap_stub.c',
-        'src/ldap/apr_ldap_url.c',
-        'src/memcache/apr_memcache.c',
-        'src/misc/apr_date.c',
-        'src/misc/apr_queue.c',
-        'src/misc/apr_reslist.c',
-        'src/misc/apr_rmm.c',
-        'src/misc/apr_thread_pool.c',
-        'src/misc/apu_dso.c',
-        'src/misc/apu_version.c',
-        'src/strmatch/apr_strmatch.c',
-        'src/uri/apr_uri.c',
-        'src/xlate/xlate.c',
-      ],
-      'conditions': [
-       ['OS!="win"', {
-          'conditions': [
-            ['OS=="linux"', {
-              'cflags': [
-                '-pthread',
-                '-Wall',
-              ],
-            }],
+          },
+        },
+        {
+          'target_name': 'aprutil',
+          'type': 'settings',
+          'dependencies': [
+            'include',
           ],
-        }],
+          'export_dependent_settings': [
+            'include',
+          ],
+          'link_settings': {
+            'libraries': [
+              '-laprutil-1',
+            ],
+          },
+        }, 
       ],
-    }
+    }],
   ],
 }
 

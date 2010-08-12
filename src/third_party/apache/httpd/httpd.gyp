@@ -14,37 +14,72 @@
 
 {
   'variables': {
-    'apache_root': '<(DEPTH)/third_party/apache/httpd',
-    'apache_src_root': '<(apache_root)/src',
-    'apache_gen_os_root': '<(apache_root)/gen/arch/<(OS)',
-    'apache_gen_arch_root': '<(apache_gen_os_root)/<(target_arch)',
     'conditions': [
-      ['OS!="win"', {
-        'apache_os_include': '<(apache_src_root)/os/unix',
-      }, {  # else, OS=="win"
-        'apache_os_include': '<(apache_src_root)/os/win32',
-      }]
+      [ 'OS=="linux"', {
+        # Link to system .so.
+        'use_system_apache_dev%': 1,
+      }, {  # OS!="linux"
+        'use_system_apache_dev%': 0,
+      }],
     ],
   },
-  'targets': [
-    {
-      'target_name': 'include',
-      'type': 'none',
-      'direct_dependent_settings': {
-        'include_dirs': [
-          '<(apache_src_root)/include',
-          '<(apache_os_include)',
-          '<(apache_gen_arch_root)/include',
+  
+  'conditions': [
+    ['use_system_apache_dev==0', {
+      'variables': {
+        'apache_root': '<(DEPTH)/third_party/apache/httpd',
+        'apache_src_root': '<(apache_root)/src',
+        'apache_gen_os_root': '<(apache_root)/gen/arch/<(OS)',
+        'apache_gen_arch_root': '<(apache_gen_os_root)/<(target_arch)',
+        'conditions': [
+          ['OS!="win"', {
+            'apache_os_include': '<(apache_src_root)/os/unix',
+          }, {  # else, OS=="win"
+            'apache_os_include': '<(apache_src_root)/os/win32',
+          }]
         ],
       },
-      'dependencies': [
-        '<(DEPTH)/third_party/apache/apr/apr.gyp:include',
-        '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:include',
+      'targets': [
+        {
+          'target_name': 'include',
+          'type': 'none',
+          'direct_dependent_settings': {
+            'include_dirs': [
+              '<(apache_src_root)/include',
+              '<(apache_os_include)',
+              '<(apache_gen_arch_root)/include',
+            ],
+          },
+          'dependencies': [
+            '<(DEPTH)/third_party/apache/apr/apr.gyp:include',
+            '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:include',
+          ],
+          'export_dependent_settings': [
+            '<(DEPTH)/third_party/apache/apr/apr.gyp:include',
+            '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:include',
+          ],
+        },
       ],
-      'export_dependent_settings': [
-        '<(DEPTH)/third_party/apache/apr/apr.gyp:include',
-        '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:include',
-      ]
-    },
+    }, {
+     'targets': [
+       {
+         'target_name': 'include',
+         'type': 'none',
+         'direct_dependent_settings': {
+           'include_dirs': [
+             '/usr/include/apache2',
+           ],
+         },
+         'dependencies': [
+           '<(DEPTH)/third_party/apache/apr/apr.gyp:include',
+           '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:include',
+         ],
+         'export_dependent_settings': [
+           '<(DEPTH)/third_party/apache/apr/apr.gyp:include',
+           '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:include',
+         ],
+       }
+     ],
+    }],
   ],
 }
