@@ -140,9 +140,13 @@ void spdy_insert_filter_hook(request_rec* request) {
  * Invoked once per connection. See http_connection.h for details.
  */
 int spdy_pre_connection_hook(conn_rec* connection, void* csd) {
-  // If this is not an inbound connection, for example one generated
-  // by mod_proxy, then do not filter it.
-  if (connection->local_addr->port != connection->base_server->port) {
+  // We do not want to attach to non-inbound connections
+  // (e.g. connections created by mod_proxy). Non-inbound connections
+  // do not get a scoreboard hook, so we abort if the connection
+  // doesn't have the scoreboard hook. See
+  // http://mail-archives.apache.org/mod_mbox/httpd-dev/201008.mbox/%3C99EA83DCDE961346AFA9B5EC33FEC08B047FDC26@VF-MBX11.internal.vodafone.com%3E
+  // for more details.
+  if (connection->sbh == NULL) {
     return OK;
   }
 
