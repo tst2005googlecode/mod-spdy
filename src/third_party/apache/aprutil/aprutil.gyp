@@ -18,24 +18,14 @@
 
 {
   'variables': {
-    'conditions': [
-      [ 'OS=="linux"', {
-        # Link to system .so.
-        'use_system_apache_dev%': 1,
-      }, {  # OS!="linux"
-        'use_system_apache_dev%': 0,
-      }],
-    ],
+    'aprutil_root': '<(DEPTH)/third_party/apache/aprutil',
+    'aprutil_src_root': '<(aprutil_root)/src',
+    'aprutil_gen_os_root': '<(aprutil_root)/gen/arch/<(OS)',
+    'aprutil_gen_arch_root': '<(aprutil_gen_os_root)/<(target_arch)',
+    'system_include_path_aprutil%': '/usr/include/apr-1.0',
   },
-
   'conditions': [
     ['use_system_apache_dev==0', {
-      'variables': {
-        'aprutil_root': '<(DEPTH)/third_party/apache/aprutil',
-        'aprutil_src_root': '<(aprutil_root)/src',
-        'aprutil_gen_os_root': '<(aprutil_root)/gen/arch/<(OS)',
-        'aprutil_gen_arch_root': '<(aprutil_gen_os_root)/<(target_arch)',
-      },
       'targets': [
         {
           'target_name': 'include',
@@ -137,7 +127,7 @@
           'type': 'none',
           'direct_dependent_settings': {
             'include_dirs': [
-              '/usr/include/apr-1.0',
+              '<(system_include_path_aprutil)',
             ],
             'defines': [
               # We need to define _LARGEFILE64_SOURCE so <sys/types.h>
@@ -164,7 +154,7 @@
               '-laprutil-1',
             ],
           },
-        }, 
+        },
       ],
     }],
   ],

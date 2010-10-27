@@ -15,31 +15,21 @@
 
 {
   'variables': {
+    'apr_root': '<(DEPTH)/third_party/apache/apr',
+    'apr_src_root': '<(apr_root)/src',
+    'apr_gen_os_root': '<(apr_root)/gen/arch/<(OS)',
+    'apr_gen_arch_root': '<(apr_gen_os_root)/<(target_arch)',
+    'system_include_path_apr%': '/usr/include/apr-1.0',
     'conditions': [
-      [ 'OS=="linux"', {
-        # Link to system .so.
-        'use_system_apache_dev%': 1,
-      }, {  # OS!="linux"
-        'use_system_apache_dev%': 0,
-      }],
+      ['OS!="win"', {
+        'apr_os_include': '<(apr_src_root)/include/arch/unix',
+      }, {  # else, OS=="win"
+        'apr_os_include': '<(apr_src_root)/include/arch/win32',
+      }]
     ],
   },
   'conditions': [
     ['use_system_apache_dev==0', {
-      'variables': {
-        'apr_root': '<(DEPTH)/third_party/apache/apr',
-        'apr_src_root': '<(apr_root)/src',
-        'apr_gen_os_root': '<(apr_root)/gen/arch/<(OS)',
-        'apr_gen_arch_root': '<(apr_gen_os_root)/<(target_arch)',
-        'conditions': [
-          ['OS!="win"', {
-            'apr_os_include': '<(apr_src_root)/include/arch/unix',
-          }, {  # else, OS=="win"
-            'apr_os_include': '<(apr_src_root)/include/arch/win32',
-          }]
-        ],
-    
-      },
       'targets': [
         {
           'target_name': 'include',
@@ -188,7 +178,7 @@
           ],
         }
       ],
-    }, 
+    },
     { # use_system_apache_dev
       'targets': [
         {
@@ -196,7 +186,7 @@
           'type': 'none',
           'direct_dependent_settings': {
             'include_dirs': [
-              '/usr/include/apr-1.0',
+              '<(system_include_path_apr)',
             ],
             'defines': [
               # We need to define _LARGEFILE64_SOURCE so <sys/types.h>

@@ -14,31 +14,21 @@
 
 {
   'variables': {
+    'apache_root': '<(DEPTH)/third_party/apache/httpd',
+    'apache_src_root': '<(apache_root)/src',
+    'apache_gen_os_root': '<(apache_root)/gen/arch/<(OS)',
+    'apache_gen_arch_root': '<(apache_gen_os_root)/<(target_arch)',
+    'system_include_path_httpd%': '/usr/include/apache2',
     'conditions': [
-      [ 'OS=="linux"', {
-        # Link to system .so.
-        'use_system_apache_dev%': 1,
-      }, {  # OS!="linux"
-        'use_system_apache_dev%': 0,
-      }],
+      ['OS!="win"', {
+        'apache_os_include': '<(apache_src_root)/os/unix',
+      }, {  # else, OS=="win"
+        'apache_os_include': '<(apache_src_root)/os/win32',
+      }]
     ],
   },
-  
   'conditions': [
     ['use_system_apache_dev==0', {
-      'variables': {
-        'apache_root': '<(DEPTH)/third_party/apache/httpd',
-        'apache_src_root': '<(apache_root)/src',
-        'apache_gen_os_root': '<(apache_root)/gen/arch/<(OS)',
-        'apache_gen_arch_root': '<(apache_gen_os_root)/<(target_arch)',
-        'conditions': [
-          ['OS!="win"', {
-            'apache_os_include': '<(apache_src_root)/os/unix',
-          }, {  # else, OS=="win"
-            'apache_os_include': '<(apache_src_root)/os/win32',
-          }]
-        ],
-      },
       'targets': [
         {
           'target_name': 'include',
@@ -67,7 +57,7 @@
          'type': 'none',
          'direct_dependent_settings': {
            'include_dirs': [
-             '/usr/include/apache2',
+             '<(system_include_path_httpd)',
            ],
          },
          'dependencies': [
