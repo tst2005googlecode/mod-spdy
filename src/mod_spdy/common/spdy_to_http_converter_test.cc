@@ -30,13 +30,16 @@ using testing::Sequence;
 using testing::StrEq;
 
 const char *kMethod = "GET";
-const char *kUrl = "http://www.example.com/";
+const char *kScheme = "http";
+const char *kHost = "www.example.com";
+const char *kPath = "/";
 const char *kVersion = "HTTP/1.1";
 const char kMultiValue[] = "this\0is\0\0\0four\0\0headers";
 
 class MockHttpStreamVisitor: public mod_spdy::HttpStreamVisitorInterface {
  public:
-  MOCK_METHOD3(OnStatusLine, void(const char *, const char *, const char *));
+  MOCK_METHOD5(OnStatusLine, void(const char *, const char *,
+                                  const char *, const char *, const char *));
   MOCK_METHOD2(OnHeader, void(const char *, const char *));
   MOCK_METHOD0(OnHeadersComplete, void());
   MOCK_METHOD2(OnBody, void(const char *, size_t));
@@ -57,7 +60,9 @@ class SpdyToHttpConverterTest : public testing::Test {
  protected:
   void AddRequiredHeaders() {
     headers_["method"] = kMethod;
-    headers_["url"] = kUrl;
+    headers_["scheme"] = kScheme;
+    headers_["host"] = kHost;
+    headers_["url"] = kPath;
     headers_["version"] = kVersion;
   }
 
@@ -147,7 +152,9 @@ TEST_F(SpdyToHttpConverterTest, MultiFrameStream) {
 
   EXPECT_CALL(visitor_,
               OnStatusLine(StrEq(kMethod),
-                           StrEq(kUrl),
+                           StrEq(kScheme),
+                           StrEq(kHost),
+                           StrEq(kPath),
                            StrEq(kVersion)));
 
   EXPECT_CALL(visitor_,
@@ -169,8 +176,8 @@ TEST_F(SpdyToHttpConverterTest, MultiFrameStream) {
   EXPECT_CALL(visitor_, OnBody(Eq(kMethod), Eq(strlen(kMethod))));
   converter_.OnStreamFrameData(1, kMethod, strlen(kMethod));
 
-  EXPECT_CALL(visitor_, OnBody(Eq(kUrl), Eq(strlen(kUrl))));
-  converter_.OnStreamFrameData(1, kUrl, strlen(kUrl));
+  EXPECT_CALL(visitor_, OnBody(Eq(kHost), Eq(strlen(kHost))));
+  converter_.OnStreamFrameData(1, kHost, strlen(kHost));
 
   EXPECT_CALL(visitor_, OnComplete());
   converter_.OnStreamFrameData(1, NULL, 0);
@@ -195,9 +202,11 @@ TEST_F(SpdyToHttpConverterTest, MultipleSynFrames) {
             &headers_));
 
     EXPECT_CALL(visitor_,
-                OnStatusLine(StrEq(kMethod),
-                             StrEq(kUrl),
-                             StrEq(kVersion)));
+              OnStatusLine(StrEq(kMethod),
+                           StrEq(kScheme),
+                           StrEq(kHost),
+                           StrEq(kPath),
+                           StrEq(kVersion)));
 
     EXPECT_CALL(visitor_,
                 OnHeader(StrEq("x-spdy-stream-id"),
@@ -244,7 +253,9 @@ TEST_F(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   Sequence s1, s2, s3;
   EXPECT_CALL(visitor_,
               OnStatusLine(StrEq(kMethod),
-                           StrEq(kUrl),
+                           StrEq(kScheme),
+                           StrEq(kHost),
+                           StrEq(kPath),
                            StrEq(kVersion)))
       .InSequence(s1, s2, s3);
 

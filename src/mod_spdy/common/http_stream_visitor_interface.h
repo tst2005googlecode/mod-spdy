@@ -28,7 +28,9 @@ class HttpStreamVisitorInterface {
   // Called when an HTTP status line is visited. Indicates that a new
   // HTTP request is being visited.
   virtual void OnStatusLine(const char *method,
-                            const char *url,
+                            const char *scheme,
+                            const char *host,
+                            const char *path,
                             const char *version) = 0;
 
   // Called zero or more times, after OnStatusLine, once for each HTTP

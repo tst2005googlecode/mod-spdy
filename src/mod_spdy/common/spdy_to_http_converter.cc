@@ -21,7 +21,9 @@
 namespace {
 
 const char *kMethod = "method";
-const char *kUrl = "url";
+const char *kScheme = "scheme";
+const char *kHost = "host";
+const char *kPath = "url";  // Chromium currently uses "url" instead of "path".
 const char *kVersion = "version";
 const char *kConnection = "connection";
 const char *kKeepAlive = "keep-alive";
@@ -90,7 +92,9 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
   }
 
   if (block.count(kMethod) != 1 ||
-      block.count(kUrl) != 1 ||
+      block.count(kScheme) != 1 ||
+      block.count(kHost) != 1 ||
+      block.count(kPath) != 1 ||
       block.count(kVersion) != 1) {
     LOG(DFATAL) << "SynStream is missing required headers.";
     OnError(framer_);
@@ -101,7 +105,9 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
   // Host. Instead we pass the full URL on to the visitor and leave it
   // up to the visitor to extract Host and path.
   visitor_->OnStatusLine(block[kMethod].c_str(),
-                         block[kUrl].c_str(),
+                         block[kScheme].c_str(),
+                         block[kHost].c_str(),
+                         block[kPath].c_str(),
                          block[kVersion].c_str());
 
   // Write the stream ID into a custom header, to be read back afterwards by
@@ -127,7 +133,9 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
     std::string key = it->first;
     std::string value = it->second;
     if (key == kMethod ||
-        key == kUrl ||
+        key == kScheme ||
+        key == kHost ||
+        key == kPath ||
         key == kVersion) {
       // A SPDY-specific header. Do not emit it to the HttpStreamVisitorInterface.
       continue;

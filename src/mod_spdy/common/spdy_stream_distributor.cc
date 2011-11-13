@@ -123,8 +123,11 @@ void SpdyStreamDistributor::OnSessionControl(
     case spdy::NOOP:
       // Nothing to do.
       break;
+    case spdy::PING:
+      // TODO handle PING
+      break;
 
-    // TODO: handle SETTINGS, PING, and GOAWAY
+    // TODO: handle SETTINGS and GOAWAY
 
     default:
       LOG(DFATAL) << "Unexpected frame type: " << frame->type();

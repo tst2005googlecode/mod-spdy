@@ -687,6 +687,11 @@ void SpdyFramer::ProcessControlFrameHeader() {
           SpdyHeadersControlFrame::size() - SpdyControlFrame::size())
         set_error(SPDY_INVALID_CONTROL_FRAME);
       break;
+    case PING:
+      // TODO add proper ping support.
+      if (current_control_frame.length() != 4)
+        set_error(SPDY_INVALID_CONTROL_FRAME);
+      break;
     case WINDOW_UPDATE:
       if (current_control_frame.length() !=
           SpdyWindowUpdateControlFrame::size() - SpdyControlFrame::size())

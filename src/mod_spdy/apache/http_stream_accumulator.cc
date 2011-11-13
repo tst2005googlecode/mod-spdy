@@ -25,10 +25,12 @@ const char *kDefaultPath = "/";
 const char *kCRLF = "\r\n";
 const char *kHeaderSeparator = ": ";
 const char *kHost = "Host";
+const char *kColonSlashSlash = "://";
 
 const size_t kCRLFLen = strlen(kCRLF);
 const size_t kHeaderSeparatorLen = strlen(kHeaderSeparator);
 const size_t kSpaceLen = 1;
+const size_t kColonSlashSlashLen = strlen(kColonSlashSlash);
 
 bool FormatAndAppend(apr_bucket_brigade *brigade,
                      const size_t bufsize,
@@ -88,7 +90,9 @@ HttpStreamAccumulator::~HttpStreamAccumulator() {
 }
 
 void HttpStreamAccumulator::OnStatusLine(const char *method,
-                                         const char *url,
+                                         const char *scheme,
+                                         const char *host,
+                                         const char *path,
                                          const char *version) {
   if (error_) {
     DCHECK(false);
@@ -96,26 +100,6 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
   }
 
   if (is_complete_) {
-    DCHECK(false);
-    error_ = true;
-    return;
-  }
-
-  LocalPool local;
-  if (local.status() != APR_SUCCESS) {
-    DCHECK(false);
-    error_ = true;
-    return;
-  }
-
-  apr_uri_t uri;
-  apr_status_t rv = apr_uri_parse(local.pool(), url, &uri);
-  if (rv != APR_SUCCESS) {
-    DCHECK(false);
-    error_ = true;
-    return;
-  }
-  if (strlen(uri.hostname) <= 0) {
     DCHECK(false);
     error_ = true;
     return;
@@ -130,16 +114,22 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
   const size_t status_line_bufsize =
       strlen(method) +
       kSpaceLen +
-      strlen(url) +
+      strlen(scheme) +
+      kColonSlashSlashLen +
+      strlen(host) +
+      strlen(path) +
       kSpaceLen +
       strlen(version) +
       kCRLFLen;
 
   if (!FormatAndAppend(brigade_,
                        status_line_bufsize,
-                       "%s %s %s%s",
+                       "%s %s%s%s%s %s%s",
                        method,
-                       url,
+                       scheme,
+                       kColonSlashSlash,
+                       host,
+                       path,
                        version,
                        kCRLF)) {
     DCHECK(false);
@@ -147,7 +137,7 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
     return;
   }
 
-  OnHeader(kHost, uri.hostname);
+  OnHeader(kHost, host);
 }
 
 void HttpStreamAccumulator::OnHeader(const char *key, const char *value) {

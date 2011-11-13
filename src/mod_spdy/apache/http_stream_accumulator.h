@@ -32,7 +32,9 @@ class HttpStreamAccumulator : public HttpStreamVisitorInterface {
 
   // Implement HttpStreamVisitorInterface
   virtual void OnStatusLine(const char *method,
-                            const char *url,
+                            const char *scheme,
+                            const char *host,
+                            const char *path,
                             const char *version);
   virtual void OnHeader(const char *key, const char *value);
   virtual void OnHeadersComplete();
