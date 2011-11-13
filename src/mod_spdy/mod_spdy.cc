@@ -197,7 +197,7 @@ const ap_filter_type kSpdyInputFilterType =
 const ap_filter_type kSpdyOutputFilterType = AP_FTYPE_TRANSCODE;
 
 void spdy_register_hook(apr_pool_t* p) {
-  mod_spdy::InstallLogMessageHandler();
+  mod_spdy::InstallLogMessageHandler(p);
 
   // Let users know that they are installing an experimental module.
   LOG(WARNING) << "mod_spdy is currently an experimental Apache module. "

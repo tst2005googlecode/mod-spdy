@@ -46,7 +46,8 @@
 
 #include "mod_spdy/apache/spdy_output_filter.h"
 
-#include "base/string_util.h"  // For StringToInt64
+#include "base/logging.h"
+#include "base/string_number_conversions.h"  // For StringToInt64
 
 #include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/response_header_populator.h"
@@ -74,7 +75,7 @@ bool GetRequestStreamId(request_rec* request, spdy::SpdyStreamId *out) {
     return false;
   }
   int64 id = 0;
-  if (StringToInt64(value, &id)) {
+  if (base::StringToInt64(value, &id)) {
     *out = static_cast<spdy::SpdyStreamId>(id);
     return true;
   }

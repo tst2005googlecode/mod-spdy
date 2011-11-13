@@ -6,7 +6,9 @@
 // functions must be defined in order to link with code that updates
 // stats (such as spdy_framer.cc).
 
-#include "base/stats_table.h"
+#include "base/metrics/stats_table.h"
+
+namespace base {
 
 StatsTable* StatsTable::global_table_ = NULL;
 
@@ -25,3 +27,5 @@ int StatsTable::FindCounter(const std::string& name) {
 int* StatsTable::GetLocation(int counter_id, int slot_id) const {
   return NULL;
 }
+
+}  // namespace base

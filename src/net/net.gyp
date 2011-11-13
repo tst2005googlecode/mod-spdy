@@ -21,8 +21,12 @@
         '<(DEPTH)',
       ],
       'sources': [
-        'spdy/spdy_framer.cc',
+        'spdy/spdy_bitmasks.h',
         'spdy/spdy_frame_builder.cc',
+        'spdy/spdy_frame_builder.h',
+        'spdy/spdy_framer.cc',
+        'spdy/spdy_framer.h',
+        'spdy/spdy_protocol.h',
       ],
     },
     {
@@ -32,14 +36,14 @@
         'spdy',
         '<(DEPTH)/testing/gmock.gyp:gmock',
         '<(DEPTH)/testing/gtest.gyp:gtest',
-        '<(DEPTH)/testing/gtest.gyp:gtestmain',
+        '<(DEPTH)/testing/gtest.gyp:gtest_main',
       ],
       'include_dirs': [
         '<(DEPTH)',
       ],
       'sources': [
-        'spdy/spdy_protocol_test.cc',
         'spdy/spdy_framer_test.cc',
+        'spdy/spdy_protocol_test.cc',
       ],
     },
   ],

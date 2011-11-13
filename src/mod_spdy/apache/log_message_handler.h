@@ -15,11 +15,13 @@
 #ifndef MOD_SPDY_APACHE_LOG_MESSAGE_HANDLER_H_
 #define MOD_SPDY_APACHE_LOG_MESSAGE_HANDLER_H_
 
+#include "apr_pools.h"
+
 namespace mod_spdy {
 
 // Install a log message handler that routes LOG() messages to the
 // apache error log. Should be called once at startup.
-void InstallLogMessageHandler();
+void InstallLogMessageHandler(apr_pool_t* pool);
 
 }  // namespace mod_spdy
 

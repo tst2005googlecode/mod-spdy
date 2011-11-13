@@ -97,7 +97,7 @@
         'spdy_common',
         '<(DEPTH)/testing/gmock.gyp:gmock',
         '<(DEPTH)/testing/gtest.gyp:gtest',
-        '<(DEPTH)/testing/gtest.gyp:gtestmain',
+        '<(DEPTH)/testing/gtest.gyp:gtest_main',
       ],
       'include_dirs': [
         '<(DEPTH)',

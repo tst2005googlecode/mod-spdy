@@ -13,11 +13,12 @@
 // limitations under the License.
 
 #include "base/scoped_ptr.h"
-#include "base/string_util.h"  // for IntToString
+#include "base/string_number_conversions.h"  // for IntToString
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_frame_builder.h"
+#include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -129,7 +130,7 @@ TEST_F(SpdyToHttpConverterTest, ErrorOnHeaders) {
 TEST_F(SpdyToHttpConverterTest, BasicRstStream) {
   EXPECT_CALL(visitor_, OnTerminate());
   scoped_ptr<spdy::SpdyControlFrame> frame(
-      generator_framer_.CreateRstStream(1, 0));
+      generator_framer_.CreateRstStream(1, spdy::PROTOCOL_ERROR));
   AssertNoErrorOnControl(frame.get());
 }
 
@@ -183,7 +184,7 @@ TEST_F(SpdyToHttpConverterTest, MultipleSynFrames) {
 
   AddRequiredHeaders();
 
-  for (int i = 0; i < 10; ++i) {
+  for (int i = 1; i < 10; ++i) {
     scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
         generator_framer_.CreateSynStream(
             i,  // stream ID
@@ -200,7 +201,7 @@ TEST_F(SpdyToHttpConverterTest, MultipleSynFrames) {
 
     EXPECT_CALL(visitor_,
                 OnHeader(StrEq("x-spdy-stream-id"),
-                         StrEq(IntToString(i))));
+                         StrEq(base::IntToString(i))));
 
     EXPECT_CALL(visitor_, OnHeadersComplete());
 
@@ -226,7 +227,6 @@ TEST_F(SpdyToHttpConverterTest, SynFrameWithHeaders) {
 
   // Also make sure "junk" headers get skipped over.
   headers_["empty"] = std::string("\0\0\0", 3);
-  headers_["empty2"] = "";
 
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
       generator_framer_.CreateSynStream(

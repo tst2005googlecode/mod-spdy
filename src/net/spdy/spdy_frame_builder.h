@@ -1,19 +1,16 @@
-// Copyright (c) 2009 The Chromium Authors. All rights reserved.
+// Copyright (c) 2011 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_SPDY_FRAME_BUILDER_H_
-#define NET_SPDY_FRAME_BUILDER_H_
-
-#ifdef WIN32
-#include <winsock2.h>  // for htonl() functions
-#else
-#include <arpa/inet.h>
-#endif
+#ifndef NET_SPDY_SPDY_FRAME_BUILDER_H_
+#define NET_SPDY_SPDY_FRAME_BUILDER_H_
+#pragma once
 
 #include <string>
 
-#include "base/logging.h"
+#include "base/basictypes.h"
+#include "net/base/net_api.h"
+#include "net/base/sys_byteorder.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace spdy {
@@ -29,16 +26,17 @@ namespace spdy {
 // When reading from a SpdyFrameBuilder the consumer must know what value types
 // to read and in what order to read them as the SpdyFrameBuilder does not keep
 // track of the type of data written to it.
-class SpdyFrameBuilder {
+class NET_TEST SpdyFrameBuilder {
  public:
   SpdyFrameBuilder();
-  ~SpdyFrameBuilder();
 
   // Initializes a SpdyFrameBuilder from a const block of data.  The data is
   // not copied; instead the data is merely referenced by this
   // SpdyFrameBuilder.  Only const methods should be used when initialized
   // this way.
   SpdyFrameBuilder(const char* data, int data_len);
+
+  ~SpdyFrameBuilder();
 
   // Returns the size of the SpdyFrameBuilder's data.
   int length() const { return length_; }
@@ -159,5 +157,4 @@ class SpdyFrameBuilder {
 
 }  // namespace spdy
 
-#endif  // NET_SPDY_FRAME_BUILDER_H_
-
+#endif  // NET_SPDY_SPDY_FRAME_BUILDER_H_

@@ -14,9 +14,11 @@
 
 #include "mod_spdy/apache/log_message_handler.h"
 
-#include "base/debug_util.h"
+#include <limits>
+#include <string>
+#include "base/debug/debugger.h"
+#include "base/debug/stack_trace.h"
 #include "base/logging.h"
-#include "mod_spdy/apache/pool_util.h"
 #include "httpd.h"
 
 // When HAVE_SYSLOG is defined, apache http_log.h will include syslog.h, which
@@ -31,9 +33,17 @@
 
 namespace {
 
+apr_pool_t* log_pool = NULL;
+
+const int kMaxInt = std::numeric_limits<int>::max();
+int log_level_cutoff = kMaxInt;
+
 int GetApacheLogLevel(int severity) {
   switch (severity) {
     case logging::LOG_INFO:
+      // Note: ap_log_perror only prints NOTICE and higher messages.
+      // TODO(sligocki): Find some way to print these as INFO if we can.
+      //return APLOG_INFO;
       return APLOG_NOTICE;
     case logging::LOG_WARNING:
       return APLOG_WARNING;
@@ -43,38 +53,25 @@ int GetApacheLogLevel(int severity) {
       return APLOG_CRIT;
     case logging::LOG_FATAL:
       return APLOG_ALERT;
-    default:
+    default:  // For VLOG()s
+      // TODO(sligocki): return APLOG_DEBUG;
       return APLOG_NOTICE;
   }
 }
 
-bool LogMessageHandler(int severity,
-		       const std::string& str) {
-  const int log_level = GetApacheLogLevel(severity);
-
-#ifdef NDEBUG
-  // In release builds, don't log unless it's high priority (just
-  // silently consume the log message).
-  if (log_level != APLOG_ERR &&
-      log_level != APLOG_CRIT &&
-      log_level != APLOG_ALERT &&
-      log_level != APLOG_EMERG) {
-    return true;
-  }
-#endif
+bool LogMessageHandler(int severity, const char* file, int line,
+                       size_t message_start, const std::string& str) {
+  const int this_log_level = GetApacheLogLevel(severity);
 
   std::string message = str;
   if (severity == logging::LOG_FATAL) {
-    if (DebugUtil::BeingDebugged()) {
-      DebugUtil::BreakDebugger();
+    if (base::debug::BeingDebugged()) {
+      base::debug::BreakDebugger();
     } else {
-#ifndef NDEBUG
-      // In debug, dump a stack trace on a fatal.
-      StackTrace trace;
+      base::debug::StackTrace trace;
       std::ostringstream stream;
       trace.OutputToStream(&stream);
       message.append(stream.str());
-#endif
     }
   }
 
@@ -84,21 +81,14 @@ bool LogMessageHandler(int severity,
     message.resize(last_msg_character_index);
   }
 
-  mod_spdy::LocalPool local_pool;
-  if (local_pool.status() == APR_SUCCESS) {
-    ap_log_perror(APLOG_MARK,
-                  log_level,
-                  APR_SUCCESS,
-                  local_pool.pool(),
+  if (this_log_level <= log_level_cutoff || log_level_cutoff == kMaxInt) {
+    ap_log_perror(APLOG_MARK, this_log_level, APR_SUCCESS, log_pool,
                   "%s", message.c_str());
-  } else {
-    fprintf(stderr,
-            "ap_log_perror failed. dumping to console: \n%s", message.c_str());
   }
 
   if (severity == logging::LOG_FATAL) {
     // Crash the process to generate a dump.
-    DebugUtil::BreakDebugger();
+    base::debug::BreakDebugger();
   }
 
   return true;
@@ -108,7 +98,8 @@ bool LogMessageHandler(int severity,
 
 namespace mod_spdy {
 
-void InstallLogMessageHandler() {
+void InstallLogMessageHandler(apr_pool_t* pool) {
+  log_pool = pool;
   logging::SetLogMessageHandler(&LogMessageHandler);
 }
 

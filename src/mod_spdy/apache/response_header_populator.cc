@@ -16,7 +16,7 @@
 
 #include <string>
 
-#include "base/string_util.h"  // for IntToString
+#include "base/string_number_conversions.h"  // for IntToString
 
 namespace {
 
@@ -50,7 +50,7 @@ void ResponseHeaderPopulator::Populate(spdy::SpdyHeaderBlock* headers) const {
 
   // Now add the SPDY-specific required headers.
   HeaderPopulatorInterface::MergeInHeader(
-      "status", IntToString(request_->status), headers);
+      "status", base::IntToString(request_->status), headers);
   HeaderPopulatorInterface::MergeInHeader(
       "version", request_->protocol, headers);
   // Finally remove SPDY-ignored headers.

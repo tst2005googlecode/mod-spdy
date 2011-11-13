@@ -4,6 +4,7 @@
 
 #ifndef NET_SPDY_SPDY_BITMASKS_H_
 #define NET_SPDY_SPDY_BITMASKS_H_
+#pragma once
 
 namespace spdy {
 
@@ -21,6 +22,12 @@ const unsigned int kLengthMask = 0xffffff;
 
 // Mask the Id from a SETTINGS id.
 const unsigned int kSettingsIdMask = 0xffffff;
+
+// Legal flags on data packets.
+const int kDataFlagsMask = 0x03;
+
+// Legal flags on control packets.
+const int kControlFlagsMask = 0x03;
 
 }  // namespace spdy
 

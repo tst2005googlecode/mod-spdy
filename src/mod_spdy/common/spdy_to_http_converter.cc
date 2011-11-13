@@ -14,7 +14,7 @@
 
 #include "mod_spdy/common/spdy_to_http_converter.h"
 
-#include "base/string_util.h"  // for Int64ToString
+#include "base/string_number_conversions.h"  // for Int64ToString
 
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 
@@ -116,7 +116,7 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
   //       created.  There are several possible solutions; we should probably
   //       revisit this issue once we figure out how multiplexing will work.
   const spdy::SpdyStreamId stream_id = frame->stream_id();
-  const std::string stream_id_str(Int64ToString(stream_id));
+  const std::string stream_id_str(base::Int64ToString(stream_id));
   visitor_->OnHeader("x-spdy-stream-id", stream_id_str.c_str());
 
   // Write out the rest of the HTTP headers.
