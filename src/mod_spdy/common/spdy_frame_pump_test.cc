@@ -231,6 +231,13 @@ TEST(SpdyFramePumpTest, OneSynFrameTrickle) {
                   Read(NotNull(),
                        Eq(syn_stream_frame->length())))
           .WillOnce(Invoke(&input, &MockInputStream::DoRead));
+    } else {
+      // Otherwise we expect one additional call to Read() for the
+      // remainder of the bytes, which will return 0.
+      EXPECT_CALL(input,
+                  Read(NotNull(),
+                       Eq(expected_read_len - 1)))
+          .WillOnce(Invoke(&input, &MockInputStream::DoRead));
     }
 
     ASSERT_EQ(0, input.bytes_read());

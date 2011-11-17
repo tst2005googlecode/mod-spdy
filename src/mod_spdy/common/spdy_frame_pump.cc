@@ -126,8 +126,9 @@ bool SpdyFramePump::PumpAtMost(size_t num_bytes) {
     return false;
   }
 
-  // Indicate whether we consumed as many bytes as expected.
-  return actual_bytes_consumed == num_bytes;
+  // We read at least one byte, so return true to indicate that we
+  // made progress.
+  return true;
 }
 
 }  // namespace mod_spdy
