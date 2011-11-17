@@ -25,12 +25,10 @@ const char *kDefaultPath = "/";
 const char *kCRLF = "\r\n";
 const char *kHeaderSeparator = ": ";
 const char *kHost = "Host";
-const char *kColonSlashSlash = "://";
 
 const size_t kCRLFLen = strlen(kCRLF);
 const size_t kHeaderSeparatorLen = strlen(kHeaderSeparator);
 const size_t kSpaceLen = 1;
-const size_t kColonSlashSlashLen = strlen(kColonSlashSlash);
 
 bool FormatAndAppend(apr_bucket_brigade *brigade,
                      const size_t bufsize,
@@ -105,18 +103,9 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
     return;
   }
 
-  // We are using the full URL in the request line
-  // instead of the path for compatibility with
-  // mod_proxy (which requires the full URL).  This
-  // approach appears to work fine even when mod_proxy
-  // is not enabled, but there might be unintended
-  // consequences.
   const size_t status_line_bufsize =
       strlen(method) +
       kSpaceLen +
-      strlen(scheme) +
-      kColonSlashSlashLen +
-      strlen(host) +
       strlen(path) +
       kSpaceLen +
       strlen(version) +
@@ -124,11 +113,8 @@ void HttpStreamAccumulator::OnStatusLine(const char *method,
 
   if (!FormatAndAppend(brigade_,
                        status_line_bufsize,
-                       "%s %s%s%s%s %s%s",
+                       "%s %s %s%s",
                        method,
-                       scheme,
-                       kColonSlashSlash,
-                       host,
                        path,
                        version,
                        kCRLF)) {
