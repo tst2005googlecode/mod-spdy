@@ -23,4 +23,8 @@ ConnectionContext::ConnectionContext()
 
 ConnectionContext::~ConnectionContext() {}
 
+void ConnectionContext::set_protocol(const char* name, size_t length) {
+  protocol_.assign(name, length);
+}
+
 }  // namespace mod_spdy

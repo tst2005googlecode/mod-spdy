@@ -19,6 +19,9 @@
 #include "http_connection.h"
 #include "http_config.h"
 #include "http_request.h"
+#include "apr_optional.h"
+#include "apr_optional_hooks.h"
+#include "apr_tables.h"
 
 #include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/log_message_handler.h"
@@ -31,9 +34,22 @@
 extern "C" {
   // Forward declaration for the sake of ap_get_module_config and friends.
   extern module AP_MODULE_DECLARE_DATA spdy_module;
+
+  // Declaring modified mod_ssl's optional hooks here (so that we don't need to
+  // #include "mod_ssl.h").
+  APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec *));
+  APR_DECLARE_EXTERNAL_HOOK(
+      ssl, AP, int, npn_advertise_protos_hook,
+      (conn_rec* connection, apr_array_header_t* protos));
+  APR_DECLARE_EXTERNAL_HOOK(
+      ssl, AP, int, npn_proto_negotiated_hook,
+      (conn_rec* connection, char* proto_name, apr_size_t proto_name_len));
 }
 
 namespace {
+
+// For now, we only support SPDY version 2.
+const char* kSpdyProtocolName = "spdy/2";
 
 // These global variables store the filter handles for our filters.  Normally,
 // global variables would be very dangerous in a concurrent environment like
@@ -44,12 +60,25 @@ ap_filter_rec_t* g_spdy_output_filter;
 ap_filter_rec_t* g_spdy_input_filter;
 ap_filter_rec_t* g_anti_chunking_filter;
 
+// Get our context object for the given connection.
+mod_spdy::ConnectionContext* GetConnectionContext(conn_rec* connection) {
+  // Get the shared context object for this connection.  This object is created
+  // and attached to the connection's configuration vector in
+  // spdy_pre_connection().
+  return static_cast<mod_spdy::ConnectionContext*>(ap_get_module_config(
+      connection->conn_config,  // configuration vector to get from
+      &spdy_module));  // module with which desired object is associated
+}
+
 // See TAMB 8.4.2
 apr_status_t spdy_input_filter(ap_filter_t* filter,
                                apr_bucket_brigade* bb,
                                ap_input_mode_t mode,
                                apr_read_type_e block,
                                apr_off_t readbytes) {
+  // TODO(mdsteele): If NPN decided not to use SPDY, we need to take this
+  //   filter out of the chain.  This is a bit tricky because NPN won't even
+  //   happen until we force mod_ssl to start reading data.
   mod_spdy::SpdyInputFilter* input_filter =
       static_cast<mod_spdy::SpdyInputFilter*>(filter->ctx);
   return input_filter->Read(filter, bb, mode, block, readbytes);
@@ -105,20 +134,45 @@ apr_status_t anti_chunking_filter(ap_filter_t* filter,
   return ap_pass_brigade(filter->next, input_brigade);
 }
 
-// Invoked once per request.  See http_request.h for details.
-void spdy_insert_filter_hook(request_rec* request) {
-  conn_rec* connection = request->connection;
+// Called by mod_ssl when it needs to decide what protocols to advertise to the
+// client during Next Protocol Negotiation (NPN).
+int spdy_npn_advertise_protos(conn_rec* connection,
+                              apr_array_header_t* protos) {
+  // TODO(mdsteele): Check server config for this connection to see if we have
+  //   enabled SPDY on the relevant vhost (or whatever).
+  APR_ARRAY_PUSH(protos, const char*) = kSpdyProtocolName;
+  return OK;
+}
 
-  // Get the shared context object for this connection.  This object is created
-  // and attached to the connection's configuration vector in the
-  // spdy_pre_connection_hook function.
-  mod_spdy::ConnectionContext* conn_context =
-      static_cast<mod_spdy::ConnectionContext*>(ap_get_module_config(
-          connection->conn_config,  // configuration vector to get from
-          &spdy_module));  // module with which desired object is associated
-
+// Called by mod_ssl after Next Protocol Negotiation (NPN) has completed,
+// informing us which protocol was chosen by the client.
+int spdy_npn_proto_negotiated(conn_rec* connection, char* proto_name,
+                              apr_size_t proto_name_len) {
+  mod_spdy::ConnectionContext* conn_context = GetConnectionContext(connection);
   if (conn_context == NULL) {
     LOG(ERROR) << "No connection context present for mod_spdy.";
+    return DECLINED;
+  } else {
+    conn_context->set_protocol(proto_name, proto_name_len);
+    return OK;
+  }
+}
+
+// Invoked once per request.  See http_request.h for details.
+void spdy_insert_filter(request_rec* request) {
+  conn_rec* connection = request->connection;
+  mod_spdy::ConnectionContext* conn_context = GetConnectionContext(connection);
+
+  // If a connection context wasn't created in our pre_connection hook, that
+  // indicates that we won't be using SPDY for this connection (e.g. because
+  // we're not using SSL for this connection).  In that case, don't insert our
+  // filters.
+  if (conn_context == NULL) {
+    return;
+  }
+
+  // If NPN didn't choose SPDY for this connection, don't insert our filters.
+  if (conn_context->protocol() != kSpdyProtocolName) {
     return;
   }
 
@@ -136,10 +190,8 @@ void spdy_insert_filter_hook(request_rec* request) {
                               NULL, request, connection);
 }
 
-/**
- * Invoked once per connection. See http_connection.h for details.
- */
-int spdy_pre_connection_hook(conn_rec* connection, void* csd) {
+// Invoked once per connection. See http_connection.h for details.
+int spdy_pre_connection(conn_rec* connection, void* csd) {
   // We do not want to attach to non-inbound connections
   // (e.g. connections created by mod_proxy). Non-inbound connections
   // do not get a scoreboard hook, so we abort if the connection
@@ -147,7 +199,18 @@ int spdy_pre_connection_hook(conn_rec* connection, void* csd) {
   // http://mail-archives.apache.org/mod_mbox/httpd-dev/201008.mbox/%3C99EA83DCDE961346AFA9B5EC33FEC08B047FDC26@VF-MBX11.internal.vodafone.com%3E
   // for more details.
   if (connection->sbh == NULL) {
-    return OK;
+    return DECLINED;
+  }
+
+  // Check if this connection is over SSL; if not, we definitely won't be using
+  // SPDY.  Note that ssl_is_https() must be called _after_ mod_ssl's
+  // pre_connection hook has run, so we specify in spdy_register_hooks() that
+  // our pre_connection hook function must run after mod_ssl's.
+  int (*using_ssl)(conn_rec*) = APR_RETRIEVE_OPTIONAL_FN(ssl_is_https);
+  if (using_ssl == NULL ||  // mod_ssl is not even loaded
+      using_ssl(connection) == 0) {
+    // This is not an SSL connection, so we can't talk SPDY on it.
+    return DECLINED;
   }
 
   // Create a shared context object for this connection; this object will be
@@ -196,7 +259,7 @@ const ap_filter_type kSpdyInputFilterType =
 
 const ap_filter_type kSpdyOutputFilterType = AP_FTYPE_TRANSCODE;
 
-void spdy_register_hook(apr_pool_t* p) {
+void spdy_register_hooks(apr_pool_t* p) {
   mod_spdy::InstallLogMessageHandler(p);
 
   // Let users know that they are installing an experimental module.
@@ -204,26 +267,50 @@ void spdy_register_hook(apr_pool_t* p) {
                << "It is not yet suitable for production environments "
                << "and may have stability issues.";
 
-  // Register a hook to be called for each new connection.  This hook will
-  // set up a shared context object and install our input filter for that
-  // connection.  The "predecessors" and "successors" arguments can be used to
-  // specify particular modules that must run before/after this one (see
-  // http://httpd.apache.org/docs/2.0/developer/hooks.html#hooking-order),
-  // but we don't care, so we omit those and use the "position" argument to
-  // indicate that running somewhere in the middle would be just fine.
+  // Register a hook to be called for each new connection.  This hook will set
+  // up a shared context object and install our input filter for that
+  // connection.  Our pre-connection hook must run after mod_ssl's, so that in
+  // ours we can ask mod_ssl if the connection is using SSL.  See TAMB 10.2.2
+  // or http://httpd.apache.org/docs/trunk/developer/hooks.html#hooking-order
+  // for more about controlling hook order.
+  static const char* const pre_connection_preds[] = {"mod_ssl.c", NULL};
   ap_hook_pre_connection(
-      spdy_pre_connection_hook,  // hook function to be called
-      NULL,                      // predecessors
+      spdy_pre_connection,       // hook function to be called
+      pre_connection_preds,      // predecessors
       NULL,                      // successors
       APR_HOOK_MIDDLE);          // position
 
   // Register a hook to be called when adding filters for each new request.
   // This hook will insert our output filter.
   ap_hook_insert_filter(
-      spdy_insert_filter_hook,   // hook function to be called
+      spdy_insert_filter,        // hook function to be called
       NULL,                      // predecessors
       NULL,                      // successors
       APR_HOOK_MIDDLE);          // position
+
+  // Register a hook with mod_ssl to be called when deciding what protocols to
+  // advertise during Next Protocol Negotiatiation (NPN); we'll use this
+  // opportunity to advertise that we support SPDY.  This hook is declared in
+  // mod_ssl.h.  See TAMB 10.2.3 for more about optional hooks.
+  APR_OPTIONAL_HOOK(
+      ssl,                        // prefix of optional hook
+      npn_advertise_protos_hook,  // name of optional hook
+      spdy_npn_advertise_protos,  // hook function to be called
+      NULL,                       // predecessors
+      NULL,                       // successors
+      APR_HOOK_MIDDLE);           // position
+
+  // Register a hook with mod_ssl to be called when NPN has been completed and
+  // the next protocol decided upon.  This hook will check if we're actually to
+  // be using SPDY with the client, and enable this module if so.  This hook is
+  // declared in mod_ssl.h.
+  APR_OPTIONAL_HOOK(
+      ssl,                        // prefix of optional hook
+      npn_proto_negotiated_hook,  // name of optional hook
+      spdy_npn_proto_negotiated,  // hook function to be called
+      NULL,                       // predecessors
+      NULL,                       // successors
+      APR_HOOK_MIDDLE);           // position
 
   // Register our input filter, and store the filter handle into a global
   // variable so we can use it later to instantiate our filter into a filter
@@ -287,7 +374,7 @@ extern "C" {
     NULL,
 
     // Finally, this function will be called to register hooks for this module:
-    spdy_register_hook
+    spdy_register_hooks
   };
 
 #if defined(__linux)

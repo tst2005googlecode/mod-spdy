@@ -15,6 +15,8 @@
 #ifndef MOD_SPDY_CONNECTION_CONTEXT_H_
 #define MOD_SPDY_CONNECTION_CONTEXT_H_
 
+#include <string>
+
 #include "base/basictypes.h"
 #include "base/scoped_ptr.h"
 
@@ -30,13 +32,15 @@ class ConnectionContext {
   ConnectionContext();
   ~ConnectionContext();
 
-  // TODO: Add other things needed by input/output filters.
+  const std::string& protocol() { return protocol_; }
+  void set_protocol(const char* protocol_name, size_t length);
 
   // Return the SpdyFramer to be used by all output streams on this connection
   // (the framer includes the shared compression context for output headers).
   spdy::SpdyFramer* output_framer() { return output_framer_.get(); }
 
  private:
+  std::string protocol_;
   scoped_ptr<spdy::SpdyFramer> output_framer_;
 
   DISALLOW_COPY_AND_ASSIGN(ConnectionContext);
