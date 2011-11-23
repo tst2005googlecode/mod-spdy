@@ -18,6 +18,7 @@
 
 #include "mod_spdy/apache/http_stream_accumulator.h"
 #include "mod_spdy/apache/input_filter_input_stream.h"
+#include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/spdy_frame_pump.h"
 #include "mod_spdy/common/spdy_stream_distributor.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
@@ -170,7 +171,7 @@ SpdyToHttpConverterFactory::GetAccumulator() const {
   return queue_.front();
 }
 
-SpdyInputFilter::SpdyInputFilter(conn_rec *c)
+SpdyInputFilter::SpdyInputFilter(conn_rec *c, ConnectionContext* context)
     : input_(new InputFilterInputStream(c->pool,
                                         c->bucket_alloc)),
       framer_(new spdy::SpdyFramer()),
@@ -179,7 +180,9 @@ SpdyInputFilter::SpdyInputFilter(conn_rec *c)
                                               c->bucket_alloc)),
       distributor_(new mod_spdy::SpdyStreamDistributor(framer_.get(),
                                                        factory_.get())),
-      pump_(new SpdyFramePump(input_.get(), framer_.get())) {
+      pump_(new SpdyFramePump(input_.get(), framer_.get())),
+      context_(context),
+      temp_brigade_(apr_brigade_create(c->pool, c->bucket_alloc)) {
   framer_->set_visitor(distributor_.get());
 }
 
@@ -191,6 +194,35 @@ apr_status_t SpdyInputFilter::Read(ap_filter_t *filter,
                                    ap_input_mode_t mode,
                                    apr_read_type_e block,
                                    apr_off_t readbytes) {
+  if (context_->npn_state() == ConnectionContext::NOT_DONE_YET) {
+    // NPN hasn't happened yet; we need to force some data through mod_ssl.  We
+    // use a speculative read so that the data won't actually be consumed, and
+    // will be returned again by the next read.
+    apr_status_t rv = ap_get_brigade(filter->next, temp_brigade_,
+                                     AP_MODE_SPECULATIVE, APR_BLOCK_READ, 1);
+    apr_brigade_cleanup(temp_brigade_);
+    // If the speculative read failed, NPN may not have happened yet.  Just
+    // return the error code, and we'll try again next time.
+    if (rv != APR_SUCCESS) {
+      return rv;
+    }
+    // By this point, NPN should be done.  If our NPN callback still hasn't set
+    // the NPN state to USING_SPDY or NOT_USING_SPDY, it's probably because
+    // we're using a version of mod_ssl that doesn't support NPN.
+    if (context_->npn_state() == ConnectionContext::NOT_DONE_YET) {
+      LOG(WARNING) << "NPN never finished; does this mod_ssl support NPN?";
+      context_->set_npn_state(ConnectionContext::NOT_USING_SPDY);
+    }
+  }
+
+  // If we're not using SPDY, we should just forward the read onwards.
+  if (context_->npn_state() != ConnectionContext::USING_SPDY) {
+    // TODO(mdsteele): You'd think we should ap_remove_input_filter(filter) at
+    //   this point, but things seem to break if we do.  It'd be nice to figure
+    //   out why; maybe we're doing it wrong.
+    return ap_get_brigade(filter->next, brigade, mode, block, readbytes);
+  }
+
   if (filter->c->aborted) {
     // From mod_ssl's ssl_io_filter_input in ssl_engine_io.c
     apr_bucket *bucket = apr_bucket_eos_create(filter->c->bucket_alloc);

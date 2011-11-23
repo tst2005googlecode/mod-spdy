@@ -19,12 +19,9 @@
 namespace mod_spdy {
 
 ConnectionContext::ConnectionContext()
-    : output_framer_(new spdy::SpdyFramer) {}
+    : npn_state_(NOT_DONE_YET),
+      output_framer_(new spdy::SpdyFramer) {}
 
 ConnectionContext::~ConnectionContext() {}
-
-void ConnectionContext::set_protocol(const char* name, size_t length) {
-  protocol_.assign(name, length);
-}
 
 }  // namespace mod_spdy

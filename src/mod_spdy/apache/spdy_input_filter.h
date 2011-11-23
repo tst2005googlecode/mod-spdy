@@ -16,8 +16,12 @@
 #define MOD_SPDY_APACHE_SPDY_INPUT_FILTER_H_
 
 #include "apr_buckets.h"
-#include "base/scoped_ptr.h"
 #include "util_filter.h"
+
+#include "base/basictypes.h"
+#include "base/scoped_ptr.h"
+
+#include "mod_spdy/common/connection_context.h"
 
 namespace spdy {
 class SpdyFramer;
@@ -32,7 +36,7 @@ class SpdyToHttpConverterFactory;
 
 class SpdyInputFilter {
  public:
-  explicit SpdyInputFilter(conn_rec *c);
+  SpdyInputFilter(conn_rec *c, ConnectionContext* context);
   ~SpdyInputFilter();
 
   // Read data from the given filter, into the given brigade. This
@@ -51,6 +55,10 @@ class SpdyInputFilter {
   scoped_ptr<SpdyToHttpConverterFactory> factory_;
   scoped_ptr<mod_spdy::SpdyStreamDistributor> distributor_;
   scoped_ptr<SpdyFramePump> pump_;
+  ConnectionContext* const context_;
+  apr_bucket_brigade* const temp_brigade_;
+
+  DISALLOW_COPY_AND_ASSIGN(SpdyInputFilter);
 };
 
 }  // namespace mod_spdy

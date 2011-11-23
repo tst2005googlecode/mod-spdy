@@ -29,18 +29,24 @@ namespace mod_spdy {
 // Shared context object for a SPDY connection.
 class ConnectionContext {
  public:
+  enum NpnState {
+    NOT_DONE_YET,
+    USING_SPDY,
+    NOT_USING_SPDY
+  };
+
   ConnectionContext();
   ~ConnectionContext();
 
-  const std::string& protocol() { return protocol_; }
-  void set_protocol(const char* protocol_name, size_t length);
+  const NpnState npn_state() const { return npn_state_; }
+  void set_npn_state(NpnState state) { npn_state_ = state; }
 
   // Return the SpdyFramer to be used by all output streams on this connection
   // (the framer includes the shared compression context for output headers).
-  spdy::SpdyFramer* output_framer() { return output_framer_.get(); }
+  spdy::SpdyFramer* output_framer() const { return output_framer_.get(); }
 
  private:
-  std::string protocol_;
+  NpnState npn_state_;
   scoped_ptr<spdy::SpdyFramer> output_framer_;
 
   DISALLOW_COPY_AND_ASSIGN(ConnectionContext);

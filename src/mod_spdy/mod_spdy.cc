@@ -23,6 +23,8 @@
 #include "apr_optional_hooks.h"
 #include "apr_tables.h"
 
+#include "base/string_piece.h"
+
 #include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
@@ -76,9 +78,6 @@ apr_status_t spdy_input_filter(ap_filter_t* filter,
                                ap_input_mode_t mode,
                                apr_read_type_e block,
                                apr_off_t readbytes) {
-  // TODO(mdsteele): If NPN decided not to use SPDY, we need to take this
-  //   filter out of the chain.  This is a bit tricky because NPN won't even
-  //   happen until we force mod_ssl to start reading data.
   mod_spdy::SpdyInputFilter* input_filter =
       static_cast<mod_spdy::SpdyInputFilter*>(filter->ctx);
   return input_filter->Read(filter, bb, mode, block, readbytes);
@@ -152,10 +151,14 @@ int spdy_npn_proto_negotiated(conn_rec* connection, char* proto_name,
   if (conn_context == NULL) {
     LOG(ERROR) << "No connection context present for mod_spdy.";
     return DECLINED;
-  } else {
-    conn_context->set_protocol(proto_name, proto_name_len);
-    return OK;
   }
+
+  if (base::StringPiece(proto_name, proto_name_len) == kSpdyProtocolName) {
+    conn_context->set_npn_state(mod_spdy::ConnectionContext::USING_SPDY);
+  } else {
+    conn_context->set_npn_state(mod_spdy::ConnectionContext::NOT_USING_SPDY);
+  }
+  return OK;
 }
 
 // Invoked once per request.  See http_request.h for details.
@@ -172,7 +175,7 @@ void spdy_insert_filter(request_rec* request) {
   }
 
   // If NPN didn't choose SPDY for this connection, don't insert our filters.
-  if (conn_context->protocol() != kSpdyProtocolName) {
+  if (conn_context->npn_state() != mod_spdy::ConnectionContext::USING_SPDY) {
     return;
   }
 
@@ -230,7 +233,7 @@ int spdy_pre_connection(conn_rec* connection, void* csd) {
   // and register it with the connection's pool so that it will be
   // deallocated when this connection ends.
   mod_spdy::SpdyInputFilter *input_filter =
-      new mod_spdy::SpdyInputFilter(connection);
+      new mod_spdy::SpdyInputFilter(connection, context);
   mod_spdy::PoolRegisterDelete(connection->pool, input_filter);
 
   // Add our input filter into the filter chain.  We use the
