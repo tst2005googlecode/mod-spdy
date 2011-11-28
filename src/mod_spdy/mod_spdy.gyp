@@ -30,11 +30,12 @@
       ],
       'sources': [
         'common/connection_context.cc',
-        'common/spdy_frame_pump.cc',
         'common/header_populator_interface.cc',
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
         'common/output_filter_context.cc',
+        'common/spdy_frame_pump.cc',
+        'common/spdy_server_config.cc',
         'common/spdy_stream_distributor.cc',
         'common/spdy_to_http_converter.cc',
       ],
@@ -57,6 +58,8 @@
       ],
       'sources': [
         'apache/brigade_output_stream.cc',
+        'apache/config_commands.cc',
+        'apache/config_util.cc',
         'apache/http_stream_accumulator.cc',
         'apache/input_filter_input_stream.cc',
         'apache/inspect.cc',

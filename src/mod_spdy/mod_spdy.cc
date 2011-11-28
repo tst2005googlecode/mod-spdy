@@ -26,17 +26,17 @@
 #include "base/string_piece.h"
 
 #include "mod_spdy/apache/brigade_output_stream.h"
+#include "mod_spdy/apache/config_commands.h"
+#include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/apache/spdy_input_filter.h"
 #include "mod_spdy/apache/spdy_output_filter.h"
 #include "mod_spdy/common/connection_context.h"
+#include "mod_spdy/common/spdy_server_config.h"
 
 extern "C" {
-  // Forward declaration for the sake of ap_get_module_config and friends.
-  extern module AP_MODULE_DECLARE_DATA spdy_module;
-
   // Declaring modified mod_ssl's optional hooks here (so that we don't need to
   // #include "mod_ssl.h").
   APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec *));
@@ -61,16 +61,6 @@ const char* kSpdyProtocolName = "spdy/2";
 ap_filter_rec_t* g_spdy_output_filter;
 ap_filter_rec_t* g_spdy_input_filter;
 ap_filter_rec_t* g_anti_chunking_filter;
-
-// Get our context object for the given connection.
-mod_spdy::ConnectionContext* GetConnectionContext(conn_rec* connection) {
-  // Get the shared context object for this connection.  This object is created
-  // and attached to the connection's configuration vector in
-  // spdy_pre_connection().
-  return static_cast<mod_spdy::ConnectionContext*>(ap_get_module_config(
-      connection->conn_config,  // configuration vector to get from
-      &spdy_module));  // module with which desired object is associated
-}
 
 // See TAMB 8.4.2
 apr_status_t spdy_input_filter(ap_filter_t* filter,
@@ -137,17 +127,20 @@ apr_status_t anti_chunking_filter(ap_filter_t* filter,
 // client during Next Protocol Negotiation (NPN).
 int spdy_npn_advertise_protos(conn_rec* connection,
                               apr_array_header_t* protos) {
-  // TODO(mdsteele): Check server config for this connection to see if we have
-  //   enabled SPDY on the relevant vhost (or whatever).
-  APR_ARRAY_PUSH(protos, const char*) = kSpdyProtocolName;
-  return OK;
+  if (mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    APR_ARRAY_PUSH(protos, const char*) = kSpdyProtocolName;
+    return OK;
+  } else {
+    return DECLINED;
+  }
 }
 
 // Called by mod_ssl after Next Protocol Negotiation (NPN) has completed,
 // informing us which protocol was chosen by the client.
 int spdy_npn_proto_negotiated(conn_rec* connection, char* proto_name,
                               apr_size_t proto_name_len) {
-  mod_spdy::ConnectionContext* conn_context = GetConnectionContext(connection);
+  mod_spdy::ConnectionContext* conn_context =
+      mod_spdy::GetConnectionContext(connection);
   if (conn_context == NULL) {
     LOG(ERROR) << "No connection context present for mod_spdy.";
     return DECLINED;
@@ -164,7 +157,8 @@ int spdy_npn_proto_negotiated(conn_rec* connection, char* proto_name,
 // Invoked once per request.  See http_request.h for details.
 void spdy_insert_filter(request_rec* request) {
   conn_rec* connection = request->connection;
-  mod_spdy::ConnectionContext* conn_context = GetConnectionContext(connection);
+  mod_spdy::ConnectionContext* conn_context =
+      mod_spdy::GetConnectionContext(connection);
 
   // If a connection context wasn't created in our pre_connection hook, that
   // indicates that we won't be using SPDY for this connection (e.g. because
@@ -195,6 +189,11 @@ void spdy_insert_filter(request_rec* request) {
 
 // Invoked once per connection. See http_connection.h for details.
 int spdy_pre_connection(conn_rec* connection, void* csd) {
+  // If SPDY is disabled for this server, we won't be using SPDY.
+  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    return DECLINED;
+  }
+
   // We do not want to attach to non-inbound connections
   // (e.g. connections created by mod_proxy). Non-inbound connections
   // do not get a scoreboard hook, so we abort if the connection
@@ -219,15 +218,7 @@ int spdy_pre_connection(conn_rec* connection, void* csd) {
   // Create a shared context object for this connection; this object will be
   // used by both our input filter and our output filter.
   mod_spdy::ConnectionContext* context =
-      new mod_spdy::ConnectionContext();
-  PoolRegisterDelete(connection->pool, context);
-
-  // Place the context object in the connection's configuration vector, so that
-  // other hook functions with access to this connection can get hold of the
-  // context object.  See TAMB 4.2 for details.
-  ap_set_module_config(connection->conn_config,  // configuration vector
-                       &spdy_module,  // module with which to associate
-                       context);      // pointer to store (any void* we want)
+      mod_spdy::CreateConnectionContext(connection);
 
   // Create a SpdyInputFilter object to be used by our input filter,
   // and register it with the connection's pool so that it will be
@@ -365,16 +356,16 @@ extern "C" {
     // http_config.h for the definition):
     STANDARD20_MODULE_STUFF,
 
-    // These next four arguments are callbacks, but we currently don't need
-    // them, so they are left null:
+    // These next four arguments are callbacks for manipulating configuration
+    // structures (the ones we don't need are left null):
     NULL,  // create per-directory config structure
     NULL,  // merge per-directory config structures
-    NULL,  // create per-server config structure
-    NULL,  // merge per-server config structures
+    mod_spdy::CreateSpdyServerConfig,  // create per-server config structure
+    mod_spdy::MergeSpdyServerConfigs,  // merge per-server config structures
 
     // This argument supplies a table describing the configuration directives
-    // implemented by this module (however, we don't currently have any):
-    NULL,
+    // implemented by this module:
+    mod_spdy::kSpdyConfigCommands,
 
     // Finally, this function will be called to register hooks for this module:
     spdy_register_hooks
