@@ -28,7 +28,6 @@ Inspector::~Inspector() {}
 
 void Inspector::Print(void* main_key) {
   LocalPool local;
-  CHECK(local.status() == APR_SUCCESS);
   const std::string header = StringPrintf("Inspecting %p:", main_key);
   ap_log_perror(APLOG_MARK, APLOG_NOTICE, APR_SUCCESS, local.pool(),
                 "%s", header.c_str());

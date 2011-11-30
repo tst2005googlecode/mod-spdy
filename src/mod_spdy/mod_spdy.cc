@@ -23,14 +23,10 @@
 #include "apr_optional_hooks.h"
 #include "apr_tables.h"
 
-#include "base/string_piece.h"
-
-#include "mod_spdy/apache/brigade_output_stream.h"
 #include "mod_spdy/apache/config_commands.h"
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
-#include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/apache/spdy_input_filter.h"
 #include "mod_spdy/apache/spdy_output_filter.h"
 #include "mod_spdy/common/connection_context.h"
@@ -146,7 +142,8 @@ int spdy_npn_proto_negotiated(conn_rec* connection, char* proto_name,
     return DECLINED;
   }
 
-  if (base::StringPiece(proto_name, proto_name_len) == kSpdyProtocolName) {
+  if (proto_name_len == strlen(kSpdyProtocolName) &&
+      !strncmp(kSpdyProtocolName, proto_name, proto_name_len)) {
     conn_context->set_npn_state(mod_spdy::ConnectionContext::USING_SPDY);
   } else {
     conn_context->set_npn_state(mod_spdy::ConnectionContext::NOT_USING_SPDY);

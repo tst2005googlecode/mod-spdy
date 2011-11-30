@@ -28,9 +28,6 @@ namespace mod_spdy {
  *
  *   apr_status_t SomeFunction() {
  *     LocalPool local;
- *     if (local.status() != APR_SUCCESS) {
- *       return local.status();
- *     }
  *     char* buffer = apr_palloc(local.pool(), 1024);
  *     // Do stuff with buffer; it will dealloc when we leave this scope.
  *     return APR_SUCCESS;
@@ -38,23 +35,24 @@ namespace mod_spdy {
  */
 class LocalPool {
  public:
-  LocalPool() : pool_(NULL), status_(apr_pool_create(&pool_, NULL)) {
-    DCHECK((pool_ == NULL) ^ (status_ == APR_SUCCESS));
+  LocalPool() : pool_(NULL) {
+    // apr_pool_create() only fails if we run out of memory.  However, we make
+    // no effort elsewhere in this codebase to deal with running out of memory,
+    // so there's no sense in dealing with it here.  Instead, just assert that
+    // pool creation succeeds.
+    const apr_status_t status = apr_pool_create(&pool_, NULL);
+    DCHECK(status == APR_SUCCESS);
+    DCHECK(pool_ != NULL);
   }
 
   ~LocalPool() {
-    if (pool_) {
-      DCHECK(status_ == APR_SUCCESS);
-      apr_pool_destroy(pool_);
-    }
+    apr_pool_destroy(pool_);
   }
 
-  apr_pool_t* pool() { return pool_; }
-  apr_status_t status() const { return status_; }
+  apr_pool_t* pool() const { return pool_; }
 
  private:
   apr_pool_t* pool_;
-  const apr_status_t status_;
 
   DISALLOW_COPY_AND_ASSIGN(LocalPool);
 };
@@ -74,6 +72,13 @@ void PoolRegisterDelete(apr_pool_t* pool, T* object) {
   apr_pool_cleanup_register(pool, object,
                             DeletionFunction<T>,  // cleanup function
                             apr_pool_cleanup_null);  // child cleanup
+}
+
+// Un-register a C++ object from deletion with a pool.  Essentially, this
+// undoes a previous call to PoolRegisterDelete with the same pool and object.
+template <class T>
+void PoolUnregisterDelete(apr_pool_t* pool, T* object) {
+  apr_pool_cleanup_kill(pool, object, DeletionFunction<T>);
 }
 
 }  // namespace mod_spdy

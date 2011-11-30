@@ -106,11 +106,6 @@ TEST_F(SpdyStreamDistributorTest, ErrorOnSettings) {
   AssertErrorOnControl(frame.get());
 }
 
-TEST_F(SpdyStreamDistributorTest, ErrorOnPing) {
-  scoped_ptr<spdy::SpdyControlFrame> frame(CreateControlFrame(spdy::PING));
-  AssertErrorOnControl(frame.get());
-}
-
 TEST_F(SpdyStreamDistributorTest, ErrorOnGoAway) {
   scoped_ptr<spdy::SpdyControlFrame> frame(CreateControlFrame(spdy::GOAWAY));
   AssertErrorOnControl(frame.get());
