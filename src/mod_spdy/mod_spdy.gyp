@@ -38,6 +38,7 @@
         'common/spdy_frame_pump.cc',
         'common/spdy_frame_queue.cc',
         'common/spdy_server_config.cc',
+        'common/spdy_stream.cc',
         'common/spdy_stream_distributor.cc',
         'common/spdy_to_http_converter.cc',
       ],

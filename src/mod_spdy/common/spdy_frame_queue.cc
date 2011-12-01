@@ -14,27 +14,65 @@
 
 #include "mod_spdy/common/spdy_frame_queue.h"
 
+#include <list>
+
+#include "base/logging.h"
 #include "base/stl_util-inl.h"
+#include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
 
-SpdyFrameQueue::SpdyFrameQueue() {}
+SpdyFrameQueue::SpdyFrameQueue()
+    : condvar_(&lock_), is_aborted_(false) {}
 
 SpdyFrameQueue::~SpdyFrameQueue() {
   STLDeleteContainerPointers(queue_.begin(), queue_.end());
 }
 
-void SpdyFrameQueue::Insert(spdy::SpdyFrame* frame) {
+bool SpdyFrameQueue::is_aborted() const {
   base::AutoLock autolock(lock_);
-  queue_.push_front(frame);
+  return is_aborted_;
 }
 
-bool SpdyFrameQueue::Pop(spdy::SpdyFrame** frame) {
+void SpdyFrameQueue::Abort() {
   base::AutoLock autolock(lock_);
+  is_aborted_ = true;
+  STLDeleteContainerPointers(queue_.begin(), queue_.end());
+  queue_.clear();
+  condvar_.Broadcast();
+}
+
+void SpdyFrameQueue::Insert(spdy::SpdyFrame* frame) {
+  base::AutoLock autolock(lock_);
+  if (is_aborted_) {
+    DCHECK(queue_.empty());
+    delete frame;
+  } else {
+    if (queue_.empty()) {
+      condvar_.Signal();
+    }
+    queue_.push_front(frame);
+  }
+}
+
+bool SpdyFrameQueue::Pop(bool block, spdy::SpdyFrame** frame) {
+  base::AutoLock autolock(lock_);
+
+  if (block) {
+    // Block until the queue is nonempty or we abort.
+    while (queue_.empty() && !is_aborted_) {
+      condvar_.Wait();
+    }
+  }
+
+  // If we've aborted, the queue should now be empty.
+  DCHECK(!is_aborted_ || queue_.empty());
   if (queue_.empty()) {
     return false;
   }
+
   *frame = queue_.back();
   queue_.pop_back();
   return true;

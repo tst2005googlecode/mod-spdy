@@ -23,32 +23,54 @@ namespace {
 TEST(SpdyFrameQueueTest, Simple) {
   mod_spdy::SpdyFrameQueue queue;
   spdy::SpdyFrame* frame;
-  ASSERT_FALSE(queue.Pop(&frame));
+  ASSERT_FALSE(queue.Pop(false, &frame));
 
   queue.Insert(spdy::SpdyFramer::CreateGoAway(4));
   queue.Insert(spdy::SpdyFramer::CreateGoAway(1));
   queue.Insert(spdy::SpdyFramer::CreateGoAway(3));
 
-  ASSERT_TRUE(queue.Pop(&frame));
+  ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(4, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
-  ASSERT_TRUE(queue.Pop(&frame));
+  ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(1, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
 
   queue.Insert(spdy::SpdyFramer::CreateGoAway(2));
   queue.Insert(spdy::SpdyFramer::CreateGoAway(5));
 
-  ASSERT_TRUE(queue.Pop(&frame));
+  ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(3, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
-  ASSERT_TRUE(queue.Pop(&frame));
+  ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(2, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
-  ASSERT_TRUE(queue.Pop(&frame));
+  ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(5, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
-  ASSERT_FALSE(queue.Pop(&frame));
+  ASSERT_FALSE(queue.Pop(false, &frame));
 }
+
+TEST(SpdyFrameQueueTest, AbortEmptiesQueue) {
+  mod_spdy::SpdyFrameQueue queue;
+  spdy::SpdyFrame* frame;
+  ASSERT_FALSE(queue.is_aborted());
+  ASSERT_FALSE(queue.Pop(false, &frame));
+
+  queue.Insert(spdy::SpdyFramer::CreateGoAway(4));
+  queue.Insert(spdy::SpdyFramer::CreateGoAway(1));
+  queue.Insert(spdy::SpdyFramer::CreateGoAway(3));
+
+  ASSERT_TRUE(queue.Pop(false, &frame));
+  ASSERT_EQ(4, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
+            last_accepted_stream_id());
+
+  queue.Abort();
+
+  ASSERT_FALSE(queue.Pop(false, &frame));
+  ASSERT_TRUE(queue.is_aborted());
+}
+
+// TODO(mdsteele): Add tests for threaded behavior and blocking Pop() calls.
 
 }  // namespace

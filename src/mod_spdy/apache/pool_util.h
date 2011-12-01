@@ -41,8 +41,8 @@ class LocalPool {
     // so there's no sense in dealing with it here.  Instead, just assert that
     // pool creation succeeds.
     const apr_status_t status = apr_pool_create(&pool_, NULL);
-    DCHECK(status == APR_SUCCESS);
-    DCHECK(pool_ != NULL);
+    CHECK(status == APR_SUCCESS);
+    CHECK(pool_ != NULL);
   }
 
   ~LocalPool() {

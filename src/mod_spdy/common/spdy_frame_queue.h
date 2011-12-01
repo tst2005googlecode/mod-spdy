@@ -18,37 +18,50 @@
 #include <list>
 
 #include "base/basictypes.h"
+#include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "net/spdy/spdy_protocol.h"
+
+namespace spdy { class SpdyFrame; }
 
 namespace mod_spdy {
 
 // A simple FIFO queue of SPDY frames, intended for sending input frames from
 // the SPDY connection thread to a SPDY stream thread.  This class is
-// thread-safe -- the Insert() and Pop() methods may be called concurrently by
-// multiple threads.
+// thread-safe -- all methods may be called concurrently by multiple threads.
 class SpdyFrameQueue {
  public:
   // Create an initially-empty queue.
   SpdyFrameQueue();
   ~SpdyFrameQueue();
 
+  // Return true if this queue has been aborted.
+  bool is_aborted() const;
+
+  // Abort the queue.  All frames held by the queue will be deleted; future
+  // frames passed to Insert() will be immediately deleted; future calls to
+  // Pop() will fail immediately; and current blocking calls to Pop will
+  // immediately unblock and fail.
+  void Abort();
+
   // Insert a frame into the queue.  The queue takes ownership of the frame,
-  // and will delete it if the queue is deleted before the frame is removed
-  // from the queue by the Pop method.
+  // and will delete it if the queue is deleted or aborted before the frame is
+  // removed from the queue by the Pop method.
   void Insert(spdy::SpdyFrame* frame);
 
   // Remove and provide a frame from the queue and return true, or return false
-  // if the queue is empty.  The caller gains ownership of the provided frame
-  // object.
-  bool Pop(spdy::SpdyFrame** frame);
+  // if the queue is empty or has been aborted.  If the block argument is true,
+  // block until a frame becomes available (or the queue is aborted).  The
+  // caller gains ownership of the provided frame object.
+  bool Pop(bool block, spdy::SpdyFrame** frame);
 
  private:
   // This is a pretty naive implementation of a thread-safe queue, but it's
   // good enough for our purposes.  We could use an apr_queue_t instead of
   // rolling our own class, but it lacks the ownership semantics that we want.
-  base::Lock lock_;
+  mutable base::Lock lock_;
+  base::ConditionVariable condvar_;
   std::list<spdy::SpdyFrame*> queue_;
+  bool is_aborted_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyFrameQueue);
 };
