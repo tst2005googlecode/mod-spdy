@@ -63,6 +63,8 @@
         'apache/brigade_output_stream.cc',
         'apache/config_commands.cc',
         'apache/config_util.cc',
+        'apache/filters/http_to_spdy_filter.cc',
+        'apache/filters/spdy_to_http_filter.cc',
         'apache/http_stream_accumulator.cc',
         'apache/input_filter_input_stream.cc',
         'apache/inspect.cc',
