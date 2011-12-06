@@ -37,9 +37,11 @@ TEST(SpdyFramePriorityQueueTest, Simple) {
   ASSERT_TRUE(queue.Pop(&frame));
   ASSERT_EQ(1, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_TRUE(queue.Pop(&frame));
   ASSERT_EQ(4, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
 
   queue.Insert(SPDY_PRIORITY_MIDLOW, spdy::SpdyFramer::CreateGoAway(2));
   queue.Insert(SPDY_PRIORITY_MIDHIGH, spdy::SpdyFramer::CreateGoAway(6));
@@ -48,15 +50,19 @@ TEST(SpdyFramePriorityQueueTest, Simple) {
   ASSERT_TRUE(queue.Pop(&frame));
   ASSERT_EQ(6, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_TRUE(queue.Pop(&frame));
   ASSERT_EQ(5, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_TRUE(queue.Pop(&frame));
   ASSERT_EQ(2, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_TRUE(queue.Pop(&frame));
   ASSERT_EQ(3, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_FALSE(queue.Pop(&frame));
 }
 

@@ -126,11 +126,13 @@
         'spdy_apache',
         '<(DEPTH)/testing/gtest.gyp:gtest',
         '<(DEPTH)/third_party/apache/apr/apr.gyp:apr',
+        '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:aprutil',
       ],
       'include_dirs': [
         '<(DEPTH)',
       ],
       'sources': [
+        'apache/filters/http_to_spdy_filter_test.cc',
         'apache/pool_util_test.cc',
         'apache/testing/spdy_apache_test_main.cc',
       ],

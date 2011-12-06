@@ -32,9 +32,11 @@ TEST(SpdyFrameQueueTest, Simple) {
   ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(4, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(1, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
 
   queue.Insert(spdy::SpdyFramer::CreateGoAway(2));
   queue.Insert(spdy::SpdyFramer::CreateGoAway(5));
@@ -42,12 +44,15 @@ TEST(SpdyFrameQueueTest, Simple) {
   ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(3, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(2, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(5, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
   ASSERT_FALSE(queue.Pop(false, &frame));
 }
 
@@ -64,6 +69,7 @@ TEST(SpdyFrameQueueTest, AbortEmptiesQueue) {
   ASSERT_TRUE(queue.Pop(false, &frame));
   ASSERT_EQ(4, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
             last_accepted_stream_id());
+  delete frame;
 
   queue.Abort();
 
