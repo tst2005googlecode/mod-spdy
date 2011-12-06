@@ -119,6 +119,22 @@
         'common/spdy_to_http_converter_test.cc',
       ],
     },
+    {
+      'target_name': 'spdy_apache_test',
+      'type': 'executable',
+      'dependencies': [
+        'spdy_apache',
+        '<(DEPTH)/testing/gtest.gyp:gtest',
+        '<(DEPTH)/third_party/apache/apr/apr.gyp:apr',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        'apache/pool_util_test.cc',
+        'apache/testing/spdy_apache_test_main.cc',
+      ],
+    },
   ],
   # Spdyget has been disabled for now, due to incompatible changes in the
   # spdy_framer API.
