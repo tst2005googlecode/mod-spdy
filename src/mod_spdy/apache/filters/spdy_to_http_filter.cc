@@ -20,8 +20,11 @@
 #include "base/logging.h"
 #include "base/scoped_ptr.h"
 #include "base/string_piece.h"
+#include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
+#include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/spdy/spdy_frame_builder.h"
+#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace spdy { typedef std::map<std::string, std::string> SpdyHeaderBlock; }
@@ -31,15 +34,6 @@ namespace {
 // If, during an AP_MODE_GETLINE read, we pull in this much data (or more)
 // without seeing a linebreak, just give up and return what we have.
 const size_t kGetlineThreshold = 4096;
-
-// Names of various SPDY headers:
-const char* kConnectionHeader = "connection";
-const char* kHostHeader = "host";
-const char* kKeepAliveHeader = "keep-alive";
-const char* kMethodHeader = "method";
-const char* kSchemeHeader = "scheme";
-const char* kUrlHeader = "url";
-const char* kVersionHeader = "version";
 
 // TODO(mdsteele): In more recent versions of net/spdy/, this is a static
 //   method on SpdyFramer.  We should upgrade and use that instead of
@@ -72,6 +66,60 @@ bool ParseHeaderBlockInBuffer(const char* header_data,
         iter == header_data + header_length;
   }
   return false;
+}
+
+class HttpStringVisitor : public mod_spdy::HttpStreamVisitorInterface {
+ public:
+  explicit HttpStringVisitor(std::string* str)
+      : string_(str), has_error_(false) {}
+  ~HttpStringVisitor() {}
+
+  bool has_error() const { return has_error_; }
+
+  // HttpStreamVisitorInterface methods:
+  virtual void OnStatusLine(const char* method, const char* scheme,
+                            const char* host, const char* path,
+                            const char* version);
+  virtual void OnHeader(const char* key, const char* value);
+  virtual void OnHeadersComplete();
+  virtual void OnBody(const char* data, size_t data_len);
+  virtual void OnComplete() {}
+  virtual void OnTerminate() { has_error_ = true; }
+
+ private:
+  std::string* const string_;
+  bool has_error_;
+
+  DISALLOW_COPY_AND_ASSIGN(HttpStringVisitor);
+};
+
+void HttpStringVisitor::OnStatusLine(const char* method, const char* scheme,
+                                     const char* host, const char* path,
+                                     const char* version) {
+  string_->reserve(string_->size() + strlen(method) + strlen(path) +
+                   strlen(version) + 4);
+  string_->append(method);
+  string_->push_back(' ');
+  string_->append(path);
+  string_->push_back(' ');
+  string_->append(version);
+  string_->append("\r\n");
+}
+
+void HttpStringVisitor::OnHeader(const char* key, const char* value) {
+  string_->reserve(string_->size() + strlen(key) + strlen(value) + 4);
+  string_->append(key);
+  string_->append(": ");
+  string_->append(value);
+  string_->append("\r\n");
+}
+
+void HttpStringVisitor::OnHeadersComplete() {
+  string_->append("\r\n");
+}
+
+void HttpStringVisitor::OnBody(const char* data, size_t size) {
+  string_->append(data, size);
 }
 
 }  // namespace
@@ -254,8 +302,11 @@ bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
       default:
         // Other frame types should be handled by the master connection, rather
         // than sent here.
-        LOG(DFATAL) << "Master connection sent us a frame of type "
-                    << ctrl_frame->type();
+        LOG(DFATAL) << "Master connection sent a frame of type "
+                    << ctrl_frame->type() << " to stream "
+                    << stream_->stream_id();
+        AbortStream(spdy::INTERNAL_ERROR);
+        return false;
     }
   } else {
     spdy::SpdyDataFrame* data_frame =
@@ -273,58 +324,28 @@ void SpdyToHttpFilter::DecodeSynStream(
                                 &block)) {
     LOG(ERROR) << "Invalid SYN_STREAM header block in stream "
                << stream_->stream_id();
-    stream_->Abort();
+    AbortStream(spdy::PROTOCOL_ERROR);
     return;
   }
 
-  // Write out the HTTP request line.
-  data_buffer_.append(block[kMethodHeader]);
-  data_buffer_.push_back(' ');
-  data_buffer_.append(block[kUrlHeader]);
-  data_buffer_.push_back(' ');
-  data_buffer_.append(block[kVersionHeader]);
-  data_buffer_.append("\r\n");
-
-  // Write out the rest of the HTTP headers.
-  for (spdy::SpdyHeaderBlock::const_iterator iter = block.begin();
-       iter != block.end(); ++iter) {
-    const base::StringPiece key = iter->first;
-    const base::StringPiece value = iter->second;
-
-    if (key == kMethodHeader || key == kSchemeHeader || //key == kHostHeader ||
-        key == kUrlHeader || key == kVersionHeader) {
-      // A SPDY-specific header; do not emit it.
-      continue;
-    }
-
-    if (key == kConnectionHeader || key == kKeepAliveHeader) {
-      // Skip headers that are ignored by SPDY.
-      continue;
-    }
-
-    // Split header values on null characters, emitting a separate
-    // header key-value pair for each substring. Logic from
-    // net/spdy/spdy_session.cc
-    for (size_t start = 0, end = 0; end != std::string::npos; start = end) {
-      start = value.find_first_not_of('\0', start);
-      if (start == std::string::npos) {
-        break;
-      }
-      end = value.find('\0', start);
-
-      const base::StringPiece subval =
-          (end == value.npos ? value.substr(start) :
-           value.substr(start, (end - start)));
-
-      key.AppendToString(&data_buffer_);
-      data_buffer_.append(": ");
-      subval.AppendToString(&data_buffer_);
-      data_buffer_.append("\r\n");
-    }
+  HttpStringVisitor visitor(&data_buffer_);
+  if (!GenerateRequestLineFromHeaderBlock(block, &visitor)) {
+    // TODO(mdsteeele): According to the SPDY spec, we're supposed to return an
+    //   HTTP 400 (Bad Request) reply in this case.  We need to do some minor
+    //   refactoring to make that possible.
+    LOG(DFATAL) << "Could not generate request line from SYN_STREAM frame"
+                << " in stream " << stream_->stream_id();
+    AbortStream(spdy::INTERNAL_ERROR);
+    return;
   }
+  GenerateHeadersFromHeaderBlock(block, &visitor);
+  visitor.OnHeadersComplete();
+}
 
-  // End of headers.
-  data_buffer_.append("\r\n");
+void SpdyToHttpFilter::AbortStream(spdy::SpdyStatusCodes status) {
+  stream_->SendOutputFrame(spdy::SpdyFramer::CreateRstStream(
+      stream_->stream_id(), status));
+  stream_->Abort();
 }
 
 }  // namespace mod_spdy

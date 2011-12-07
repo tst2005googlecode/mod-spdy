@@ -46,6 +46,19 @@ private:
   bool error_;
 };
 
+// Generate an HTTP request line from the given SPDY header block by calling
+// the OnStatusLine() method of the given visitor, and return true.  If there's
+// an error, this will return false without calling any methods on the visitor.
+bool GenerateRequestLineFromHeaderBlock(const spdy::SpdyHeaderBlock& headers,
+                                        HttpStreamVisitorInterface* visitor);
+
+// Convert the given SPDY header block (e.g. from a SYN_STREAM, SYN_REPLY, or
+// HEADERS frame) into HTTP headers by calling the OnHeader() method of the
+// given visitor.  Note that this does not call OnStatusLine() or
+// OnHeadersComplete() on the visitor.
+void GenerateHeadersFromHeaderBlock(const spdy::SpdyHeaderBlock& headers,
+                                    HttpStreamVisitorInterface* visitor);
+
 }  // namespace mod_spdy
 
 #endif  // MOD_SPDY_SPDY_TO_HTTP_CONVERTER_H_

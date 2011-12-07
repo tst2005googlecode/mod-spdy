@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef MOD_SPDY_HTTP_STREAM_VISITOR_INTERFACE_H_
-#define MOD_SPDY_HTTP_STREAM_VISITOR_INTERFACE_H_
+#ifndef MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_
+#define MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_
 
 #include <stddef.h>  // for size_t
 
@@ -57,4 +57,4 @@ class HttpStreamVisitorInterface {
 
 }  // namespace mod_spdy
 
-#endif  // MOD_SPDY_HTTP_STREAM_VISITOR_INTERFACE_H_
+#endif  // MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_

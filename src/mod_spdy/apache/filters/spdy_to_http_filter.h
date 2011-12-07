@@ -21,8 +21,7 @@
 #include "util_filter.h"
 
 #include "base/basictypes.h"
-
-namespace spdy { class SpdySynStreamControlFrame; }
+#include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
 
@@ -53,6 +52,9 @@ class SpdyToHttpFilter {
 
   // Translate a SYN_STREAM frame to HTTP and append it to data_buffer_.
   void DecodeSynStream(const spdy::SpdySynStreamControlFrame& frame);
+
+  // Send a RST_STREAM frame and abort the stream.
+  void AbortStream(spdy::SpdyStatusCodes status);
 
   SpdyStream* const stream_;
   std::string data_buffer_;

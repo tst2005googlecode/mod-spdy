@@ -91,24 +91,11 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
     return;
   }
 
-  if (block.count(kMethod) != 1 ||
-      block.count(kScheme) != 1 ||
-      block.count(kHost) != 1 ||
-      block.count(kPath) != 1 ||
-      block.count(kVersion) != 1) {
+  if (!GenerateRequestLineFromHeaderBlock(block, visitor_)) {
     LOG(DFATAL) << "SynStream is missing required headers.";
     OnError(framer_);
     return;
   }
-
-  // Technically we should decode the URL into a path and a
-  // Host. Instead we pass the full URL on to the visitor and leave it
-  // up to the visitor to extract Host and path.
-  visitor_->OnStatusLine(block[kMethod].c_str(),
-                         block[kScheme].c_str(),
-                         block[kHost].c_str(),
-                         block[kPath].c_str(),
-                         block[kVersion].c_str());
 
   // Write the stream ID into a custom header, to be read back afterwards by
   // our output filter so that we know which stream to respond on.  We put this
@@ -126,6 +113,64 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
   visitor_->OnHeader("x-spdy-stream-id", stream_id_str.c_str());
 
   // Write out the rest of the HTTP headers.
+  GenerateHeadersFromHeaderBlock(block, visitor_);
+
+  // Explicitly set Keep-Alive on HTTP/1.0 requests
+  // to prevent Apache from closing the socket
+  if (block[kVersion] == "HTTP/1.0") {
+    visitor_->OnHeader(kConnection, "Keep-Alive");
+  }
+
+  visitor_->OnHeadersComplete();
+
+  if (frame->flags() & spdy::CONTROL_FLAG_FIN) {
+    visitor_->OnComplete();
+  }
+}
+
+void SpdyToHttpConverter::OnStreamFrameData(spdy::SpdyStreamId stream_id,
+                                            const char *data,
+                                            size_t len) {
+  if (HasError()) {
+    return;
+  }
+
+  if (len == 0) {
+    visitor_->OnComplete();
+  } else {
+    visitor_->OnBody(data, len);
+  }
+}
+
+bool GenerateRequestLineFromHeaderBlock(const spdy::SpdyHeaderBlock& block,
+                                        HttpStreamVisitorInterface* visitor) {
+  spdy::SpdyHeaderBlock::const_iterator method = block.find(kMethod);
+  spdy::SpdyHeaderBlock::const_iterator scheme = block.find(kScheme);
+  spdy::SpdyHeaderBlock::const_iterator host = block.find(kHost);
+  spdy::SpdyHeaderBlock::const_iterator path = block.find(kPath);
+  spdy::SpdyHeaderBlock::const_iterator version = block.find(kVersion);
+
+  if (method == block.end() ||
+      scheme == block.end() ||
+      host == block.end() ||
+      path == block.end() ||
+      version == block.end()) {
+    return false;
+  }
+
+  // Technically we should decode the URL into a path and a
+  // Host. Instead we pass the full URL on to the visitor and leave it
+  // up to the visitor to extract Host and path.
+  visitor->OnStatusLine(method->second.c_str(),
+                        scheme->second.c_str(),
+                        host->second.c_str(),
+                        path->second.c_str(),
+                        version->second.c_str());
+  return true;
+}
+
+void GenerateHeadersFromHeaderBlock(const spdy::SpdyHeaderBlock& block,
+                                    HttpStreamVisitorInterface* visitor) {
   for (spdy::SpdyHeaderBlock::const_iterator it = block.begin(),
            it_end = block.end();
        it != it_end;
@@ -162,34 +207,8 @@ OnSynStream(const spdy::SpdySynStreamControlFrame *frame) {
       } else {
         tval = value.substr(start);
       }
-      visitor_->OnHeader(key.c_str(), tval.c_str());
+      visitor->OnHeader(key.c_str(), tval.c_str());
     }
-  }
-
-  // Explicitly set Keep-Alive on HTTP/1.0 requests
-  // to prevent Apache from closing the socket
-  if (block[kVersion] == "HTTP/1.0") {
-    visitor_->OnHeader(kConnection, "Keep-Alive");
-  }
-
-  visitor_->OnHeadersComplete();
-
-  if (frame->flags() & spdy::CONTROL_FLAG_FIN) {
-    visitor_->OnComplete();
-  }
-}
-
-void SpdyToHttpConverter::OnStreamFrameData(spdy::SpdyStreamId stream_id,
-                                            const char *data,
-                                            size_t len) {
-  if (HasError()) {
-    return;
-  }
-
-  if (len == 0) {
-    visitor_->OnComplete();
-  } else {
-    visitor_->OnBody(data, len);
   }
 }
 
