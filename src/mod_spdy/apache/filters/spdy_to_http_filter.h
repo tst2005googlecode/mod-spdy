@@ -52,6 +52,8 @@ class SpdyToHttpFilter {
 
   // Translate a SYN_STREAM frame to HTTP and append it to data_buffer_.
   void DecodeSynStream(const spdy::SpdySynStreamControlFrame& frame);
+  // Append the contents of a data frame to data_buffer_.
+  void DecodeDataFrame(const spdy::SpdyDataFrame& frame);
 
   // Send a RST_STREAM frame and abort the stream.
   void AbortStream(spdy::SpdyStatusCodes status);

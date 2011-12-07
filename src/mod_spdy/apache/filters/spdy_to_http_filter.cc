@@ -199,10 +199,12 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
       }
     }
 
-    // Put the data we read into a transient bucket.  We use a transient bucket
-    // to avoid an extra string copy here.
-    bytes_read = std::min(static_cast<int>(readbytes),
-                          static_cast<int>(data_buffer_.size()));
+    // Put the data we read into a transient bucket (but no more than they
+    // asked for).  We use a transient bucket, as opposed to a heap bucket, to
+    // avoid an extra string copy.
+    const int buffer_size = static_cast<int>(data_buffer_.size());
+    bytes_read = (mode == AP_MODE_EXHAUSTIVE ? buffer_size :
+                  std::min(static_cast<int>(readbytes), buffer_size));
   }
   // For AP_MODE_GETLINE, try to return a full text line of data.
   else if (mode == AP_MODE_GETLINE) {
@@ -277,6 +279,10 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
 }
 
 bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
+  if (end_of_stream_reached_) {
+    return false;
+  }
+
   // Try to get the next SPDY frame from the stream.
   scoped_ptr<spdy::SpdyFrame> frame;
   {
@@ -309,9 +315,7 @@ bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
         return false;
     }
   } else {
-    spdy::SpdyDataFrame* data_frame =
-        static_cast<spdy::SpdyDataFrame*>(frame.get());
-    data_buffer_.append(data_frame->payload(), data_frame->length());
+    DecodeDataFrame(*static_cast<spdy::SpdyDataFrame*>(frame.get()));
   }
 
   return true;
@@ -340,6 +344,17 @@ void SpdyToHttpFilter::DecodeSynStream(
   }
   GenerateHeadersFromHeaderBlock(block, &visitor);
   visitor.OnHeadersComplete();
+
+  if (frame.flags() & spdy::CONTROL_FLAG_FIN) {
+    end_of_stream_reached_ = true;
+  }
+}
+
+void SpdyToHttpFilter::DecodeDataFrame(const spdy::SpdyDataFrame& frame) {
+  data_buffer_.append(frame.payload(), frame.length());
+  if (frame.flags() & spdy::DATA_FLAG_FIN) {
+    end_of_stream_reached_ = true;
+  }
 }
 
 void SpdyToHttpFilter::AbortStream(spdy::SpdyStatusCodes status) {

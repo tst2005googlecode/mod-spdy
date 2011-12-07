@@ -133,6 +133,7 @@
       ],
       'sources': [
         'apache/filters/http_to_spdy_filter_test.cc',
+        'apache/filters/spdy_to_http_filter_test.cc',
         'apache/pool_util_test.cc',
         'apache/testing/spdy_apache_test_main.cc',
       ],
