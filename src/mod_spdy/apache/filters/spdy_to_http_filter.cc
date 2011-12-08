@@ -172,6 +172,19 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
     next_read_start_ = 0;
   }
 
+  // We don't need to do anything for AP_MODE_INIT.  (We check this case before
+  // checking for EOF, becuase that's what ap_core_input_filter() in
+  // core_filters.c does.)
+  if (mode == AP_MODE_INIT) {
+    return APR_SUCCESS;
+  }
+
+  // If there will never be any more data on this stream, return EOF.  (That's
+  // what ap_core_input_filter() in core_filters.c does.)
+  if (end_of_stream_reached_ && data_buffer_.empty()) {
+    return APR_EOF;
+  }
+
   // Check if this SPDY stream has been aborted, and if so, quit.  We will also
   // check for aborts just after each time we call GetNextFrame (that's a good
   // time to check, since a stream abort can interrupt a blocking call to
@@ -181,15 +194,11 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   // Keep track of how much data, if any, we should place into the brigade.
   int bytes_read = 0;
 
-  // We don't need to do anything for AP_MODE_INIT.
-  if (mode == AP_MODE_INIT) {
-    return APR_SUCCESS;
-  }
   // For AP_MODE_READBYTES and AP_MODE_SPECULATIVE, we try to read the quantity
   // of bytes we are asked for.  For AP_MODE_EXHAUSTIVE, we read as much as
   // possible.
-  else if (mode == AP_MODE_READBYTES || mode == AP_MODE_SPECULATIVE ||
-           mode == AP_MODE_EXHAUSTIVE) {
+  if (mode == AP_MODE_READBYTES || mode == AP_MODE_SPECULATIVE ||
+      mode == AP_MODE_EXHAUSTIVE) {
     // Try to get as much data as we were asked for.
     while (readbytes > data_buffer_.size() || mode == AP_MODE_EXHAUSTIVE) {
       const bool got_frame = GetNextFrame(block);
@@ -240,7 +249,8 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   // for more information on its subtle semantics.
   else {
     DCHECK(mode == AP_MODE_EATCRLF);
-    LOG(WARNING) << "Unsupported read mode: " << mode;
+    LOG(WARNING) << "Unsupported read mode (" << mode << ") on stream "
+                 << stream_->stream_id();
     return APR_ENOTIMPL;
   }
 

@@ -161,6 +161,10 @@ TEST_F(SpdyToHttpConverterTest, MultiFrameStream) {
               OnHeader(StrEq("x-spdy-stream-id"),
                        StrEq("1")));
 
+  EXPECT_CALL(visitor_,
+              OnHeader(StrEq("host"),
+                       StrEq(kHost)));
+
   EXPECT_CALL(visitor_, OnHeadersComplete());
 
   scoped_ptr<spdy::SpdySynStreamControlFrame> syn_stream_frame(
@@ -212,6 +216,10 @@ TEST_F(SpdyToHttpConverterTest, MultipleSynFrames) {
                 OnHeader(StrEq("x-spdy-stream-id"),
                          StrEq(base::IntToString(i))));
 
+    EXPECT_CALL(visitor_,
+                OnHeader(StrEq("host"),
+                         StrEq(kHost)));
+
     EXPECT_CALL(visitor_, OnHeadersComplete());
 
     EXPECT_CALL(visitor_, OnComplete());
@@ -250,14 +258,14 @@ TEST_F(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   // OnHeader() (the order of the calls to OnHeader() is
   // non-deterministic so we put each in its own Sequence), followed
   // by a final call to OnHeadersComplete() and OnComplete().
-  Sequence s1, s2, s3;
+  Sequence s1, s2, s3, s4;
   EXPECT_CALL(visitor_,
               OnStatusLine(StrEq(kMethod),
                            StrEq(kScheme),
                            StrEq(kHost),
                            StrEq(kPath),
                            StrEq(kVersion)))
-      .InSequence(s1, s2, s3);
+      .InSequence(s1, s2, s3, s4);
 
   EXPECT_CALL(visitor_,
               OnHeader(StrEq("x-spdy-stream-id"),
@@ -293,6 +301,11 @@ TEST_F(SpdyToHttpConverterTest, SynFrameWithHeaders) {
               OnHeader(StrEq("multi"),
                        StrEq("headers")))
       .InSequence(s3);
+
+  EXPECT_CALL(visitor_,
+              OnHeader(StrEq("host"),
+                       StrEq(kHost)))
+      .InSequence(s4);
 
   EXPECT_CALL(visitor_, OnHeadersComplete()).InSequence(s1, s2, s3);
 

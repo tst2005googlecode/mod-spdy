@@ -179,7 +179,6 @@ void GenerateHeadersFromHeaderBlock(const spdy::SpdyHeaderBlock& block,
     std::string value = it->second;
     if (key == kMethod ||
         key == kScheme ||
-        key == kHost ||
         key == kPath ||
         key == kVersion) {
       // A SPDY-specific header. Do not emit it to the HttpStreamVisitorInterface.

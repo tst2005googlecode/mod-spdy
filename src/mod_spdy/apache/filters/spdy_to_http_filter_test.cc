@@ -119,6 +119,10 @@ class SpdyToHttpFilterTest : public testing::Test {
 };
 
 TEST_F(SpdyToHttpFilterTest, SimpleGetRequest) {
+  // Perform an INIT.  It should succeed, with no effect.
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_INIT, APR_BLOCK_READ, 1337));
+  ExpectEndOfBrigade();
+
   // Invoke the fitler in non-blocking GETLINE mode.  We shouldn't get anything
   // yet, because we haven't sent any frames from the client yet.
   ASSERT_TRUE(APR_STATUS_IS_EAGAIN(
@@ -169,11 +173,16 @@ TEST_F(SpdyToHttpFilterTest, SimpleGetRequest) {
   // Finally, do an EXHAUSTIVE read.  We should get back everything that
   // remains, terminating with an EOS bucket.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
-  ExpectTransientBucket("referer: https://www.example.com/index.html\r\n"
+  ExpectTransientBucket("host: www.example.com\r\n"
+                        "referer: https://www.example.com/index.html\r\n"
                         "user-agent: ModSpdyUnitTest/1.0\r\n"
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+
+  // There's no more data left; attempting another read should result in EOF.
+  ASSERT_TRUE(APR_STATUS_IS_EOF(
+      Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 4)));
 }
 
 TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
@@ -192,6 +201,7 @@ TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
   // nonblocking we should immediately get back what's available so far.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 4096));
   ExpectTransientBucket("POST /erase/the/whole/database.cgi HTTP/1.1\r\n"
+                        "host: www.example.com\r\n"
                         "referer: https://www.example.com/index.html\r\n"
                         "user-agent: ModSpdyUnitTest/1.0\r\n"
                         "\r\n");
@@ -224,6 +234,9 @@ TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
   ExpectTransientBucket("nks!\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+
+  // There's no more data left; attempting another read should result in EOF.
+  ASSERT_TRUE(APR_STATUS_IS_EOF(Read(AP_MODE_GETLINE, APR_BLOCK_READ, 0)));
 }
 
 }  // namespace
