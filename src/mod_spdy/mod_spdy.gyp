@@ -19,6 +19,7 @@
       'type': '<(library)',
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/net/net.gyp:instaweb_util',
         '<(DEPTH)/net/net.gyp:spdy',
       ],
       'include_dirs': [
@@ -30,10 +31,12 @@
       ],
       'sources': [
         'common/connection_context.cc',
+        'common/executor.cc',
         'common/header_populator_interface.cc',
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
         'common/output_filter_context.cc',
+        'common/spdy_connection.cc',
         'common/spdy_frame_priority_queue.cc',
         'common/spdy_frame_pump.cc',
         'common/spdy_frame_queue.cc',
@@ -112,6 +115,7 @@
       ],
       'sources': [
         'common/header_populator_interface_test.cc',
+        'common/spdy_connection_test.cc',
         'common/spdy_frame_priority_queue_test.cc',
         'common/spdy_frame_pump_test.cc',
         'common/spdy_frame_queue_test.cc',

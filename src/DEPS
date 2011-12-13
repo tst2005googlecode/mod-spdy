@@ -22,6 +22,8 @@ vars = {
   "aprutil_revision": "@head",
   "apache_httpd_src": "http://svn.apache.org/repos/asf/httpd/httpd/tags/2.2.15",
   "apache_httpd_revision": "@head",
+  "mod_pagespeed_root": "http://modpagespeed.googlecode.com/svn/tags/0.10.19.5",
+  "mod_pagespeed_revision": "@head",
 }
 
 deps = {
@@ -29,6 +31,10 @@ deps = {
   # to it.
   Var("chromium_deps_root"):
     File(Var("chromium_trunk") + "/src/DEPS" + Var("chromium_revision")),
+
+  "src/net/instaweb/util":
+    Var("mod_pagespeed_root") + "/src/net/instaweb/util" +
+    Var("mod_pagespeed_revision"),
 
   "src/testing":
     Var("chromium_trunk") + "/src/testing" + Var("chromium_revision"),

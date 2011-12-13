@@ -8,6 +8,39 @@
   },
   'targets': [
     {
+      'target_name': 'instaweb_util',
+      'type': '<(library)',
+      'dependencies': [
+        '<(DEPTH)/base/base.gyp:base',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'export_dependent_settings': [
+        '<(DEPTH)/base/base.gyp:base',
+      ],
+      'sources': [
+        # TODO(mdsteele): Add sources here as we need them.
+        'instaweb/util/function.cc',
+      ],
+    },
+    {
+      'target_name': 'instaweb_test',
+      'type': 'executable',
+      'dependencies': [
+        'instaweb_util',
+        '<(DEPTH)/testing/gtest.gyp:gtest',
+        '<(DEPTH)/testing/gtest.gyp:gtest_main',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'sources': [
+        # TODO(mdsteele): Add sources here as we need them.
+        'instaweb/util/function_test.cc',
+      ],
+    },
+    {
       'target_name': 'spdy',
       'type': '<(library)',
       'dependencies': [
