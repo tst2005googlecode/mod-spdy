@@ -36,6 +36,7 @@
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
         'common/output_filter_context.cc',
+        'common/queued_worker_pool_executor.cc',
         'common/spdy_connection.cc',
         'common/spdy_frame_priority_queue.cc',
         'common/spdy_frame_pump.cc',
@@ -63,6 +64,7 @@
         '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
       'sources': [
+        'apache/apr_thread_pool_executor.cc',
         'apache/brigade_output_stream.cc',
         'apache/config_commands.cc',
         'apache/config_util.cc',
