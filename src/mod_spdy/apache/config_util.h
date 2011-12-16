@@ -22,6 +22,7 @@ namespace mod_spdy {
 
 class ConnectionContext;
 class SpdyServerConfig;
+class SpdyStream;
 
 // Get the server configuration associated with the given object.  The
 // configuration object is returned const, since by the time these functions
@@ -35,9 +36,16 @@ const SpdyServerConfig* GetServerConfig(request_rec* request);
 // reading it), the configuration object is returned non-const.
 SpdyServerConfig* GetServerConfig(cmd_parms* command);
 
-// Allocate a new ConnectionContext object in the given connection's pool,
-// attach it to the connection's config vector, and return it.
-ConnectionContext* CreateConnectionContext(conn_rec* connection);
+// Allocate a new ConnectionContext object for a master connection in the given
+// connection's pool, attach it to the connection's config vector, and return
+// it.
+ConnectionContext* CreateMasterConnectionContext(conn_rec* connection);
+
+// Allocate a new ConnectionContext object for a slave connection in the given
+// connection's pool, attach it to the connection's config vector, and return
+// it.
+ConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
+                                                SpdyStream* stream);
 
 // Get the connection object that was attached to this connection by
 // CreateConnectionContext; return NULL if CreateConnectionContext has not been

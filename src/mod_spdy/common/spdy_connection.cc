@@ -18,14 +18,21 @@
 #include "base/logging.h"
 #include "base/scoped_ptr.h"
 #include "mod_spdy/common/connection_context.h"
+#include "mod_spdy/common/spdy_connection_io.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"
+#include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
 
-SpdyConnection::SpdyConnection(Ambassador* ambassador, Executor* executor)
-    : ambassador_(ambassador),
+SpdyConnection::SpdyConnection(const SpdyServerConfig* config,
+                               SpdyConnectionIO* connection_io,
+                               SpdyStreamTaskFactory* task_factory,
+                               Executor* executor)
+    : config_(config),
+      connection_io_(connection_io),
+      task_factory_(task_factory),
       executor_(executor),
       connection_stopped_(false),
       already_sent_goaway_(false),
@@ -37,17 +44,18 @@ SpdyConnection::~SpdyConnection() {}
 
 void SpdyConnection::Run() {
   while (!connection_stopped_) {
-    if (ambassador_->IsConnectionAborted()) {
+    if (connection_io_->IsConnectionAborted()) {
       LOG(WARNING) << "Master connection was aborted.";
       break;
     }
 
-    // Read available input data.  The ambassador will grab any available data
-    // and push it into the SpdyFramer that we pass to it here; the SpdyFramer,
-    // in turn, will call our OnControl/OnStreamFrameData methods to report
-    // decoded frames.
-    const ReadStatus status = ambassador_->ProcessAvailableInput(&framer_);
-    if (status == READ_CONNECTION_CLOSED) {
+    // Read available input data.  The SpdyConnectionIO will grab any available
+    // data and push it into the SpdyFramer that we pass to it here; the
+    // SpdyFramer, in turn, will call our OnControl/OnStreamFrameData methods
+    // to report decoded frames.
+    const SpdyConnectionIO::ReadStatus status =
+        connection_io_->ProcessAvailableInput(&framer_);
+    if (status == SpdyConnectionIO::READ_CONNECTION_CLOSED) {
       break;
     }
 
@@ -76,7 +84,7 @@ void SpdyConnection::Run() {
     //
     // One possibility would be to grab the input socket object, and arrange to
     // block until either the socket is ready to read OR our output queue is
-    // nonempty.  (Obviously we would abstract that away in the Ambassador
+    // nonempty.  (Obviously we would abstract that away in SpdyConnectionIO
     // somehow.)
     //
     // Failing that, we could at least do a blocking read when there are no
@@ -204,8 +212,7 @@ void SpdyConnection::HandleSynStream(
 
     // Limit the number of simultaneous open streams; refuse the stream if
     // there are too many currently active streams.
-    const SpdyServerConfig* config = ambassador_->ServerConfig();
-    if (stream_map_.size() >= config->max_streams_per_connection()) {
+    if (stream_map_.size() >= config_->max_streams_per_connection()) {
       SendRstStreamFrame(stream_id, spdy::REFUSED_STREAM);
       return;
     }
@@ -277,7 +284,7 @@ void SpdyConnection::HandlePing(const spdy::SpdyControlFrame& frame) {
 
   // Any odd-numbered PING frame we receive was initiated by the client, and
   // should thus be echoed back, as per the SPDY spec.
-  if (!ambassador_->SendFrameRaw(frame)) {
+  if (!connection_io_->SendFrameRaw(frame)) {
     LOG(ERROR) << "Failed to send PING reply.";
   }
 }
@@ -328,7 +335,7 @@ bool SpdyConnection::SendFrame(const spdy::SpdyFrame* frame) {
     return false;
   }
 
-  return ambassador_->SendFrameRaw(*compressed_frame);
+  return connection_io_->SendFrameRaw(*compressed_frame);
 }
 
 bool SpdyConnection::SendGoAwayFrame() {
@@ -395,16 +402,16 @@ void SpdyConnection::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
 }
 
 // This constructor is always called by the main connection thread, so we're
-// safe to call spdy_connection_->ambassador_->NewStreamTask().  However, the
-// other methods of this class (Run(), Cancel(), and the destructor) are liable
-// to be called from other threads by the executor.
+// safe to call spdy_connection_->task_factory_->NewStreamTask().  However,
+// the other methods of this class (Run(), Cancel(), and the destructor) are
+// liable to be called from other threads by the executor.
 SpdyConnection::StreamTaskWrapper::StreamTaskWrapper(
     SpdyConnection* spdy_conn,
     spdy::SpdyStreamId stream_id,
     spdy::SpdyPriority priority)
     : spdy_connection_(spdy_conn),
       stream_(stream_id, priority, &spdy_connection_->output_queue_),
-      subtask_(spdy_connection_->ambassador_->NewStreamTask(&stream_)) {}
+      subtask_(spdy_connection_->task_factory_->NewStreamTask(&stream_)) {}
 
 SpdyConnection::StreamTaskWrapper::~StreamTaskWrapper() {
   // Remove this object from the SpdyConnection's stream map.

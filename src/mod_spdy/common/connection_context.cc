@@ -14,14 +14,32 @@
 
 #include "mod_spdy/common/connection_context.h"
 
+#include "base/logging.h"
 #include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
 ConnectionContext::ConnectionContext()
     : npn_state_(NOT_DONE_YET),
+      slave_stream_(NULL),
       output_framer_(new spdy::SpdyFramer) {}
 
+ConnectionContext::ConnectionContext(SpdyStream* slave_stream)
+    : npn_state_(USING_SPDY),
+      slave_stream_(slave_stream),
+      output_framer_(NULL) {}
+
 ConnectionContext::~ConnectionContext() {}
+
+SpdyStream* ConnectionContext::slave_stream() const {
+  DCHECK(is_slave());
+  DCHECK(slave_stream_ != NULL);
+  return slave_stream_;
+}
+
+void ConnectionContext::set_npn_state(NpnState state) {
+  DCHECK(!is_slave());
+  npn_state_ = state;
+}
 
 }  // namespace mod_spdy

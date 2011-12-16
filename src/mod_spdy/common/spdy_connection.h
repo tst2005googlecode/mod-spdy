@@ -30,65 +30,21 @@
 namespace mod_spdy {
 
 class Executor;
+class SpdyConnectionIO;
 class SpdyServerConfig;
+class SpdyStreamTaskFactory;
 
 // Represents a SPDY session with a client.  Given an Executor for processing
-// individual SPDY streams, and an Ambassador for communicating with the client
-// (sending and receiving frames), this class takes care of implementing the
-// SPDY protocol and responding correctly to various situations.
+// individual SPDY streams, and a SpdyConnectionIO for communicating with the
+// client (sending and receiving frames), this class takes care of implementing
+// the SPDY protocol and responding correctly to various situations.
 class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
  public:
-  // Status to describe whether reading succeeded.  We may need to add more
-  // values here later.
-  enum ReadStatus {
-    READ_SUCCESS,
-    READ_CONNECTION_CLOSED
-  };
-
-  // The SpdyConnection's Ambassador takes care of implementation-specific
-  // details -- how to send and receive data, how to process streams, etc. --
-  // allowing the SpdyConnection to focus on the SPDY protocol itself.  For
-  // example, an Ambassador for Apache would hold onto a conn_rec object and
-  // invoke the input and output filter chains for ProcessAvailableInput and
-  // SendFrameRaw, respectively.  The ambassador itself does not need to be
-  // thread-safe -- it is only ever used by the main connection thread.
-  class Ambassador {
-   public:
-    Ambassador() {}
-    virtual ~Ambassador() {}
-
-    // Pull any already-available input data from the connection (non-blocking)
-    // and feed it into the ProcessInput() method of the given SpdyFramer.
-    virtual ReadStatus ProcessAvailableInput(spdy::SpdyFramer* framer) = 0;
-
-    // Send a single SPDY frame to the client as-is; block until it has been
-    // sent down the wire.  Return true on success.
-    //
-    // TODO(mdsteele): We do need to be able to flush a single frame down the
-    //   wire, but we probably don't need/want to flush every single frame
-    //   individually in places where we send multiple frames at once.  We'll
-    //   probably want to adjust this API a bit.
-    virtual bool SendFrameRaw(const spdy::SpdyFrame& frame) = 0;
-
-    // Create a new task to process the given stream.  Running the task should
-    // process the stream -- that is, pull frames off the stream's input queue
-    // and post frames to the stream's output queue -- and the task should not
-    // complete until the stream is completely finished.
-    virtual net_instaweb::Function* NewStreamTask(SpdyStream* stream) = 0;
-
-    // Get the server configuration for this connection.
-    virtual const SpdyServerConfig* ServerConfig() const = 0;
-
-    // Return true if the connection has been externally aborted and should
-    // stop, false otherwise.
-    virtual bool IsConnectionAborted() = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(Ambassador);
-  };
-
-  // The SpdyConnection does not take ownership of the ambassador or executor.
-  SpdyConnection(Ambassador* ambassador, Executor* executor);
+  // The SpdyConnection does _not_ take ownership of any of these arguments.
+  SpdyConnection(const SpdyServerConfig* config,
+                 SpdyConnectionIO* connection_io,
+                 SpdyStreamTaskFactory* task_factory,
+                 Executor* executor);
   virtual ~SpdyConnection();
 
   // Process the connection; don't return until the connection is finished.
@@ -102,14 +58,15 @@ class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
                                  const char* data, size_t length);
 
  private:
-  // A helper class for wrapping tasks returned by Ambassador::NewStreamTask().
-  // Running or cancelling this task simply runs/cancels the wrapped task;
-  // however, this object also keeps a SpdyStream object, and on deletion, this
-  // will remove itself from the SpdyConnection's list of active streams.
+  // A helper class for wrapping tasks returned by
+  // SpdyStreamTaskFactory::NewStreamTask().  Running or cancelling this task
+  // simply runs/cancels the wrapped task; however, this object also keeps a
+  // SpdyStream object, and on deletion, this will remove itself from the
+  // SpdyConnection's list of active streams.
   class StreamTaskWrapper : public net_instaweb::Function {
    public:
     // This constructor, called by the main connection thread, will call
-    // ambassador_->NewStreamTask() to produce the wrapped task.
+    // task_factory_->NewStreamTask() to produce the wrapped task.
     StreamTaskWrapper(SpdyConnection* spdy_connection,
                       spdy::SpdyStreamId stream_id,
                       spdy::SpdyPriority priority);
@@ -168,7 +125,9 @@ class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
 
   // These fields are accessed only by the main connection thread, so they need
   // not be protected by a lock:
-  Ambassador* const ambassador_;
+  const SpdyServerConfig* const config_;
+  SpdyConnectionIO* const connection_io_;
+  SpdyStreamTaskFactory* const task_factory_;
   Executor* const executor_;
   spdy::SpdyFramer framer_;
   bool connection_stopped_;

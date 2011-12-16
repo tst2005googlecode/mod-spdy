@@ -15,6 +15,9 @@
 #include "mod_spdy/common/spdy_connection.h"
 
 #include "base/basictypes.h"
+#include "mod_spdy/common/spdy_connection_io.h"
+#include "mod_spdy/common/spdy_server_config.h"
+#include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -26,14 +29,16 @@ using testing::Return;
 
 namespace {
 
-class MockAmbassador : public mod_spdy::SpdyConnection::Ambassador {
+class MockSpdyConnectionIO : public mod_spdy::SpdyConnectionIO {
  public:
-  MOCK_METHOD1(ProcessAvailableInput,
-               mod_spdy::SpdyConnection::ReadStatus(spdy::SpdyFramer*));
-  MOCK_METHOD1(SendFrameRaw, bool(const spdy::SpdyFrame&));
-  MOCK_METHOD1(NewStreamTask, net_instaweb::Function*(mod_spdy::SpdyStream*));
-  MOCK_CONST_METHOD0(ServerConfig, const mod_spdy::SpdyServerConfig*());
   MOCK_METHOD0(IsConnectionAborted, bool());
+  MOCK_METHOD1(ProcessAvailableInput, ReadStatus(spdy::SpdyFramer*));
+  MOCK_METHOD1(SendFrameRaw, bool(const spdy::SpdyFrame&));
+};
+
+class MockSpdyStreamTaskFactory : public mod_spdy::SpdyStreamTaskFactory {
+ public:
+  MOCK_METHOD1(NewStreamTask, net_instaweb::Function*(mod_spdy::SpdyStream*));
 };
 
 class InlineExecutor : public mod_spdy::Executor {
@@ -58,11 +63,12 @@ class InlineExecutor : public mod_spdy::Executor {
 
 class SpdyConnectionTest : public testing::Test {
  public:
-  SpdyConnectionTest() : connection_(&ambassador_, &executor_) {}
+  SpdyConnectionTest()
+      : connection_(&config_, &connection_io_, &task_factory_, &executor_) {}
 
  protected:
   // Push a PING frame onto the given SpdyFramer.
-  static mod_spdy::SpdyConnection::ReadStatus ReadPingFrame(
+  static mod_spdy::SpdyConnectionIO::ReadStatus ReadPingFrame(
       spdy::SpdyFramer* framer) {
     // TODO(mdsteele): Sadly, the version of SpdyFramer we're currently using
     // doesn't provide a method for creating PING frames.  So for now, we'll
@@ -73,9 +79,12 @@ class SpdyConnectionTest : public testing::Test {
       0x00, 0x00, 0x00, 0x01   // ping ID = 1
     };
     framer->ProcessInput(data, arraysize(data));
+    return mod_spdy::SpdyConnectionIO::READ_SUCCESS;
   }
 
-  MockAmbassador ambassador_;
+  mod_spdy::SpdyServerConfig config_;
+  MockSpdyConnectionIO connection_io_;
+  MockSpdyStreamTaskFactory task_factory_;
   InlineExecutor executor_;
   mod_spdy::SpdyConnection connection_;
 };
@@ -89,7 +98,7 @@ MATCHER_P(IsControlFrameOfType, type, "") {
 
 // Test that if the connectino is already aborted, we stop immediately.
 TEST_F(SpdyConnectionTest, ImmediateConnectionAbort) {
-  EXPECT_CALL(ambassador_, IsConnectionAborted()).WillOnce(Return(true));
+  EXPECT_CALL(connection_io_, IsConnectionAborted()).WillOnce(Return(true));
 
   connection_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -99,13 +108,13 @@ TEST_F(SpdyConnectionTest, ImmediateConnectionAbort) {
 // aborting, so that we can exit the Run loop).
 TEST_F(SpdyConnectionTest, SinglePing) {
   testing::InSequence seq;
-  EXPECT_CALL(ambassador_, IsConnectionAborted())
+  EXPECT_CALL(connection_io_, IsConnectionAborted())
       .WillOnce(Return(false));
-  EXPECT_CALL(ambassador_, ProcessAvailableInput(_))
+  EXPECT_CALL(connection_io_, ProcessAvailableInput(_))
       .WillOnce(Invoke(ReadPingFrame));
-  EXPECT_CALL(ambassador_, SendFrameRaw(IsControlFrameOfType(spdy::PING)))
+  EXPECT_CALL(connection_io_, SendFrameRaw(IsControlFrameOfType(spdy::PING)))
       .WillOnce(Return(true));
-  EXPECT_CALL(ambassador_, IsConnectionAborted())
+  EXPECT_CALL(connection_io_, IsConnectionAborted())
       .WillOnce(Return(true));
 
   connection_.Run();

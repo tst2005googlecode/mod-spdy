@@ -37,6 +37,20 @@ SpdyServerConfig* GetServerConfigInternal(server_rec* server) {
   return static_cast<SpdyServerConfig*>(ptr);
 }
 
+ConnectionContext* SetConnContextInternal(conn_rec* connection,
+                                          ConnectionContext* context) {
+  PoolRegisterDelete(connection->pool, context);
+
+  // Place the context object in the connection's configuration vector, so that
+  // other hook functions with access to this connection can get hold of the
+  // context object.  See TAMB 4.2 for details.
+  ap_set_module_config(connection->conn_config,  // configuration vector
+                       &spdy_module,  // module with which to associate
+                       context);      // pointer to store (any void* we want)
+
+  return context;
+}
+
 }  // namespace
 
 const SpdyServerConfig* GetServerConfig(server_rec* server) {
@@ -55,20 +69,13 @@ SpdyServerConfig* GetServerConfig(cmd_parms* command) {
   return GetServerConfigInternal(command->server);
 }
 
-ConnectionContext* CreateConnectionContext(conn_rec* connection) {
-  // Create a shared context object for this connection; this object will be
-  // used by both our input filter and our output filter.
-  ConnectionContext* context = new ConnectionContext;
-  PoolRegisterDelete(connection->pool, context);
+ConnectionContext* CreateMasterConnectionContext(conn_rec* connection) {
+  return SetConnContextInternal(connection, new ConnectionContext());
+}
 
-  // Place the context object in the connection's configuration vector, so that
-  // other hook functions with access to this connection can get hold of the
-  // context object.  See TAMB 4.2 for details.
-  ap_set_module_config(connection->conn_config,  // configuration vector
-                       &spdy_module,  // module with which to associate
-                       context);      // pointer to store (any void* we want)
-
-  return context;
+ConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
+                                                SpdyStream* stream) {
+  return SetConnContextInternal(connection, new ConnectionContext(stream));
 }
 
 ConnectionContext* GetConnectionContext(conn_rec* connection) {

@@ -26,6 +26,8 @@ class SpdyFramer;
 
 namespace mod_spdy {
 
+class SpdyStream;
+
 // Shared context object for a SPDY connection.
 class ConnectionContext {
  public:
@@ -35,19 +37,38 @@ class ConnectionContext {
     NOT_USING_SPDY
   };
 
+  // Create a context object for a non-slave connection.
   ConnectionContext();
+  // Create a context object for a slave connection.  The context object does
+  // _not_ take ownership of the stream object.
+  explicit ConnectionContext(SpdyStream* slave_stream);
+
   ~ConnectionContext();
 
+  // Return true if this is a slave connection representing a SPDY stream, or
+  // false if it is a "real" connection.
+  bool is_slave() const { return slave_stream_ != NULL; }
+
+  // Return the SpdyStream object associated with this slave connection.
+  // Requires that is_slave() is true.
+  SpdyStream* slave_stream() const;
+
+  // Get the NPN state of this connection.
   const NpnState npn_state() const { return npn_state_; }
-  void set_npn_state(NpnState state) { npn_state_ = state; }
+
+  // Set the NPN state of this connection.  Requires that is_slave() is false.
+  void set_npn_state(NpnState state);
 
   // Return the SpdyFramer to be used by all output streams on this connection
   // (the framer includes the shared compression context for output headers).
+  // TODO(mdsteele): This is deprecated, to be removed when we switch over
+  //   completely to the new multiplexing implementation.
   spdy::SpdyFramer* output_framer() const { return output_framer_.get(); }
 
  private:
   NpnState npn_state_;
-  scoped_ptr<spdy::SpdyFramer> output_framer_;
+  SpdyStream* const slave_stream_;
+  scoped_ptr<spdy::SpdyFramer> output_framer_;  // deprecated, see above
 
   DISALLOW_COPY_AND_ASSIGN(ConnectionContext);
 };

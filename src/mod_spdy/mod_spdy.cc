@@ -215,7 +215,7 @@ int spdy_pre_connection(conn_rec* connection, void* csd) {
   // Create a shared context object for this connection; this object will be
   // used by both our input filter and our output filter.
   mod_spdy::ConnectionContext* context =
-      mod_spdy::CreateConnectionContext(connection);
+      mod_spdy::CreateMasterConnectionContext(connection);
 
   // Create a SpdyInputFilter object to be used by our input filter,
   // and register it with the connection's pool so that it will be
