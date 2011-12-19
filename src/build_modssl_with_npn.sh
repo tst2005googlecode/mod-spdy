@@ -110,8 +110,6 @@ fi
 echo "done"
 
 echo -n "Building OpenSSL (this may take a while) ... "
-# Unfortunately the OpenSSL build sends some non-fatal errors to
-# stderr so we route stderr to the log file as well.
 make INSTALL_PREFIX=$(pwd) install >> $OPENSSL_BUILDLOG 2>&1
 if [ $? -ne 0 ]; then
 echo "Failed. Build log at $OPENSSL_BUILDLOG."
@@ -158,7 +156,7 @@ fi
 echo "done"
 
 echo -n "Building Apache mod_ssl (this may take a while) ... "
-make >> $APACHE_HTTPD_BUILDLOG
+make >> $APACHE_HTTPD_BUILDLOG 2>&1
 if [ $? -ne 0 ]; then
 echo "Failed. Build log at $APACHE_HTTPD_BUILDLOG."
 do_cleanup
