@@ -62,6 +62,16 @@ const char* SetMaxStreamsPerConnection(cmd_parms* cmd, void* dir,
   return NULL;
 }
 
+const char* SetMaxThreadsPerProcess(cmd_parms* cmd, void* dir,
+                                    const char* arg) {
+  int value;
+  if (!base::StringToInt(arg, &value) || value < 1) {
+    return "SpdyMaxThreadsPerProcess must specify a positive integer";
+  }
+  GetServerConfig(cmd)->set_max_threads_per_process(value);
+  return NULL;
+}
+
 }  // namespace
 
 // The reinterpret_cast is there because Apache's AP_INIT_TAKE1 macro needs to
@@ -82,6 +92,9 @@ const command_rec kSpdyConfigCommands[] = {
   SPDY_CONFIG_COMMAND(
       "SpdyMaxStreamsPerConnection", SetMaxStreamsPerConnection,
       "Maxiumum number of simultaneous SPDY streams per connection"),
+  SPDY_CONFIG_COMMAND(
+      "SpdyMaxThreadsPerProcess", SetMaxThreadsPerProcess,
+      "Maxiumum number of worker threads to spawn per child process"),
   {NULL}
 };
 

@@ -34,10 +34,18 @@ class SpdyServerConfig {
     return max_streams_per_connection_.get();
   }
 
+  // Return the maximum number of worker threads to spawn per child process.
+  int max_threads_per_process() const {
+    return max_threads_per_process_.get();
+  }
+
   // Setters.  Call only during the configuration phase.
   void set_spdy_enabled(bool b) { spdy_enabled_.set(b); }
   void set_max_streams_per_connection(int n) {
     max_streams_per_connection_.set(n);
+  }
+  void set_max_threads_per_process(int n) {
+    max_threads_per_process_.set(n);
   }
 
   // Set this config object to the merge of a and b.  Call only during the
@@ -65,6 +73,7 @@ class SpdyServerConfig {
   // Configuration fields:
   Option<bool> spdy_enabled_;
   Option<int> max_streams_per_connection_;
+  Option<int> max_threads_per_process_;
   // Note: Add more config options here as needed; be sure to also update the
   //   MergeFrom method in spdy_server_config.cc.
 

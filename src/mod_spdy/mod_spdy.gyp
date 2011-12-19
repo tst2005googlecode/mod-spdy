@@ -35,7 +35,6 @@
         'common/header_populator_interface.cc',
         'common/http_stream_visitor_interface.cc',
         'common/input_stream_interface.cc',
-        'common/output_filter_context.cc',
         'common/queued_worker_pool_executor.cc',
         'common/spdy_connection.cc',
         'common/spdy_connection_io.cc',
@@ -79,8 +78,6 @@
         'apache/inspect.cc',
         'apache/log_message_handler.cc',
         'apache/response_header_populator.cc',
-        'apache/spdy_input_filter.cc',
-        'apache/spdy_output_filter.cc',
       ],
     },
     {
