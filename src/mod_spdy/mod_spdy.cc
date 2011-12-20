@@ -154,6 +154,24 @@ apr_status_t HttpToSpdyFilter(ap_filter_t* filter,
 void RetrieveOptionalFunctions() {
   gDisableSslForConnection = APR_RETRIEVE_OPTIONAL_FN(ssl_engine_disable);
   gIsUsingSslForConnection = APR_RETRIEVE_OPTIONAL_FN(ssl_is_https);
+  // If mod_ssl isn't installed, we'll get back NULL for these functions.  Our
+  // other hook functions will fail gracefully (i.e. do nothing) if these
+  // functions are NULL, but if the user installed mod_spdy without mod_ssl and
+  // expected it to do anything, we should warn them otherwise.
+  if (gDisableSslForConnection == NULL &&
+      gIsUsingSslForConnection == NULL) {
+    LOG(WARNING) << "It seems that mod_spdy is installed but mod_ssl isn't.  "
+                 << "Without SSL, the server cannot ever use SPDY.";
+  }
+  // Whether or not mod_ssl is installed, either both functions should be
+  // non-NULL or both functions should be NULL.  Otherwise, something is wrong
+  // (like, maybe some kind of bizarre mutant mod_ssl is installed) and
+  // mod_spdy probably won't work correctly.
+  if ((gDisableSslForConnection == NULL) ^
+      (gIsUsingSslForConnection == NULL)) {
+    LOG(DFATAL) << "Some, but not all, of mod_ssl's optional functions are "
+                << "available.  What's going on?";
+  }
 }
 
 // Called exactly once for each child process, before that process starts
@@ -310,13 +328,25 @@ int ProcessConnection(conn_rec* connection) {
 
   // If we were unable to pull any data through, give up.
   if (status != APR_SUCCESS) {
-    LOG(ERROR) << "Error during speculative read: " << status;
+    // EOF errors are to be expected sometimes (e.g. if the connection was
+    // closed).  If the error was something else, though, log an error.
+    if (!APR_STATUS_IS_EOF(status)) {
+      LOG(ERROR) << "Error during speculative read: " << status;
+    }
     return DECLINED;
   }
 
   // If we did pull some data through, then NPN should have happened and our
   // OnNextProtocolNegotiated() hook should have been called by now.  If NPN
-  // didn't choose SPDY (or didn't happen at all), don't use SPDY.
+  // hasn't happened, it's probably because we're using an old version of
+  // mod_ssl that doesn't support NPN, in which case we should probably warn
+  // the user that mod_spdy isn't going to work.
+  if (context->npn_state() == mod_spdy::ConnectionContext::NOT_DONE_YET) {
+    LOG(WARNING) << "NPN didn't happen during SSL handshake.  Probably you're "
+                 << "using an unpatched mod_ssl that doesn't support NPN.  "
+                 << "Without NPN support, the server cannot ever use SPDY.";
+  }
+  // If NPN didn't choose SPDY, then don't use SPDY.
   if (context->npn_state() != mod_spdy::ConnectionContext::USING_SPDY) {
     return DECLINED;
   }
