@@ -34,16 +34,13 @@
         'common/executor.cc',
         'common/header_populator_interface.cc',
         'common/http_stream_visitor_interface.cc',
-        'common/input_stream_interface.cc',
         'common/queued_worker_pool_executor.cc',
         'common/spdy_connection.cc',
         'common/spdy_connection_io.cc',
         'common/spdy_frame_priority_queue.cc',
-        'common/spdy_frame_pump.cc',
         'common/spdy_frame_queue.cc',
         'common/spdy_server_config.cc',
         'common/spdy_stream.cc',
-        'common/spdy_stream_distributor.cc',
         'common/spdy_stream_task_factory.cc',
         'common/spdy_to_http_converter.cc',
       ],
@@ -68,14 +65,10 @@
         'apache/apache_spdy_connection_io.cc',
         'apache/apache_spdy_stream_task_factory.cc',
         'apache/apr_thread_pool_executor.cc',
-        'apache/brigade_output_stream.cc',
         'apache/config_commands.cc',
         'apache/config_util.cc',
         'apache/filters/http_to_spdy_filter.cc',
         'apache/filters/spdy_to_http_filter.cc',
-        'apache/http_stream_accumulator.cc',
-        'apache/input_filter_input_stream.cc',
-        'apache/inspect.cc',
         'apache/log_message_handler.cc',
         'apache/response_header_populator.cc',
       ],
@@ -120,9 +113,7 @@
         'common/header_populator_interface_test.cc',
         'common/spdy_connection_test.cc',
         'common/spdy_frame_priority_queue_test.cc',
-        'common/spdy_frame_pump_test.cc',
         'common/spdy_frame_queue_test.cc',
-        'common/spdy_stream_distributor_test.cc',
         'common/spdy_to_http_converter_test.cc',
       ],
     },
@@ -146,26 +137,4 @@
       ],
     },
   ],
-  # Spdyget has been disabled for now, due to incompatible changes in the
-  # spdy_framer API.
-#   'conditions': [
-#     [ 'OS != "win"', {
-#       'targets': [
-#         {
-#           'target_name': 'spdyget',
-#           'type': 'executable',
-#           'dependencies': [
-#             '<(DEPTH)/base/base.gyp:base',
-#             '<(DEPTH)/net/net.gyp:spdy',
-#           ],
-#           'include_dirs': [
-#             '<(DEPTH)',
-#           ],
-#           'sources': [
-#             'spdyget.cc',
-#           ],
-#         },
-#       ],
-#     }],
-#   ],
 }

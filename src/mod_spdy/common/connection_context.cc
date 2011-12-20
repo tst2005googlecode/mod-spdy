@@ -15,19 +15,16 @@
 #include "mod_spdy/common/connection_context.h"
 
 #include "base/logging.h"
-#include "net/spdy/spdy_framer.h"
 
 namespace mod_spdy {
 
 ConnectionContext::ConnectionContext()
     : npn_state_(NOT_DONE_YET),
-      slave_stream_(NULL),
-      output_framer_(new spdy::SpdyFramer) {}
+      slave_stream_(NULL) {}
 
 ConnectionContext::ConnectionContext(SpdyStream* slave_stream)
     : npn_state_(USING_SPDY),
-      slave_stream_(slave_stream),
-      output_framer_(NULL) {}
+      slave_stream_(slave_stream) {}
 
 ConnectionContext::~ConnectionContext() {}
 
