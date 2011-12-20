@@ -48,7 +48,9 @@ bool ApacheSpdyConnectionIO::IsConnectionAborted() {
 }
 
 SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
-    spdy::SpdyFramer* framer) {
+    bool block, spdy::SpdyFramer* framer) {
+  const apr_read_type_e read_type = block ? APR_BLOCK_READ : APR_NONBLOCK_READ;
+
   // Make sure the input brigade we're using is empty.
   if (!APR_BRIGADE_EMPTY(input_brigade_)) {
     LOG(DFATAL) << "input_brigade_ should be empty";
@@ -59,7 +61,7 @@ SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
   {
     const apr_status_t status = ap_get_brigade(
         connection_->input_filters, input_brigade_, AP_MODE_READBYTES,
-        APR_NONBLOCK_READ, kReadBytes);
+        read_type, kReadBytes);
     if (status != APR_SUCCESS && !APR_STATUS_IS_EAGAIN(status)) {
       ap_log_cerror(APLOG_MARK, APLOG_WARNING, status, connection_,
                     "TryPullingData: ap_get_brigade failed (%d)",
@@ -69,6 +71,7 @@ SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
     }
   }
 
+  bool pushed_any_data = false;
   apr_bucket* bucket = APR_BRIGADE_FIRST(input_brigade_);
   while (bucket != APR_BRIGADE_SENTINEL(input_brigade_)) {
     if (APR_BUCKET_IS_METADATA(bucket)) {
@@ -80,7 +83,7 @@ SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
       const char* data = NULL;
       apr_size_t data_length = 0;
       const apr_status_t status = apr_bucket_read(bucket, &data, &data_length,
-                                                  APR_NONBLOCK_READ);
+                                                  read_type);
       if (status != APR_SUCCESS) {
         // TODO(mdsteele): In what situations might apr_bucket_read fail here?
         //   These buckets are almost certainly coming from mod_ssl, which
@@ -94,6 +97,7 @@ SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
 
       const size_t consumed = framer->ProcessInput(data, data_length);
       DCHECK(consumed == data_length);  // TODO(mdsteele) When can this fail?
+      pushed_any_data |= consumed > 0;
     }
 
     // Delete this bucket and move on to the next one.
@@ -105,7 +109,7 @@ SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
   // We deleted buckets as we went, so the brigade should be empty now.
   DCHECK(APR_BRIGADE_EMPTY(input_brigade_));
 
-  return READ_SUCCESS;
+  return pushed_any_data ? READ_SUCCESS : READ_NO_DATA;
 }
 
 bool ApacheSpdyConnectionIO::SendFrameRaw(const spdy::SpdyFrame& frame) {

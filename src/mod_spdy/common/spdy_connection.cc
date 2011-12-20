@@ -17,6 +17,7 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/scoped_ptr.h"
+#include "base/time.h"
 #include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/spdy_connection_io.h"
 #include "mod_spdy/common/spdy_server_config.h"
@@ -43,57 +44,96 @@ SpdyConnection::SpdyConnection(const SpdyServerConfig* config,
 SpdyConnection::~SpdyConnection() {}
 
 void SpdyConnection::Run() {
+  // Initial amount time to block when waiting for output -- we start with
+  // this, and as long as we fail to perform any input OR output, we increase
+  // exponentially to the max, resetting when we succeed again.
+  const base::TimeDelta kInitOutputBlockTime =
+      base::TimeDelta::FromMilliseconds(1);
+  // Maximum time to block when waiting for output.
+  const base::TimeDelta kMaxOutputBlockTime =
+      base::TimeDelta::FromMilliseconds(30);
+
+  base::TimeDelta output_block_time = kInitOutputBlockTime;
+
+  // Until we stop the connection, or it is aborted by the client, alternate
+  // between reading input from the client and (compressing and) sending output
+  // frames that our stream threads have posted to the output queue.  This
+  // basically amounts to a busy-loop, switching back and forth between input
+  // and output, so we do our best to block when we can.  It would be far nicer
+  // to have separate threads for input and output and have them always block;
+  // unfortunately, we cannot do that, because in Apache the input and output
+  // filter chains for a connection must be invoked by the same thread.
   while (!connection_stopped_) {
     if (connection_io_->IsConnectionAborted()) {
       LOG(WARNING) << "Master connection was aborted.";
       break;
     }
 
-    // Read available input data.  The SpdyConnectionIO will grab any available
-    // data and push it into the SpdyFramer that we pass to it here; the
-    // SpdyFramer, in turn, will call our OnControl/OnStreamFrameData methods
-    // to report decoded frames.
-    const SpdyConnectionIO::ReadStatus status =
-        connection_io_->ProcessAvailableInput(&framer_);
-    if (status == SpdyConnectionIO::READ_CONNECTION_CLOSED) {
-      break;
-    }
-
-    // Send any pending output, one frame at a time.
-    spdy::SpdyFrame* frame = NULL;
-    while (output_queue_.Pop(&frame)) {
-      // Each invocation of SendFrame will flush that one frame down the wire.
-      // Might it be better to batch them together?  Actually, maybe not -- we
-      // already try to make sure that each data frame is nicely-sized (~4k),
-      // so flushing them one at a time might be reasonable.  But we may want
-      // to revisit this.
-      if (!SendFrame(frame)) {
-        LOG(DFATAL) << "Failed to send SPDY frame.";
+    // Step 1: Read input from the client.
+    {
+      // Determine whether we should block until more input data is available.
+      // For now, our policy is to block only if there are no currently-active
+      // streams; if we block while there is an active stream, it may produce
+      // output that we will fail to send until we unblock.
+      bool should_block = true;
+      {
+        base::AutoLock autolock(stream_map_lock_);
+        should_block = stream_map_.empty();
+      }
+      // Read available input data.  The SpdyConnectionIO will grab any
+      // available data and push it into the SpdyFramer that we pass to it
+      // here; the SpdyFramer, in turn, will call our OnControl and/or
+      // OnStreamFrameData methods to report decoded frames.  If no input data
+      // is currently available and should_block is true, this will block until
+      // input becomes available (or the connection is closed).
+      const SpdyConnectionIO::ReadStatus status =
+          connection_io_->ProcessAvailableInput(should_block, &framer_);
+      if (status == SpdyConnectionIO::READ_SUCCESS) {
+        // We successfully did some I/O, so reset the output block timeout.
+        output_block_time = kInitOutputBlockTime;
+      } else if (status == SpdyConnectionIO::READ_CONNECTION_CLOSED) {
+        break;
+      } else {
+        DCHECK(status == SpdyConnectionIO::READ_NO_DATA);
       }
     }
 
-    // TODO(mdsteele): ************* THIS WHILE-LOOP IS BAD! **************
-    // Right now, this loop will simply busy-wait, spinning between checking
-    // for more input and checking for more output.  The right thing to do
-    // would be to sleep until either more input or more output is available,
-    // and then wake up.  The problem is that it's hard to know when more input
-    // is available without invoking the input filter chain; moreover, we
-    // cannot use separate threads for input and output, because in Apache the
-    // input and output filter chains for a connection must be invoked by the
-    // same thread.
-    //
-    // One possibility would be to grab the input socket object, and arrange to
-    // block until either the socket is ready to read OR our output queue is
-    // nonempty.  (Obviously we would abstract that away in SpdyConnectionIO
-    // somehow.)
-    //
-    // Failing that, we could at least do a blocking read when there are no
-    // active streams (and therefore no possibility of new output arriving).
-    // That would at least prevent us from busy-looping when no communication
-    // is happening but the client is still keeping the connection open.
-    //
-    // One way or the other though, we need to find a way to fix this method
-    // before mod_spdy will be ready for prime time.
+    // Step 2: Send output to the client.
+    {
+      // Send any pending output, one frame at a time.  We're willing to block
+      // briefly to wait for more frames to send, if only to prevent this loop
+      // from busy-waiting too heavily -- not a great solution, but better than
+      // nothing for now.
+      spdy::SpdyFrame* frame = NULL;
+      if (output_queue_.BlockingPop(output_block_time, &frame)) {
+        do {
+          // Each invocation of SendFrame will flush that one frame down the
+          // wire.  Might it be better to batch them together?  Actually, maybe
+          // not -- we already try to make sure that each data frame is
+          // nicely-sized (~4k), so flushing them one at a time might be
+          // reasonable.  But we may want to revisit this.
+          if (!SendFrame(frame)) {
+            LOG(DFATAL) << "Failed to send SPDY frame.";
+          }
+        } while (output_queue_.Pop(&frame));
+
+        // We successfully did some I/O, so reset the output block timeout.
+        output_block_time = kInitOutputBlockTime;
+      } else {
+        // There were no output frames within the timeout; so do an exponential
+        // backoff by doubling output_block_time.
+        output_block_time = std::min(kMaxOutputBlockTime,
+                                     output_block_time * 2);
+      }
+    }
+
+    // TODO(mdsteele): What we really want to be able to do is to block until
+    // *either* more input or more output is available.  Unfortunely, there's
+    // no good way to query the input side (in Apache).  One possibility would
+    // be to grab the input socket object (which we can do), and then arrange
+    // to block until either the socket is ready to read OR our output queue is
+    // nonempty (obviously we would abstract that away in SpdyConnectionIO),
+    // but there's not even a nice way to do that (that I know of).
   }
 
   StopConnection();

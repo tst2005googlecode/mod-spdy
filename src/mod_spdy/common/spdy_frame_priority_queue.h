@@ -18,8 +18,11 @@
 #include <list>
 
 #include "base/basictypes.h"
+#include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "net/spdy/spdy_protocol.h"
+
+namespace base { class TimeDelta; }
 
 namespace mod_spdy {
 
@@ -49,8 +52,13 @@ class SpdyFramePriorityQueue {
   // priority -- that of the stream).
   bool Pop(spdy::SpdyFrame** frame);
 
+  // Like Pop(), but if the queue is empty this method will block for up to
+  // max_time before returning false.
+  bool BlockingPop(const base::TimeDelta& max_time, spdy::SpdyFrame** frame);
+
  private:
   base::Lock lock_;
+  base::ConditionVariable condvar_;
   std::list<spdy::SpdyFrame*> p0_queue_;
   std::list<spdy::SpdyFrame*> p1_queue_;
   std::list<spdy::SpdyFrame*> p2_queue_;

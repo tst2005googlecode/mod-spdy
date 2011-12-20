@@ -14,6 +14,7 @@
 
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 
+#include "base/time.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -64,6 +65,24 @@ TEST(SpdyFramePriorityQueueTest, Simple) {
             last_accepted_stream_id());
   delete frame;
   ASSERT_FALSE(queue.Pop(&frame));
+}
+
+TEST(SpdyFramePriorityQueueTest, BlockingPop) {
+  mod_spdy::SpdyFramePriorityQueue queue;
+  spdy::SpdyFrame* frame;
+  ASSERT_FALSE(queue.Pop(&frame));
+
+  const base::TimeDelta time_to_wait = base::TimeDelta::FromMilliseconds(50);
+  const base::TimeTicks start = base::TimeTicks::HighResNow();
+  ASSERT_FALSE(queue.BlockingPop(time_to_wait, &frame));
+  const base::TimeDelta actual_time_waited =
+      base::TimeTicks::HighResNow() - start;
+
+  // Check that we waited at least as long as we asked for.
+  EXPECT_GE(actual_time_waited, time_to_wait);
+  // Check that we didn't wait too much longer than we asked for.
+  EXPECT_LT(actual_time_waited.InMillisecondsF(),
+            1.1 * time_to_wait.InMillisecondsF());
 }
 
 }  // namespace

@@ -24,6 +24,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using testing::_;
+using testing::Eq;
 using testing::Invoke;
 using testing::Return;
 
@@ -32,7 +33,7 @@ namespace {
 class MockSpdyConnectionIO : public mod_spdy::SpdyConnectionIO {
  public:
   MOCK_METHOD0(IsConnectionAborted, bool());
-  MOCK_METHOD1(ProcessAvailableInput, ReadStatus(spdy::SpdyFramer*));
+  MOCK_METHOD2(ProcessAvailableInput, ReadStatus(bool, spdy::SpdyFramer*));
   MOCK_METHOD1(SendFrameRaw, bool(const spdy::SpdyFrame&));
 };
 
@@ -69,7 +70,7 @@ class SpdyConnectionTest : public testing::Test {
  protected:
   // Push a PING frame onto the given SpdyFramer.
   static mod_spdy::SpdyConnectionIO::ReadStatus ReadPingFrame(
-      spdy::SpdyFramer* framer) {
+      bool block, spdy::SpdyFramer* framer) {
     // TODO(mdsteele): Sadly, the version of SpdyFramer we're currently using
     // doesn't provide a method for creating PING frames.  So for now, we'll
     // create one manually here.
@@ -110,7 +111,7 @@ TEST_F(SpdyConnectionTest, SinglePing) {
   testing::InSequence seq;
   EXPECT_CALL(connection_io_, IsConnectionAborted())
       .WillOnce(Return(false));
-  EXPECT_CALL(connection_io_, ProcessAvailableInput(_))
+  EXPECT_CALL(connection_io_, ProcessAvailableInput(Eq(true), _))
       .WillOnce(Invoke(ReadPingFrame));
   EXPECT_CALL(connection_io_, SendFrameRaw(IsControlFrameOfType(spdy::PING)))
       .WillOnce(Return(true));

@@ -36,11 +36,11 @@ class SpdyStream;
 // connection thread.
 class SpdyConnectionIO {
  public:
-  // Status to describe whether reading succeeded.  We may need to add more
-  // values here later.
+  // Status to describe whether reading succeeded.
   enum ReadStatus {
-    READ_SUCCESS,
-    READ_CONNECTION_CLOSED
+    READ_SUCCESS,  // we successfully pushed data into the SpdyFramer
+    READ_NO_DATA,  // no data is currently available
+    READ_CONNECTION_CLOSED  // the connection has been closed
   };
 
   SpdyConnectionIO();
@@ -50,9 +50,12 @@ class SpdyConnectionIO {
   // stop, false otherwise.
   virtual bool IsConnectionAborted() = 0;
 
-  // Pull any already-available input data from the connection (non-blocking)
-  // and feed it into the ProcessInput() method of the given SpdyFramer.
-  virtual ReadStatus ProcessAvailableInput(spdy::SpdyFramer* framer) = 0;
+  // Pull any available input data from the connection and feed it into the
+  // ProcessInput() method of the given SpdyFramer.  If no input data is
+  // currently available and the block argument is true, this should block
+  // until more data arrives; otherwise, this should not block.
+  virtual ReadStatus ProcessAvailableInput(bool block,
+                                           spdy::SpdyFramer* framer) = 0;
 
   // Send a single SPDY frame to the client as-is; block until it has been
   // sent down the wire.  Return true on success.

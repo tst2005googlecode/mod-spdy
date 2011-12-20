@@ -34,7 +34,8 @@ class ApacheSpdyConnectionIO : public SpdyConnectionIO {
 
   // SpdyConnectionIO methods:
   virtual bool IsConnectionAborted();
-  virtual ReadStatus ProcessAvailableInput(spdy::SpdyFramer* framer);
+  virtual ReadStatus ProcessAvailableInput(bool block,
+                                           spdy::SpdyFramer* framer);
   virtual bool SendFrameRaw(const spdy::SpdyFrame& frame);
 
  private:
