@@ -46,6 +46,8 @@
 
 #include "mod_spdy/apache/filters/http_to_spdy_filter.h"
 
+#include "apr_strings.h"
+
 #include "base/logging.h"
 #include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -98,8 +100,14 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
     // them back to the master connection.  If there _are_ filters after this
     // one, they'll be ignored, but let's log a warning here so that we'll know
     // that something unexpected is going on.
-    LOG(WARNING) << "HttpToSpdyFilter is not the last filter in the chain: "
-                 << filter->next->frec->name;
+    //
+    // We do allow mod_logio ("log_input_output") to run after us
+    // without generating a warning, since it is a passive filter that
+    // doesn't modify the stream.
+    if (apr_strnatcasecmp("log_input_output", filter->next->frec->name) != 0) {
+      LOG(WARNING) << "HttpToSpdyFilter is not the last filter in the chain: "
+                   << filter->next->frec->name;
+    }
   }
 
   // According to the page at

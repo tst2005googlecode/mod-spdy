@@ -94,12 +94,28 @@ bool LogMessageHandler(int severity, const char* file, int line,
   return true;
 }
 
+// Include PID and TID in each log message.
+bool kShowProcessId = true;
+bool kShowThreadId = true;
+
+// Disabled since this information is already included in the apache
+// log line.
+bool kShowTimestamp = false;
+
+// Disabled by default due to CPU cost. Enable to see high-resolution
+// timestamps in the logs.
+bool kShowTickcount = false;
+
 }  // namespace
 
 namespace mod_spdy {
 
 void InstallLogMessageHandler(apr_pool_t* pool) {
   log_pool = pool;
+  logging::SetLogItems(kShowProcessId,
+                       kShowThreadId,
+                       kShowTimestamp,
+                       kShowTickcount);
   logging::SetLogMessageHandler(&LogMessageHandler);
 }
 
