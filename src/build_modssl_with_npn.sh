@@ -67,7 +67,7 @@ echo "done"
 
 OPENSSL_SRC_TGZ_URL="http://www.openssl.org/source/openssl-1.0.0e.tar.gz"
 OPENSSL_NPN_PATCH_URL="http://technotes.googlecode.com/git/openssl-1.0.0d-npn.patch"
-APACHE_HTTPD_SRC_TGZ_URL="http://mirrors.axint.net/apache/httpd/httpd-2.2.21.tar.gz"
+APACHE_HTTPD_SRC_TGZ_URL="http://www.apache.org/dist/httpd/httpd-2.2.21.tar.gz"
 APACHE_HTTPD_MODSSL_NPN_PATCH_URL="https://issues.apache.org/bugzilla/attachment.cgi?id=27969&action=diff&context=patch&collapsed=&headers=1&format=raw"
 
 OPENSSL_SRC_TGZ=$(basename $OPENSSL_SRC_TGZ_URL)
