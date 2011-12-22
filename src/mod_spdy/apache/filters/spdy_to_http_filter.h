@@ -51,14 +51,23 @@ class SpdyToHttpFilter {
   bool GetNextFrame(apr_read_type_e block);
 
   // Translate a SYN_STREAM frame to HTTP and append it to data_buffer_.
-  void DecodeSynStream(const spdy::SpdySynStreamControlFrame& frame);
+  void DecodeSynStreamFrame(const spdy::SpdySynStreamControlFrame& frame);
+  // Translate a HEADERS frame to HTTP and buffer it in trailing_headers_, to
+  // be appended to data_buffer_ at the end of the data payload.
+  void DecodeHeadersFrame(const spdy::SpdyHeadersControlFrame& frame);
   // Append the contents of a data frame to data_buffer_.
   void DecodeDataFrame(const spdy::SpdyDataFrame& frame);
+
+  // Called when we see a FLAG_FIN on a DATA or HEADERS frame.  This sends the
+  // "last-chunk" indicator and whatever trailing headers (if any) we have
+  // buffered.
+  void AppendTrailingHeaders();
 
   // Send a RST_STREAM frame and abort the stream.
   void AbortStream(spdy::SpdyStatusCodes status);
 
   SpdyStream* const stream_;
+  std::string trailing_headers_;
   std::string data_buffer_;
   int next_read_start_;
   bool end_of_stream_reached_;

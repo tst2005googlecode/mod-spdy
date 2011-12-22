@@ -20,6 +20,7 @@
 #include "base/logging.h"
 #include "base/scoped_ptr.h"
 #include "base/string_piece.h"
+#include "base/stringprintf.h"
 #include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
@@ -82,9 +83,15 @@ class HttpStringVisitor : public mod_spdy::HttpStreamVisitorInterface {
                             const char* version);
   virtual void OnHeader(const char* key, const char* value);
   virtual void OnHeadersComplete();
-  virtual void OnBody(const char* data, size_t data_len);
+  virtual void OnBody(const char* data, size_t size);
   virtual void OnComplete() {}
   virtual void OnTerminate() { has_error_ = true; }
+
+  // Additional methods.
+  // TODO(mdsteele): Possibly these should be added to the
+  //   HttpStreamVisitorInterface class.
+  void OnDataChunk(const char* data, size_t size);
+  void OnNoMoreChunks();
 
  private:
   std::string* const string_;
@@ -120,6 +127,21 @@ void HttpStringVisitor::OnHeadersComplete() {
 
 void HttpStringVisitor::OnBody(const char* data, size_t size) {
   string_->append(data, size);
+}
+
+void HttpStringVisitor::OnDataChunk(const char* data, size_t size) {
+  // Encode the data as an HTTP data chunk.  See RFC 2616 section 3.6.1 for
+  // details.
+  string_->reserve(string_->size() + size + 8);
+  base::StringAppendF(string_, "%X\r\n", size);
+  string_->append(data, size);
+  string_->append("\r\n");
+}
+
+void HttpStringVisitor::OnNoMoreChunks() {
+  // Indicate that there are no more HTTP data chunks coming.  See RFC 2616
+  // section 3.6.1 for details.
+  string_->append("0\r\n");
 }
 
 }  // namespace
@@ -311,10 +333,13 @@ bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
         static_cast<spdy::SpdyControlFrame*>(frame.get());
     switch (ctrl_frame->type()) {
       case spdy::SYN_STREAM:
-        DecodeSynStream(
+        DecodeSynStreamFrame(
             *static_cast<spdy::SpdySynStreamControlFrame*>(ctrl_frame));
         break;
-      // TODO(mdsteele): Handle HEADERS frames, and maybe others?
+      case spdy::HEADERS:
+        DecodeHeadersFrame(
+            *static_cast<spdy::SpdyHeadersControlFrame*>(ctrl_frame));
+        break;
       default:
         // Other frame types should be handled by the master connection, rather
         // than sent here.
@@ -331,7 +356,7 @@ bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
   return true;
 }
 
-void SpdyToHttpFilter::DecodeSynStream(
+void SpdyToHttpFilter::DecodeSynStreamFrame(
     const spdy::SpdySynStreamControlFrame& frame) {
   spdy::SpdyHeaderBlock block;
   if (!ParseHeaderBlockInBuffer(frame.header_block(), frame.header_block_len(),
@@ -352,19 +377,73 @@ void SpdyToHttpFilter::DecodeSynStream(
     AbortStream(spdy::INTERNAL_ERROR);
     return;
   }
+
+  const bool flag_fin = frame.flags() & spdy::CONTROL_FLAG_FIN;
+
+  // If the SYN_STREAM isn't going to be the last input frame on this stream,
+  // we need to use chunked encoding when translating to HTTP, to allow for
+  // later DATA and HEADERS frames.
+  if (!flag_fin) {
+    // Tell Apache that the HTTP request we're producing will use chunked
+    // encoding.
+    block["transfer-encoding"] = "chunked";
+    // According to RFC 2616 section 4.4, the Transfer-Encoding and
+    // Content-Length headers should not both be present, so we remove any
+    // Content-Length header that the client may have sent before translating
+    // to HTTP.
+    block.erase("content-length");
+  }
+
   GenerateHeadersFromHeaderBlock(block, &visitor);
   visitor.OnHeadersComplete();
 
-  if (frame.flags() & spdy::CONTROL_FLAG_FIN) {
+  end_of_stream_reached_ |= flag_fin;
+}
+
+void SpdyToHttpFilter::DecodeHeadersFrame(
+    const spdy::SpdyHeadersControlFrame& frame) {
+  // Parse the headers from the HEADERS frame.
+  spdy::SpdyHeaderBlock block;
+  if (!ParseHeaderBlockInBuffer(frame.header_block(), frame.header_block_len(),
+                                &block)) {
+    LOG(ERROR) << "Invalid HEADERS header block in stream "
+               << stream_->stream_id();
+    AbortStream(spdy::PROTOCOL_ERROR);
+    return;
+  }
+
+  // Translate the headers to HTTP and append to our trailing_headers_ buffer.
+  HttpStringVisitor visitor(&trailing_headers_);
+  GenerateHeadersFromHeaderBlock(block, &visitor);
+
+  // If this is the last frame on this stream, finish off the HTTP request.
+  if (frame.flags() & spdy::DATA_FLAG_FIN) {
     end_of_stream_reached_ = true;
+    AppendTrailingHeaders();
   }
 }
 
 void SpdyToHttpFilter::DecodeDataFrame(const spdy::SpdyDataFrame& frame) {
-  data_buffer_.append(frame.payload(), frame.length());
+  HttpStringVisitor visitor(&data_buffer_);
+  visitor.OnDataChunk(frame.payload(), frame.length());
+
+  // If this is the last frame on this stream, finish off the HTTP request.
   if (frame.flags() & spdy::DATA_FLAG_FIN) {
     end_of_stream_reached_ = true;
+    AppendTrailingHeaders();
   }
+}
+
+void SpdyToHttpFilter::AppendTrailingHeaders() {
+  HttpStringVisitor visitor(&data_buffer_);
+  visitor.OnNoMoreChunks();
+  // Append whatever trailing headers we've buffered, if any.
+  // TODO(mdsteele): With a more careful design, we could probably avoid all
+  //   this string copying.
+  data_buffer_.append(trailing_headers_);
+  trailing_headers_.clear();
+  // Indicate that this request is finished.
+  visitor.OnHeadersComplete();
 }
 
 void SpdyToHttpFilter::AbortStream(spdy::SpdyStatusCodes status) {

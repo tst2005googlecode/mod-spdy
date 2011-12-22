@@ -50,12 +50,22 @@ class SpdyToHttpFilterTest : public testing::Test {
   }
 
  protected:
-  void PostSynStream(spdy::SpdyControlFlags flags,
-                     spdy::SpdyHeaderBlock* headers) {
+  void PostSynStreamFrame(spdy::SpdyControlFlags flags,
+                          spdy::SpdyHeaderBlock* headers) {
     stream_.PostInputFrame(framer_.CreateSynStream(
         stream_id_,
         0,  // associated_stream_id
-        priority_, flags,
+        priority_,
+        flags,
+        false, // compressed
+        headers));
+  }
+
+  void PostHeadersFrame(spdy::SpdyControlFlags flags,
+                        spdy::SpdyHeaderBlock* headers) {
+    stream_.PostInputFrame(framer_.CreateHeaders(
+        stream_id_,
+        flags,
         false, // compressed
         headers));
   }
@@ -140,7 +150,7 @@ TEST_F(SpdyToHttpFilterTest, SimpleGetRequest) {
   headers["url"] = "/foo/bar/index.html";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
   headers["version"] = "HTTP/1.1";
-  PostSynStream(spdy::CONTROL_FLAG_FIN, &headers);
+  PostSynStreamFrame(spdy::CONTROL_FLAG_FIN, &headers);
 
   // Invoke the filter in blocking GETLINE mode.  We should get back just the
   // HTTP request line.
@@ -195,7 +205,7 @@ TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
   headers["url"] = "/erase/the/whole/database.cgi";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
   headers["version"] = "HTTP/1.1";
-  PostSynStream(spdy::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(spdy::CONTROL_FLAG_NONE, &headers);
 
   // Do a nonblocking READBYTES read.  We ask for lots of bytes, but since it's
   // nonblocking we should immediately get back what's available so far.
@@ -203,6 +213,7 @@ TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
   ExpectTransientBucket("POST /erase/the/whole/database.cgi HTTP/1.1\r\n"
                         "host: www.example.com\r\n"
                         "referer: https://www.example.com/index.html\r\n"
+                        "transfer-encoding: chunked\r\n"
                         "user-agent: ModSpdyUnitTest/1.0\r\n"
                         "\r\n");
   ExpectEndOfBrigade();
@@ -219,24 +230,76 @@ TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
 
   // Now read in the data a bit at a time.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
-  ExpectTransientBucket("Hello, world!\n");
+  ExpectTransientBucket("1B\r\n");
   ExpectEndOfBrigade();
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 24));
-  ExpectTransientBucket("Please erase the whole d");
+  ExpectTransientBucket("Hello, world!\nPlease era");
   ExpectEndOfBrigade();
-  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_SPECULATIVE, APR_NONBLOCK_READ, 12));
-  ExpectTransientBucket("atabase imme");
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_SPECULATIVE, APR_NONBLOCK_READ, 15));
+  ExpectTransientBucket("se \r\n13\r\nthe wh");
   ExpectEndOfBrigade();
-  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 24));
-  ExpectTransientBucket("atabase immediately.\nTha");
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 36));
+  ExpectTransientBucket("se \r\n13\r\nthe whole database \r\n15\r\nim");
+  ExpectEndOfBrigade();
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 21));
+  ExpectTransientBucket("mediately.\nThanks!\n\r\n");
   ExpectEndOfBrigade();
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
-  ExpectTransientBucket("nks!\n");
+  ExpectTransientBucket("0\r\n");
+  ExpectEndOfBrigade();
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
 
   // There's no more data left; attempting another read should result in EOF.
   ASSERT_TRUE(APR_STATUS_IS_EOF(Read(AP_MODE_GETLINE, APR_BLOCK_READ, 0)));
+}
+
+TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
+  // Send a SYN_STREAM frame from the client.
+  spdy::SpdyHeaderBlock headers;
+  headers["host"] = "www.example.net";
+  headers["method"] = "POST";
+  headers["referer"] = "https://www.example.net/index.html";
+  headers["scheme"] = "https";
+  headers["url"] = "/erase/the/whole/database.cgi";
+  headers["user-agent"] = "ModSpdyUnitTest/1.0";
+  headers["version"] = "HTTP/1.1";
+  PostSynStreamFrame(spdy::CONTROL_FLAG_NONE, &headers);
+
+  // Send some DATA and HEADERS frames.  The HEADERS frames should get buffered
+  // and placed at the end of the HTTP request body as trailing headers.
+  PostDataFrame(spdy::DATA_FLAG_NONE, "Please erase ");
+  spdy::SpdyHeaderBlock headers2;
+  headers2["x-super-cool"] = "foo";
+  PostHeadersFrame(spdy::CONTROL_FLAG_NONE, &headers2);
+  PostDataFrame(spdy::DATA_FLAG_NONE, "everything ");
+  spdy::SpdyHeaderBlock headers3;
+  headers3["x-awesome"] = "quux";
+  PostHeadersFrame(spdy::CONTROL_FLAG_NONE, &headers3);
+  PostDataFrame(spdy::DATA_FLAG_FIN, "immediately!!\n");
+
+  // Read in all the data.
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("POST /erase/the/whole/database.cgi HTTP/1.1\r\n"
+                        "host: www.example.net\r\n"
+                        "referer: https://www.example.net/index.html\r\n"
+                        "transfer-encoding: chunked\r\n"
+                        "user-agent: ModSpdyUnitTest/1.0\r\n"
+                        "\r\n"
+                        "D\r\n"
+                        "Please erase \r\n"
+                        "B\r\n"
+                        "everything \r\n"
+                        "E\r\n"
+                        "immediately!!\n\r\n"
+                        "0\r\n"
+                        "x-super-cool: foo\r\n"
+                        "x-awesome: quux\r\n"
+                        "\r\n");
+  ExpectEosBucket();
+  ExpectEndOfBrigade();
 }
 
 }  // namespace
