@@ -91,7 +91,8 @@ void SpdyConnection::Run() {
       if (status == SpdyConnectionIO::READ_SUCCESS) {
         // We successfully did some I/O, so reset the output block timeout.
         output_block_time = kInitOutputBlockTime;
-      } else if (status == SpdyConnectionIO::READ_CONNECTION_CLOSED) {
+      } else if (status == SpdyConnectionIO::READ_CONNECTION_CLOSED ||
+                 status == SpdyConnectionIO::READ_ERROR) {
         break;
       } else {
         DCHECK(status == SpdyConnectionIO::READ_NO_DATA);
@@ -140,9 +141,11 @@ void SpdyConnection::Run() {
 }
 
 void SpdyConnection::OnError(spdy::SpdyFramer* framer) {
+  // Log the error, but don't do anything else yet.  If the framer encountered
+  // an error, our SpdyConnectionIO object should return READ_ERROR to us, at
+  // which point we'll stop the connection.
   LOG(ERROR) << "SpdyFramer error: "
              << spdy::SpdyFramer::ErrorCodeToString(framer->error_code());
-  StopConnection();
 }
 
 void SpdyConnection::OnControl(const spdy::SpdyControlFrame* frame) {

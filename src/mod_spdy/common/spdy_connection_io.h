@@ -40,7 +40,8 @@ class SpdyConnectionIO {
   enum ReadStatus {
     READ_SUCCESS,  // we successfully pushed data into the SpdyFramer
     READ_NO_DATA,  // no data is currently available
-    READ_CONNECTION_CLOSED  // the connection has been closed
+    READ_CONNECTION_CLOSED,  // the connection has been closed
+    READ_ERROR  // an unrecoverable error (e.g. client sent malformed data)
   };
 
   SpdyConnectionIO();

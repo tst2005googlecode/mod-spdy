@@ -96,7 +96,15 @@ SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
       }
 
       const size_t consumed = framer->ProcessInput(data, data_length);
-      DCHECK(consumed == data_length);  // TODO(mdsteele) When can this fail?
+      // If the SpdyFramer encountered an error (i.e. the client sent us
+      // malformed data), then we can't recover.
+      if (framer->HasError()) {
+        apr_brigade_cleanup(input_brigade_);
+        return READ_ERROR;
+      }
+      // If there was no error, the framer will have consumed all the data.
+      // TODO(mdsteele): Is that true?  I think it's true.
+      DCHECK(consumed == data_length);
       pushed_any_data |= consumed > 0;
     }
 
