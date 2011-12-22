@@ -390,10 +390,12 @@ int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
   mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
 
-  // Our context object should be present by now, having been created in our
-  // pre-connection hook.
+  // Our context object should have already been created in our pre-connection
+  // hook, unless this is a non-SSL connection.  But if it's a non-SSL
+  // connection, then NPN shouldn't be happening, and this hook shouldn't be
+  // getting called!  So, let's LOG(DFATAL) if context is NULL here.
   if (context == NULL) {
-    LOG(DFATAL) << "No connection context present for mod_spdy.";
+    LOG(DFATAL) << "NPN happened, but there is no connection context.";
     return DECLINED;
   }
 
@@ -406,7 +408,7 @@ int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
 
   // NPN should happen only once, so npn_state should still be NOT_DONE_YET.
   if (context->npn_state() != mod_spdy::ConnectionContext::NOT_DONE_YET) {
-    LOG(DFATAL) << "NPN already happened";
+    LOG(DFATAL) << "NPN happened twice.";
     return DECLINED;
   }
 
@@ -429,10 +431,10 @@ void InsertRequestFilters(request_rec* request) {
   const mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
 
-  // Our context object should be present by now, having been created in our
-  // pre-connection hook.
+  // Our context object should be present by now (having been created in our
+  // pre-connection hook) unless this is a non-SSL connection, in which case we
+  // definitely aren't using SPDY.
   if (context == NULL) {
-    LOG(DFATAL) << "No connection context present for mod_spdy.";
     return;
   }
 
