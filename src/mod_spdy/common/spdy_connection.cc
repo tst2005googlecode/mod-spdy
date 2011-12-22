@@ -215,6 +215,12 @@ void SpdyConnection::OnStreamFrameData(spdy::SpdyStreamId stream_id,
 
 void SpdyConnection::HandleSynStream(
     const spdy::SpdySynStreamControlFrame& frame){
+  // Start by decompressing the frame.  Even if we choose to ignore this frame,
+  // we must still do the work of decompressing it so that we correctly
+  // maintain this connection's header compression context.
+  scoped_ptr<spdy::SpdyFrame> decompressed_frame(
+      framer_.DecompressFrame(frame));
+
   // The SPDY spec requires us to ignore SYN_STREAM frames after sending a
   // GOAWAY frame.  See:
   // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-GOAWAY
@@ -226,7 +232,7 @@ void SpdyConnection::HandleSynStream(
 
   // Client stream IDs must be odd-numbered.
   if (stream_id % 2 == 0) {
-    LOG(WARNING) << "Client sent even stream ID (" << stream_id
+    LOG(WARNING) << "Client sent SYN_STREAM for even stream ID (" << stream_id
                  << ").  Aborting connection.";
     SendRstStreamFrame(stream_id, spdy::PROTOCOL_ERROR);
     SendGoAwayFrame();
@@ -234,9 +240,11 @@ void SpdyConnection::HandleSynStream(
     return;
   }
 
-  // Client stream IDs must increase monotonically.
+  // Client stream IDs must be strictly increasing.
   if (stream_id <= last_client_stream_id_) {
-    LOG(WARNING) << "  bad stream id, aborting stream";
+    LOG(WARNING) << "Client sent SYN_STREAM for non-increasing stream ID ("
+                 << stream_id << " after " << last_client_stream_id_
+                 << ").  Aborting stream.";
     AbortStream(stream_id, spdy::PROTOCOL_ERROR);
     return;
   }
@@ -263,10 +271,7 @@ void SpdyConnection::HandleSynStream(
     StreamTaskWrapper* task_wrapper =
         new StreamTaskWrapper(this, stream_id, priority);
     stream_map_[stream_id] = task_wrapper;
-    // TODO(mdsteele): Do we need to decompress the frame even if we're going
-    // to ignore the frame, to make sure that our header compression state
-    // stays correct?
-    task_wrapper->stream()->PostInputFrame(framer_.DecompressFrame(frame));
+    task_wrapper->stream()->PostInputFrame(decompressed_frame.release());
     executor_->AddTask(task_wrapper, priority);
   }
 }
@@ -335,6 +340,12 @@ void SpdyConnection::HandleGoAway(const spdy::SpdyGoAwayControlFrame& frame) {
 }
 
 void SpdyConnection::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
+  // Start by decompressing the frame.  Even if we choose to ignore this frame,
+  // we must still do the work of decompressing it so that we correctly
+  // maintain this connection's header compression context.
+  scoped_ptr<spdy::SpdyFrame> decompressed_frame(
+      framer_.DecompressFrame(frame));
+
   const spdy::SpdyStreamId stream_id = frame.stream_id();
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
@@ -346,15 +357,12 @@ void SpdyConnection::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
     SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
     if (iter != stream_map_.end()) {
       SpdyStream* stream = iter->second->stream();
-      stream->PostInputFrame(framer_.DecompressFrame(frame));
+      stream->PostInputFrame(decompressed_frame.release());
       return;
     }
   }
 
   // Note that we release the mutex *before* sending the frame.
-  // TODO(mdsteele): Do we need to decompress the frame even if we're going to
-  // ignore the frame, to make sure that our header compression state stays
-  // correct?
   SendRstStreamFrame(stream_id, spdy::INVALID_STREAM);
 }
 
