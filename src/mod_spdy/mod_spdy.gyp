@@ -51,6 +51,7 @@
       'dependencies': [
         'spdy_common',
         '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/build/build_util.gyp:mod_spdy_version_header',
         '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
       'include_dirs': [
@@ -122,6 +123,7 @@
       'type': 'executable',
       'dependencies': [
         'spdy_apache',
+        '<(DEPTH)/build/build_util.gyp:mod_spdy_version_header',
         '<(DEPTH)/testing/gtest.gyp:gtest',
         '<(DEPTH)/third_party/apache/apr/apr.gyp:apr',
         '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:aprutil',

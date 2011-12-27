@@ -45,6 +45,10 @@ deps = {
   "src/third_party/chromium/src/base":
     Var("chromium_trunk") + "/src/base" + Var("chromium_revision"),
 
+  "src/third_party/chromium/src/chrome/tools/build":
+    Var("chromium_trunk") + "/src/chrome/tools/build" +
+    Var("chromium_revision"),
+
   "src/third_party/chromium/src/net/base":
     Var("chromium_trunk") + "/src/net/base" +
     Var("chromium_revision"),

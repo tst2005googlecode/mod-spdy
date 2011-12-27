@@ -51,10 +51,14 @@
 #include "base/logging.h"
 #include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/common/spdy_stream.h"
+#include "mod_spdy/common/version.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace {
+
+const char* kModSpdyHeader = "x-mod-spdy";
+const char* kModSpdyVersion = MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
 
 // This is the number of bytes we want to send per data frame.  We never send
 // data frames larger than this, but we might send smaller ones if we have to
@@ -250,6 +254,7 @@ void HttpToSpdyFilter::SendHeaders(const HeaderPopulatorInterface& populator,
                                    bool flag_fin) {
   spdy::SpdyHeaderBlock headers;
   populator.Populate(&headers);
+  headers[kModSpdyHeader] = kModSpdyVersion;
   const spdy::SpdyControlFlags flags =
       flag_fin ? spdy::CONTROL_FLAG_FIN : spdy::CONTROL_FLAG_NONE;
   // Don't compress the headers in the SYN_REPLY frame here; it will be
