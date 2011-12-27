@@ -25,7 +25,7 @@
 #include "apr_tables.h"
 #include "apr_thread_pool.h"
 
-#include "mod_spdy/apache/apache_spdy_connection_io.h"
+#include "mod_spdy/apache/apache_spdy_session_io.h"
 #include "mod_spdy/apache/apache_spdy_stream_task_factory.h"
 #include "mod_spdy/apache/apr_thread_pool_executor.h"
 #include "mod_spdy/apache/config_commands.h"
@@ -35,8 +35,8 @@
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/connection_context.h"
-#include "mod_spdy/common/spdy_connection.h"
 #include "mod_spdy/common/spdy_server_config.h"
+#include "mod_spdy/common/spdy_session.h"
 
 extern "C" {
   // Declaring modified mod_ssl's optional hooks here (so that we don't need to
@@ -353,14 +353,14 @@ int ProcessConnection(conn_rec* connection) {
 
   // At this point, we and the client have agreed to use SPDY, so process this
   // as a SPDY master connection.
-  mod_spdy::ApacheSpdyConnectionIO connection_io(connection);
+  mod_spdy::ApacheSpdySessionIO session_io(connection);
   mod_spdy::ApacheSpdyStreamTaskFactory task_factory(connection);
   mod_spdy::AprThreadPoolExecutor executor(gPerProcessThreadPool);
-  mod_spdy::SpdyConnection spdy_connection(
+  mod_spdy::SpdySession spdy_session(
       mod_spdy::GetServerConfig(connection),
-      &connection_io, &task_factory, &executor);
-  // This call will block until the connection has closed down.
-  spdy_connection.Run();
+      &session_io, &task_factory, &executor);
+  // This call will block until the session has closed down.
+  spdy_session.Run();
 
   // Return OK to tell Apache that we handled this connection.
   return OK;

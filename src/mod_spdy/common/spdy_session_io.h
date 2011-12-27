@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef MOD_SPDY_COMMON_SPDY_CONNECTION_IO_H_
-#define MOD_SPDY_COMMON_SPDY_CONNECTION_IO_H_
+#ifndef MOD_SPDY_COMMON_SPDY_SESSION_IO_H_
+#define MOD_SPDY_COMMON_SPDY_SESSION_IO_H_
 
 #include "base/basictypes.h"
 
@@ -26,15 +26,15 @@ namespace mod_spdy {
 
 class SpdyStream;
 
-// SpdyConnectionIO is a helper interface for the SpdyConnection class.  The
-// SpdyConnectionIO takes care of implementation-specific details about how to
-// send and receive data, allowing the SpdyConnection to focus on the SPDY
-// protocol itself.  For example, a SpdyConnectionIO for Apache would hold onto
-// a conn_rec object and invoke the input and output filter chains for
-// ProcessAvailableInput and SendFrameRaw, respectively.  The SpdyConnectionIO
+// SpdySessionIO is a helper interface for the SpdySession class.  The
+// SpdySessionIO takes care of implementation-specific details about how to
+// send and receive data, allowing the SpdySession to focus on the SPDY
+// protocol itself.  For example, a SpdySessionIO for Apache would hold onto a
+// conn_rec object and invoke the input and output filter chains for
+// ProcessAvailableInput and SendFrameRaw, respectively.  The SpdySessionIO
 // itself does not need to be thread-safe -- it is only ever used by the main
 // connection thread.
-class SpdyConnectionIO {
+class SpdySessionIO {
  public:
   // Status to describe whether reading succeeded.
   enum ReadStatus {
@@ -44,8 +44,8 @@ class SpdyConnectionIO {
     READ_ERROR  // an unrecoverable error (e.g. client sent malformed data)
   };
 
-  SpdyConnectionIO();
-  virtual ~SpdyConnectionIO();
+  SpdySessionIO();
+  virtual ~SpdySessionIO();
 
   // Return true if the connection has been externally aborted and should
   // stop, false otherwise.
@@ -68,9 +68,9 @@ class SpdyConnectionIO {
   virtual bool SendFrameRaw(const spdy::SpdyFrame& frame) = 0;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(SpdyConnectionIO);
+  DISALLOW_COPY_AND_ASSIGN(SpdySessionIO);
 };
 
 }  // namespace mod_spdy
 
-#endif  // MOD_SPDY_COMMON_SPDY_CONNECTION_IO_H_
+#endif  // MOD_SPDY_COMMON_SPDY_SESSION_IO_H_

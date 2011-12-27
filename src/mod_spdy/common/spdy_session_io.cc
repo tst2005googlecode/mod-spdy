@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "mod_spdy/common/spdy_connection_io.h"
+#include "mod_spdy/common/spdy_session_io.h"
 
 namespace mod_spdy {
 
-SpdyConnectionIO::SpdyConnectionIO() {}
+SpdySessionIO::SpdySessionIO() {}
 
-SpdyConnectionIO::~SpdyConnectionIO() {}
+SpdySessionIO::~SpdySessionIO() {}
 
 }  // namespace mod_spdy

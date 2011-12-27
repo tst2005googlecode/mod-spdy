@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "mod_spdy/common/spdy_connection.h"
+#include "mod_spdy/common/spdy_session.h"
 
 #include "base/basictypes.h"
-#include "mod_spdy/common/spdy_connection_io.h"
 #include "mod_spdy/common/spdy_server_config.h"
+#include "mod_spdy/common/spdy_session_io.h"
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_protocol.h"
@@ -30,7 +30,7 @@ using testing::Return;
 
 namespace {
 
-class MockSpdyConnectionIO : public mod_spdy::SpdyConnectionIO {
+class MockSpdySessionIO : public mod_spdy::SpdySessionIO {
  public:
   MOCK_METHOD0(IsConnectionAborted, bool());
   MOCK_METHOD2(ProcessAvailableInput, ReadStatus(bool, spdy::SpdyFramer*));
@@ -62,14 +62,14 @@ class InlineExecutor : public mod_spdy::Executor {
   DISALLOW_COPY_AND_ASSIGN(InlineExecutor);
 };
 
-class SpdyConnectionTest : public testing::Test {
+class SpdySessionTest : public testing::Test {
  public:
-  SpdyConnectionTest()
-      : connection_(&config_, &connection_io_, &task_factory_, &executor_) {}
+  SpdySessionTest()
+      : session_(&config_, &session_io_, &task_factory_, &executor_) {}
 
  protected:
   // Push a PING frame onto the given SpdyFramer.
-  static mod_spdy::SpdyConnectionIO::ReadStatus ReadPingFrame(
+  static mod_spdy::SpdySessionIO::ReadStatus ReadPingFrame(
       bool block, spdy::SpdyFramer* framer) {
     // TODO(mdsteele): Sadly, the version of SpdyFramer we're currently using
     // doesn't provide a method for creating PING frames.  So for now, we'll
@@ -80,14 +80,14 @@ class SpdyConnectionTest : public testing::Test {
       0x00, 0x00, 0x00, 0x01   // ping ID = 1
     };
     framer->ProcessInput(data, arraysize(data));
-    return mod_spdy::SpdyConnectionIO::READ_SUCCESS;
+    return mod_spdy::SpdySessionIO::READ_SUCCESS;
   }
 
   mod_spdy::SpdyServerConfig config_;
-  MockSpdyConnectionIO connection_io_;
+  MockSpdySessionIO session_io_;
   MockSpdyStreamTaskFactory task_factory_;
   InlineExecutor executor_;
-  mod_spdy::SpdyConnection connection_;
+  mod_spdy::SpdySession session_;
 };
 
 // Define a gMock matcher that checks that a const spdy::SpdyFrame& is a
@@ -97,28 +97,28 @@ MATCHER_P(IsControlFrameOfType, type, "") {
           static_cast<const spdy::SpdyControlFrame*>(&arg)->type() == type);
 }
 
-// Test that if the connectino is already aborted, we stop immediately.
-TEST_F(SpdyConnectionTest, ImmediateConnectionAbort) {
-  EXPECT_CALL(connection_io_, IsConnectionAborted()).WillOnce(Return(true));
+// Test that if the connection is already aborted, we stop immediately.
+TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
+  EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
 
-  connection_.Run();
+  session_.Run();
   EXPECT_TRUE(executor_.stopped());
 }
 
 // Test responding to a PING frame from the client (followed by the connection
 // aborting, so that we can exit the Run loop).
-TEST_F(SpdyConnectionTest, SinglePing) {
+TEST_F(SpdySessionTest, SinglePing) {
   testing::InSequence seq;
-  EXPECT_CALL(connection_io_, IsConnectionAborted())
+  EXPECT_CALL(session_io_, IsConnectionAborted())
       .WillOnce(Return(false));
-  EXPECT_CALL(connection_io_, ProcessAvailableInput(Eq(true), _))
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), _))
       .WillOnce(Invoke(ReadPingFrame));
-  EXPECT_CALL(connection_io_, SendFrameRaw(IsControlFrameOfType(spdy::PING)))
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::PING)))
       .WillOnce(Return(true));
-  EXPECT_CALL(connection_io_, IsConnectionAborted())
+  EXPECT_CALL(session_io_, IsConnectionAborted())
       .WillOnce(Return(true));
 
-  connection_.Run();
+  session_.Run();
   EXPECT_TRUE(executor_.stopped());
 }
 

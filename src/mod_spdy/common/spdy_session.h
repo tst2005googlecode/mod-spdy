@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef MOD_SPDY_COMMON_SPDY_CONNECTION_H_
-#define MOD_SPDY_COMMON_SPDY_CONNECTION_H_
+#ifndef MOD_SPDY_COMMON_SPDY_SESSION_H_
+#define MOD_SPDY_COMMON_SPDY_SESSION_H_
 
 #include <map>
 #include <queue>
@@ -30,24 +30,24 @@
 namespace mod_spdy {
 
 class Executor;
-class SpdyConnectionIO;
+class SpdySessionIO;
 class SpdyServerConfig;
 class SpdyStreamTaskFactory;
 
 // Represents a SPDY session with a client.  Given an Executor for processing
-// individual SPDY streams, and a SpdyConnectionIO for communicating with the
+// individual SPDY streams, and a SpdySessionIO for communicating with the
 // client (sending and receiving frames), this class takes care of implementing
 // the SPDY protocol and responding correctly to various situations.
-class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
+class SpdySession : public spdy::SpdyFramerVisitorInterface {
  public:
-  // The SpdyConnection does _not_ take ownership of any of these arguments.
-  SpdyConnection(const SpdyServerConfig* config,
-                 SpdyConnectionIO* connection_io,
+  // The SpdySession does _not_ take ownership of any of these arguments.
+  SpdySession(const SpdyServerConfig* config,
+                 SpdySessionIO* session_io,
                  SpdyStreamTaskFactory* task_factory,
                  Executor* executor);
-  virtual ~SpdyConnection();
+  virtual ~SpdySession();
 
-  // Process the connection; don't return until the connection is finished.
+  // Process the session; don't return until the session is finished.
   void Run();
 
   // SpdyFramerVisitorInterface interface (note that we do _not_ take ownership
@@ -62,12 +62,12 @@ class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
   // SpdyStreamTaskFactory::NewStreamTask().  Running or cancelling this task
   // simply runs/cancels the wrapped task; however, this object also keeps a
   // SpdyStream object, and on deletion, this will remove itself from the
-  // SpdyConnection's list of active streams.
+  // SpdySession's list of active streams.
   class StreamTaskWrapper : public net_instaweb::Function {
    public:
     // This constructor, called by the main connection thread, will call
     // task_factory_->NewStreamTask() to produce the wrapped task.
-    StreamTaskWrapper(SpdyConnection* spdy_connection,
+    StreamTaskWrapper(SpdySession* spdy_session,
                       spdy::SpdyStreamId stream_id,
                       spdy::SpdyPriority priority);
     virtual ~StreamTaskWrapper();
@@ -81,7 +81,7 @@ class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
     virtual void Cancel();
 
    private:
-    SpdyConnection* const spdy_connection_;
+    SpdySession* const spdy_session_;
     SpdyStream stream_;
     net_instaweb::Function* const subtask_;
 
@@ -109,9 +109,9 @@ class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
   bool SendRstStreamFrame(spdy::SpdyStreamId stream_id,
                           spdy::SpdyStatusCodes status);
 
-  // Close down the whole connection, post-haste.  Block until all stream
+  // Close down the whole session, post-haste.  Block until all stream
   // threads have shut down.
-  void StopConnection();
+  void StopSession();
   // Abort the stream without sending anything to the client.
   void AbortStreamSilently(spdy::SpdyStreamId stream_id);
   // Send a RST_STREAM frame and then abort the stream.
@@ -126,11 +126,11 @@ class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
   // These fields are accessed only by the main connection thread, so they need
   // not be protected by a lock:
   const SpdyServerConfig* const config_;
-  SpdyConnectionIO* const connection_io_;
+  SpdySessionIO* const session_io_;
   SpdyStreamTaskFactory* const task_factory_;
   Executor* const executor_;
   spdy::SpdyFramer framer_;
-  bool connection_stopped_;
+  bool session_stopped_;
   bool already_sent_goaway_;
   spdy::SpdyStreamId last_client_stream_id_;
 
@@ -149,9 +149,9 @@ class SpdyConnection : public spdy::SpdyFramerVisitorInterface {
   // is thread-safe, so it doesn't need additional synchronization.
   SpdyFramePriorityQueue output_queue_;
 
-  DISALLOW_COPY_AND_ASSIGN(SpdyConnection);
+  DISALLOW_COPY_AND_ASSIGN(SpdySession);
 };
 
 }  // namespace mod_spdy
 
-#endif  // MOD_SPDY_COMMON_SPDY_CONNECTION_H_
+#endif  // MOD_SPDY_COMMON_SPDY_SESSION_H_

@@ -23,7 +23,7 @@ namespace mod_spdy {
 
 class SpdyStream;
 
-// SpdyStreamTaskFactory is a helper interface for the SpdyConnection class.
+// SpdyStreamTaskFactory is a helper interface for the SpdySession class.
 // The task factory generates tasks that take care of processing SPDY streams.
 // The task factory must not be deleted before all such tasks have been
 // disposed of (run or cancelled).

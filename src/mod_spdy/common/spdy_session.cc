@@ -12,38 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "mod_spdy/common/spdy_connection.h"
+#include "mod_spdy/common/spdy_session.h"
 
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/scoped_ptr.h"
 #include "base/time.h"
 #include "mod_spdy/common/connection_context.h"
-#include "mod_spdy/common/spdy_connection_io.h"
 #include "mod_spdy/common/spdy_server_config.h"
+#include "mod_spdy/common/spdy_session_io.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
 
-SpdyConnection::SpdyConnection(const SpdyServerConfig* config,
-                               SpdyConnectionIO* connection_io,
-                               SpdyStreamTaskFactory* task_factory,
-                               Executor* executor)
+SpdySession::SpdySession(const SpdyServerConfig* config,
+                         SpdySessionIO* session_io,
+                         SpdyStreamTaskFactory* task_factory,
+                         Executor* executor)
     : config_(config),
-      connection_io_(connection_io),
+      session_io_(session_io),
       task_factory_(task_factory),
       executor_(executor),
-      connection_stopped_(false),
+      session_stopped_(false),
       already_sent_goaway_(false),
       last_client_stream_id_(0) {
   framer_.set_visitor(this);
 }
 
-SpdyConnection::~SpdyConnection() {}
+SpdySession::~SpdySession() {}
 
-void SpdyConnection::Run() {
+void SpdySession::Run() {
   // Initial amount time to block when waiting for output -- we start with
   // this, and as long as we fail to perform any input OR output, we increase
   // exponentially to the max, resetting when we succeed again.
@@ -55,7 +55,7 @@ void SpdyConnection::Run() {
 
   base::TimeDelta output_block_time = kInitOutputBlockTime;
 
-  // Until we stop the connection, or it is aborted by the client, alternate
+  // Until we stop the session, or it is aborted by the client, alternate
   // between reading input from the client and (compressing and) sending output
   // frames that our stream threads have posted to the output queue.  This
   // basically amounts to a busy-loop, switching back and forth between input
@@ -63,8 +63,8 @@ void SpdyConnection::Run() {
   // to have separate threads for input and output and have them always block;
   // unfortunately, we cannot do that, because in Apache the input and output
   // filter chains for a connection must be invoked by the same thread.
-  while (!connection_stopped_) {
-    if (connection_io_->IsConnectionAborted()) {
+  while (!session_stopped_) {
+    if (session_io_->IsConnectionAborted()) {
       LOG(WARNING) << "Master connection was aborted.";
       break;
     }
@@ -80,22 +80,22 @@ void SpdyConnection::Run() {
         base::AutoLock autolock(stream_map_lock_);
         should_block = stream_map_.empty();
       }
-      // Read available input data.  The SpdyConnectionIO will grab any
+      // Read available input data.  The SpdySessionIO will grab any
       // available data and push it into the SpdyFramer that we pass to it
       // here; the SpdyFramer, in turn, will call our OnControl and/or
       // OnStreamFrameData methods to report decoded frames.  If no input data
       // is currently available and should_block is true, this will block until
       // input becomes available (or the connection is closed).
-      const SpdyConnectionIO::ReadStatus status =
-          connection_io_->ProcessAvailableInput(should_block, &framer_);
-      if (status == SpdyConnectionIO::READ_SUCCESS) {
+      const SpdySessionIO::ReadStatus status =
+          session_io_->ProcessAvailableInput(should_block, &framer_);
+      if (status == SpdySessionIO::READ_SUCCESS) {
         // We successfully did some I/O, so reset the output block timeout.
         output_block_time = kInitOutputBlockTime;
-      } else if (status == SpdyConnectionIO::READ_CONNECTION_CLOSED ||
-                 status == SpdyConnectionIO::READ_ERROR) {
+      } else if (status == SpdySessionIO::READ_CONNECTION_CLOSED ||
+                 status == SpdySessionIO::READ_ERROR) {
         break;
       } else {
-        DCHECK(status == SpdyConnectionIO::READ_NO_DATA);
+        DCHECK(status == SpdySessionIO::READ_NO_DATA);
       }
     }
 
@@ -133,22 +133,22 @@ void SpdyConnection::Run() {
     // no good way to query the input side (in Apache).  One possibility would
     // be to grab the input socket object (which we can do), and then arrange
     // to block until either the socket is ready to read OR our output queue is
-    // nonempty (obviously we would abstract that away in SpdyConnectionIO),
+    // nonempty (obviously we would abstract that away in SpdySessionIO),
     // but there's not even a nice way to do that (that I know of).
   }
 
-  StopConnection();
+  StopSession();
 }
 
-void SpdyConnection::OnError(spdy::SpdyFramer* framer) {
+void SpdySession::OnError(spdy::SpdyFramer* framer) {
   // Log the error, but don't do anything else yet.  If the framer encountered
-  // an error, our SpdyConnectionIO object should return READ_ERROR to us, at
-  // which point we'll stop the connection.
+  // an error, our SpdySessionIO object should return READ_ERROR to us, at
+  // which point we'll stop the session.
   LOG(ERROR) << "SpdyFramer error: "
              << spdy::SpdyFramer::ErrorCodeToString(framer->error_code());
 }
 
-void SpdyConnection::OnControl(const spdy::SpdyControlFrame* frame) {
+void SpdySession::OnControl(const spdy::SpdyControlFrame* frame) {
   switch (frame->type()) {
     case spdy::SYN_STREAM:
       HandleSynStream(
@@ -185,8 +185,8 @@ void SpdyConnection::OnControl(const spdy::SpdyControlFrame* frame) {
   }
 }
 
-void SpdyConnection::OnStreamFrameData(spdy::SpdyStreamId stream_id,
-                                       const char* data, size_t length) {
+void SpdySession::OnStreamFrameData(spdy::SpdyStreamId stream_id,
+                                    const char* data, size_t length) {
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
   // RemoveStreamTask() at any time.
@@ -216,11 +216,11 @@ void SpdyConnection::OnStreamFrameData(spdy::SpdyStreamId stream_id,
   SendRstStreamFrame(stream_id, spdy::INVALID_STREAM);
 }
 
-void SpdyConnection::HandleSynStream(
+void SpdySession::HandleSynStream(
     const spdy::SpdySynStreamControlFrame& frame){
   // Start by decompressing the frame.  Even if we choose to ignore this frame,
   // we must still do the work of decompressing it so that we correctly
-  // maintain this connection's header compression context.
+  // maintain this session's header compression context.
   scoped_ptr<spdy::SpdyFrame> decompressed_frame(
       framer_.DecompressFrame(frame));
 
@@ -236,10 +236,10 @@ void SpdyConnection::HandleSynStream(
   // Client stream IDs must be odd-numbered.
   if (stream_id % 2 == 0) {
     LOG(WARNING) << "Client sent SYN_STREAM for even stream ID (" << stream_id
-                 << ").  Aborting connection.";
+                 << ").  Aborting session.";
     SendRstStreamFrame(stream_id, spdy::PROTOCOL_ERROR);
     SendGoAwayFrame();
-    StopConnection();
+    StopSession();
     return;
   }
 
@@ -279,12 +279,12 @@ void SpdyConnection::HandleSynStream(
   }
 }
 
-void SpdyConnection::HandleSynReply(
+void SpdySession::HandleSynReply(
     const spdy::SpdySynReplyControlFrame& frame) {
   // TODO(mdsteele)
 }
 
-void SpdyConnection::HandleRstStream(
+void SpdySession::HandleRstStream(
     const spdy::SpdyRstStreamControlFrame& frame) {
   const spdy::SpdyStreamId stream_id = frame.stream_id();
   switch (frame.status()) {
@@ -294,26 +294,26 @@ void SpdyConnection::HandleRstStream(
     case spdy::CANCEL:
       AbortStreamSilently(stream_id);
       break;
-    // If there was a PROTOCOL_ERROR, the connection is probably unrecoverable,
-    // so just log an error and abort the connection.
+    // If there was a PROTOCOL_ERROR, the session is probably unrecoverable,
+    // so just log an error and abort the session.
     case spdy::PROTOCOL_ERROR:
       LOG(WARNING) << "Client sent RST_STREAM with PROTOCOL_ERROR for stream "
-                   << stream_id << ".  Aborting connection.";
+                   << stream_id << ".  Aborting session.";
       SendGoAwayFrame();
-      StopConnection();
+      StopSession();
       break;
     // For all other errors, abort the stream, but log a warning first.
     // TODO(mdsteele): Should we have special behavior for any other kinds of
     // errors?
     default:
       LOG(WARNING) << "Client sent RST_STREAM with status=" << frame.status()
-                   <<" for stream " << stream_id << ".  Aborting connection.";
+                   <<" for stream " << stream_id << ".  Aborting stream.";
       AbortStreamSilently(stream_id);
       break;
   }
 }
 
-void SpdyConnection::HandleSettings(
+void SpdySession::HandleSettings(
     const spdy::SpdySettingsControlFrame& frame) {
   // TODO(mdsteele): For now, we ignore SETTINGS frames from the client.  Once
   // we implement server-push, we should at least pay attention to the
@@ -321,7 +321,7 @@ void SpdyConnection::HandleSettings(
   // them.
 }
 
-void SpdyConnection::HandlePing(const spdy::SpdyControlFrame& frame) {
+void SpdySession::HandlePing(const spdy::SpdyControlFrame& frame) {
   // The SPDY spec requires the server to ignore even-numbered PING frames that
   // it did not initiate.  See:
   // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-PING
@@ -332,20 +332,20 @@ void SpdyConnection::HandlePing(const spdy::SpdyControlFrame& frame) {
 
   // Any odd-numbered PING frame we receive was initiated by the client, and
   // should thus be echoed back, as per the SPDY spec.
-  if (!connection_io_->SendFrameRaw(frame)) {
+  if (!session_io_->SendFrameRaw(frame)) {
     LOG(ERROR) << "Failed to send PING reply.";
   }
 }
 
-void SpdyConnection::HandleGoAway(const spdy::SpdyGoAwayControlFrame& frame) {
+void SpdySession::HandleGoAway(const spdy::SpdyGoAwayControlFrame& frame) {
   // TODO(mdsteele): For now I think we can mostly ignore GOAWAY frames, but
   // once we implement server-push we definitely need to take note of them.
 }
 
-void SpdyConnection::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
+void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
   // Start by decompressing the frame.  Even if we choose to ignore this frame,
   // we must still do the work of decompressing it so that we correctly
-  // maintain this connection's header compression context.
+  // maintain this session's header compression context.
   scoped_ptr<spdy::SpdyFrame> decompressed_frame(
       framer_.DecompressFrame(frame));
 
@@ -370,7 +370,7 @@ void SpdyConnection::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
 }
 
 // Compress (if necessary), send, and then delete the given frame object.
-bool SpdyConnection::SendFrame(const spdy::SpdyFrame* frame) {
+bool SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
   scoped_ptr<const spdy::SpdyFrame> compressed_frame(frame);
   DCHECK(compressed_frame != NULL);
   if (framer_.IsCompressible(*frame)) {
@@ -386,21 +386,21 @@ bool SpdyConnection::SendFrame(const spdy::SpdyFrame* frame) {
     return false;
   }
 
-  return connection_io_->SendFrameRaw(*compressed_frame);
+  return session_io_->SendFrameRaw(*compressed_frame);
 }
 
-bool SpdyConnection::SendGoAwayFrame() {
+bool SpdySession::SendGoAwayFrame() {
   already_sent_goaway_ = true;
   return SendFrame(spdy::SpdyFramer::CreateGoAway(last_client_stream_id_));
 }
 
-bool SpdyConnection::SendRstStreamFrame(spdy::SpdyStreamId stream_id,
-                                        spdy::SpdyStatusCodes status) {
+bool SpdySession::SendRstStreamFrame(spdy::SpdyStreamId stream_id,
+                                     spdy::SpdyStatusCodes status) {
   return SendFrame(spdy::SpdyFramer::CreateRstStream(stream_id, status));
 }
 
-void SpdyConnection::StopConnection() {
-  connection_stopped_ = true;
+void SpdySession::StopSession() {
+  session_stopped_ = true;
   // Abort all remaining streams.  We need to lock when reading the stream
   // map, because one of the stream threads could call RemoveStreamTask() at
   // any time.
@@ -411,7 +411,7 @@ void SpdyConnection::StopConnection() {
       iter->second->stream()->Abort();
     }
   }
-  // Stop all stream threads and tasks for this SPDY connection.  This will
+  // Stop all stream threads and tasks for this SPDY session.  This will
   // block until all currently running stream tasks have exited, but since we
   // just aborted all streams, that should hopefully happen fairly soon.  Note
   // that we must release the lock before calling this, because each stream
@@ -420,7 +420,7 @@ void SpdyConnection::StopConnection() {
 }
 
 // Abort the stream without sending anything to the client.
-void SpdyConnection::AbortStreamSilently(spdy::SpdyStreamId stream_id) {
+void SpdySession::AbortStreamSilently(spdy::SpdyStreamId stream_id) {
   // We need to lock when reading the stream map, because one of the stream
   // threads could call RemoveStreamTask() at any time.
   base::AutoLock autolock(stream_map_lock_);
@@ -431,18 +431,18 @@ void SpdyConnection::AbortStreamSilently(spdy::SpdyStreamId stream_id) {
 }
 
 // Send a RST_STREAM frame and then abort the stream.
-void SpdyConnection::AbortStream(spdy::SpdyStreamId stream_id,
-                                 spdy::SpdyStatusCodes status) {
+void SpdySession::AbortStream(spdy::SpdyStreamId stream_id,
+                              spdy::SpdyStatusCodes status) {
   SendRstStreamFrame(stream_id, status);
   AbortStreamSilently(stream_id);
 }
 
 // Remove the StreamTaskWrapper from the stream map.  This is the only method
-// of SpdyConnection that is ever called by another thread (specifically, it is
+// of SpdySession that is ever called by another thread (specifically, it is
 // called by the StreamTaskWrapper destructor, which is called by the executor,
 // which presumably uses worker threads) -- it is because of this that we must
 // lock the stream_map_lock_ whenever we touch the stream map or its contents.
-void SpdyConnection::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
+void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   // We need to lock when touching the stream map, in case the main connection
   // thread is currently in the middle of reading the stream map.
   base::AutoLock autolock(stream_map_lock_);
@@ -453,27 +453,27 @@ void SpdyConnection::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
 }
 
 // This constructor is always called by the main connection thread, so we're
-// safe to call spdy_connection_->task_factory_->NewStreamTask().  However,
+// safe to call spdy_session_->task_factory_->NewStreamTask().  However,
 // the other methods of this class (Run(), Cancel(), and the destructor) are
 // liable to be called from other threads by the executor.
-SpdyConnection::StreamTaskWrapper::StreamTaskWrapper(
-    SpdyConnection* spdy_conn,
+SpdySession::StreamTaskWrapper::StreamTaskWrapper(
+    SpdySession* spdy_conn,
     spdy::SpdyStreamId stream_id,
     spdy::SpdyPriority priority)
-    : spdy_connection_(spdy_conn),
-      stream_(stream_id, priority, &spdy_connection_->output_queue_),
-      subtask_(spdy_connection_->task_factory_->NewStreamTask(&stream_)) {}
+    : spdy_session_(spdy_conn),
+      stream_(stream_id, priority, &spdy_session_->output_queue_),
+      subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {}
 
-SpdyConnection::StreamTaskWrapper::~StreamTaskWrapper() {
-  // Remove this object from the SpdyConnection's stream map.
-  spdy_connection_->RemoveStreamTask(this);
+SpdySession::StreamTaskWrapper::~StreamTaskWrapper() {
+  // Remove this object from the SpdySession's stream map.
+  spdy_session_->RemoveStreamTask(this);
 }
 
-void SpdyConnection::StreamTaskWrapper::Run() {
+void SpdySession::StreamTaskWrapper::Run() {
   subtask_->CallRun();
 }
 
-void SpdyConnection::StreamTaskWrapper::Cancel() {
+void SpdySession::StreamTaskWrapper::Cancel() {
   subtask_->CallCancel();
 }
 

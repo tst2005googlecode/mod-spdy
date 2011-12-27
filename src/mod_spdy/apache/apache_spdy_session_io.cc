@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "mod_spdy/apache/apache_spdy_connection_io.h"
+#include "mod_spdy/apache/apache_spdy_session_io.h"
 
 #include "apr_buckets.h"
 #include "http_log.h"
@@ -34,20 +34,20 @@ const apr_off_t kReadBytes = 4096;
 
 }  // namespace
 
-ApacheSpdyConnectionIO::ApacheSpdyConnectionIO(conn_rec* connection)
+ApacheSpdySessionIO::ApacheSpdySessionIO(conn_rec* connection)
     : connection_(connection),
       input_brigade_(apr_brigade_create(connection_->pool,
                                         connection_->bucket_alloc)),
       output_brigade_(apr_brigade_create(connection_->pool,
                                          connection_->bucket_alloc)) {}
 
-ApacheSpdyConnectionIO::~ApacheSpdyConnectionIO() {}
+ApacheSpdySessionIO::~ApacheSpdySessionIO() {}
 
-bool ApacheSpdyConnectionIO::IsConnectionAborted() {
+bool ApacheSpdySessionIO::IsConnectionAborted() {
   return static_cast<bool>(connection_->aborted);
 }
 
-SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
+SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
     bool block, spdy::SpdyFramer* framer) {
   const apr_read_type_e read_type = block ? APR_BLOCK_READ : APR_NONBLOCK_READ;
 
@@ -120,7 +120,7 @@ SpdyConnectionIO::ReadStatus ApacheSpdyConnectionIO::ProcessAvailableInput(
   return pushed_any_data ? READ_SUCCESS : READ_NO_DATA;
 }
 
-bool ApacheSpdyConnectionIO::SendFrameRaw(const spdy::SpdyFrame& frame) {
+bool ApacheSpdySessionIO::SendFrameRaw(const spdy::SpdyFrame& frame) {
   // Make sure the output brigade we're using is empty.
   if (!APR_BRIGADE_EMPTY(output_brigade_)) {
     LOG(DFATAL) << "output_brigade_ should be empty";

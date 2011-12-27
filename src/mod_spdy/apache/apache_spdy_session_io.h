@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef MOD_SPDY_APACHE_APACHE_SPDY_CONNECTION_IO_H_
-#define MOD_SPDY_APACHE_APACHE_SPDY_CONNECTION_IO_H_
+#ifndef MOD_SPDY_APACHE_APACHE_SPDY_SESSION_IO_H_
+#define MOD_SPDY_APACHE_APACHE_SPDY_SESSION_IO_H_
 
 #include "httpd.h"
 
 #include "base/basictypes.h"
-#include "mod_spdy/common/spdy_connection_io.h"
+#include "mod_spdy/common/spdy_session_io.h"
 
 namespace spdy {
 class SpdyFrame;
@@ -27,12 +27,12 @@ class SpdyFramer;
 
 namespace mod_spdy {
 
-class ApacheSpdyConnectionIO : public SpdyConnectionIO {
+class ApacheSpdySessionIO : public SpdySessionIO {
  public:
-  explicit ApacheSpdyConnectionIO(conn_rec* connection);
-  ~ApacheSpdyConnectionIO();
+  explicit ApacheSpdySessionIO(conn_rec* connection);
+  ~ApacheSpdySessionIO();
 
-  // SpdyConnectionIO methods:
+  // SpdySessionIO methods:
   virtual bool IsConnectionAborted();
   virtual ReadStatus ProcessAvailableInput(bool block,
                                            spdy::SpdyFramer* framer);
@@ -43,9 +43,9 @@ class ApacheSpdyConnectionIO : public SpdyConnectionIO {
   apr_bucket_brigade* const input_brigade_;
   apr_bucket_brigade* const output_brigade_;
 
-  DISALLOW_COPY_AND_ASSIGN(ApacheSpdyConnectionIO);
+  DISALLOW_COPY_AND_ASSIGN(ApacheSpdySessionIO);
 };
 
 }  // namespace mod_spdy
 
-#endif  // MOD_SPDY_APACHE_APACHE_SPDY_CONNECTION_IO_H_
+#endif  // MOD_SPDY_APACHE_APACHE_SPDY_SESSION_IO_H_
