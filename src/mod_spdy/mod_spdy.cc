@@ -15,6 +15,8 @@
 // References to "TAMB" below refer to _The Apache Modules Book_ by Nick Kew
 // (ISBN: 0-13-240967-4).
 
+#include "mod_spdy/mod_spdy.h"
+
 #include "httpd.h"
 #include "http_connection.h"
 #include "http_config.h"
@@ -49,12 +51,15 @@ extern "C" {
   APR_DECLARE_EXTERNAL_HOOK(
       ssl, AP, int, npn_proto_negotiated_hook,
       (conn_rec* connection, char* proto_name, apr_size_t proto_name_len));
-}
+}  // extern "C"
 
 namespace {
 
-// For now, we only support SPDY version 2.
+// For now, we only support SPDY version 2.  Note that if we ever decide to
+// support multiple SPDY versions simultaneously, we will need to make some
+// structural changes to the code.
 // TODO(mdsteele): Pretty soon we will probably need to support SPDY v3.
+const int kSpdyVersionNumber = 2;
 const char* kSpdyProtocolName = "spdy/2";
 
 // These global variables store the filter handles for our filters.  Normally,
@@ -80,6 +85,21 @@ int (*gIsUsingSslForConnection)(conn_rec*) = NULL;
 // because apr_thread_pool_t objects are thread-safe.  Users just have to make
 // sure that they configure SpdyMaxThreadsPerProcess depending on the MPM.
 apr_thread_pool* gPerProcessThreadPool = NULL;
+
+// Optional function provided by mod_spdy.  Return zero if the connection is
+// not using SPDY, otherwise return the SPDY version number in use.  Note that
+// unlike our private functions, we use Apache C naming conventions for this
+// function because we export it to other modules.
+int spdy_get_version(conn_rec* connection) {
+  const mod_spdy::ConnectionContext* context =
+      mod_spdy::GetConnectionContext(connection);
+  if (context != NULL &&
+      context->npn_state() == mod_spdy::ConnectionContext::USING_SPDY) {
+    COMPILE_ASSERT(kSpdyVersionNumber != 0, version_number_is_nonzero);
+    return kSpdyVersionNumber;
+  }
+  return 0;
+}
 
 // See TAMB 8.4.2
 apr_status_t SpdyToHttpFilter(ap_filter_t* filter,
@@ -606,6 +626,10 @@ void RegisterHooks(apr_pool_t* pool) {
   gAntiChunkingFilterHandle = ap_register_output_filter(
       "SPDY_ANTI_CHUNKING", AntiChunkingFilter, NULL,
       static_cast<ap_filter_type>(AP_FTYPE_PROTOCOL - 1));
+
+  // Register our optional functions, so that other modules can retrieve and
+  // use them.  See TAMB 10.1.2.
+  APR_REGISTER_OPTIONAL_FN(spdy_get_version);
 }
 
 }  // namespace
@@ -645,4 +669,4 @@ extern "C" {
 #pragma GCC visibility pop
 #endif
 
-}
+}  // extern "C"
