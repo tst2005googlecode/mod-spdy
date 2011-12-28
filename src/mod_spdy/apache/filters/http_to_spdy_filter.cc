@@ -257,13 +257,23 @@ void HttpToSpdyFilter::SendHeaders(const HeaderPopulatorInterface& populator,
   headers[kModSpdyHeader] = kModSpdyVersion;
   const spdy::SpdyControlFlags flags =
       flag_fin ? spdy::CONTROL_FLAG_FIN : spdy::CONTROL_FLAG_NONE;
-  // Don't compress the headers in the SYN_REPLY frame here; it will be
-  // compressed later by the master connection (which maintains the shared
-  // header compression state for all streams).
-  stream_->SendOutputFrame(framer_.CreateSynReply(
-      stream_->stream_id(), flags,
-      false,  // false = don't use compression
-      &headers));
+  // Don't compress the headers in the frame here; it will be compressed later
+  // by the master connection (which maintains the shared header compression
+  // state for all streams).
+  if (stream_->is_server_push()) {
+    stream_->SendOutputFrame(framer_.CreateSynStream(
+        stream_->stream_id(), stream_->associated_stream_id(),
+        stream_->priority(),
+        static_cast<spdy::SpdyControlFlags>(
+            flags | spdy::CONTROL_FLAG_UNIDIRECTIONAL),
+        false,  // false = don't use compression
+        &headers));
+  } else {
+    stream_->SendOutputFrame(framer_.CreateSynReply(
+        stream_->stream_id(), flags,
+        false,  // false = don't use compression
+        &headers));
+  }
 }
 
 void HttpToSpdyFilter::SendData(const char* data, size_t size, bool flag_fin) {

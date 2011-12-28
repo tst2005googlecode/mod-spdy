@@ -36,7 +36,7 @@ class SpdyToHttpFilterTest : public testing::Test {
   SpdyToHttpFilterTest()
       : stream_id_(1),
         priority_(SPDY_PRIORITY_HIGHEST),
-        stream_(stream_id_, priority_, &output_queue_),
+        stream_(stream_id_, 0, priority_, &output_queue_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
     connection_ = static_cast<conn_rec*>(

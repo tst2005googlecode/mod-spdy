@@ -69,6 +69,7 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
     // task_factory_->NewStreamTask() to produce the wrapped task.
     StreamTaskWrapper(SpdySession* spdy_session,
                       spdy::SpdyStreamId stream_id,
+                      spdy::SpdyStreamId associated_stream_id,
                       spdy::SpdyPriority priority);
     virtual ~StreamTaskWrapper();
 

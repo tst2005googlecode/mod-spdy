@@ -272,7 +272,8 @@ void SpdySession::HandleSynStream(
     last_client_stream_id_ = stream_id;
     const spdy::SpdyPriority priority = frame.priority();
     StreamTaskWrapper* task_wrapper =
-        new StreamTaskWrapper(this, stream_id, priority);
+        new StreamTaskWrapper(this, stream_id, frame.associated_stream_id(),
+                              priority);
     stream_map_[stream_id] = task_wrapper;
     task_wrapper->stream()->PostInputFrame(decompressed_frame.release());
     executor_->AddTask(task_wrapper, priority);
@@ -459,9 +460,11 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
 SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     SpdySession* spdy_conn,
     spdy::SpdyStreamId stream_id,
+    spdy::SpdyStreamId associated_stream_id,
     spdy::SpdyPriority priority)
     : spdy_session_(spdy_conn),
-      stream_(stream_id, priority, &spdy_session_->output_queue_),
+      stream_(stream_id, associated_stream_id, priority,
+              &spdy_session_->output_queue_),
       subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {}
 
 SpdySession::StreamTaskWrapper::~StreamTaskWrapper() {

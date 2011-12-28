@@ -20,13 +20,21 @@
 namespace mod_spdy {
 
 SpdyStream::SpdyStream(spdy::SpdyStreamId stream_id,
+                       spdy::SpdyStreamId associated_stream_id,
                        spdy::SpdyPriority priority,
                        SpdyFramePriorityQueue* output_queue)
     : stream_id_(stream_id),
+      associated_stream_id_(associated_stream_id),
       priority_(priority),
       output_queue_(output_queue) {}
 
 SpdyStream::~SpdyStream() {}
+
+bool SpdyStream::is_server_push() const {
+  // By the SPDY spec, a stream has an even stream ID if and only if it was
+  // initiated by the server.
+  return stream_id_ % 2 == 0;
+}
 
 bool SpdyStream::is_aborted() const {
   return input_queue_.is_aborted();

@@ -28,6 +28,59 @@
 
 namespace {
 
+class HttpToSpdyFilterTest : public testing::Test {
+ public:
+  HttpToSpdyFilterTest()
+      : connection_(static_cast<conn_rec*>(
+          apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
+        request_(static_cast<request_rec*>(
+            apr_pcalloc(local_.pool(), sizeof(request_rec)))),
+        ap_filter_(static_cast<ap_filter_t*>(
+            apr_pcalloc(local_.pool(), sizeof(ap_filter_t)))),
+        bucket_alloc_(apr_bucket_alloc_create(local_.pool())),
+        brigade_(apr_brigade_create(local_.pool(), bucket_alloc_)) {
+    // Set up our Apache data structures.  To keep things simple, we set only
+    // the bare minimum of necessary fields, and rely on apr_pcalloc to zero
+    // all others.
+    connection_->pool = local_.pool();
+    request_->pool = local_.pool();
+    request_->connection = connection_;
+    request_->protocol = const_cast<char*>("HTTP/1.1");
+    request_->status = 200;
+    request_->headers_out = apr_table_make(local_.pool(), 3);
+    ap_filter_->c = connection_;
+    ap_filter_->r = request_;
+  }
+
+ protected:
+  void AddImmortalBucket(const base::StringPiece& str) {
+    APR_BRIGADE_INSERT_TAIL(brigade_, apr_bucket_immortal_create(
+        str.data(), str.size(), bucket_alloc_));
+  }
+
+  void AddFlushBucket() {
+    APR_BRIGADE_INSERT_TAIL(brigade_, apr_bucket_flush_create(bucket_alloc_));
+  }
+
+  void AddEosBucket() {
+    APR_BRIGADE_INSERT_TAIL(brigade_, apr_bucket_eos_create(bucket_alloc_));
+  }
+
+  apr_status_t WriteBrigade(mod_spdy::HttpToSpdyFilter* filter) {
+    apr_status_t status = filter->Write(ap_filter_, brigade_);
+    apr_brigade_cleanup(brigade_);
+    return status;
+  }
+
+  mod_spdy::SpdyFramePriorityQueue output_queue_;
+  mod_spdy::LocalPool local_;
+  conn_rec* const connection_;
+  request_rec* const request_;
+  ap_filter_t* const ap_filter_;
+  apr_bucket_alloc_t* const bucket_alloc_;
+  apr_bucket_brigade* const brigade_;
+};
+
 const char* kHeaderData1 =
     "GET /foo/bar/index.html HTTP/1.1\r\n"
     "Connection: close\r\n";
@@ -46,83 +99,60 @@ const char* kBodyData3 =
     "  </body>\n"
     "</html>\n";
 
-apr_bucket* ImmortalBucket(apr_bucket_alloc_t* bucket_alloc,
-                           const base::StringPiece& str) {
-  return apr_bucket_immortal_create(str.data(), str.size(), bucket_alloc);
-}
-
-TEST(HttpToSpdyFilterTest, Simple) {
+TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // Set up our data structures that we're testing:
   const spdy::SpdyStreamId stream_id = 3;
-  mod_spdy::SpdyFramePriorityQueue output_queue;
-  spdy::SpdyFrame* frame;
-  mod_spdy::SpdyStream stream(stream_id, SPDY_PRIORITY_HIGHEST, &output_queue);
+  const spdy::SpdyStreamId associated_stream_id = 0;
+  const spdy::SpdyPriority priority = SPDY_PRIORITY_HIGHEST;
+  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
+                              &output_queue_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  spdy::SpdyFrame* frame;
 
-  // Set up some Apache data structures.  To keep things simple, we set only
-  // the bare minimum of necessary fields, and rely on apr_pcalloc to zero all
-  // others.
-  mod_spdy::LocalPool local;
-  conn_rec* connection = static_cast<conn_rec*>(
-      apr_pcalloc(local.pool(), sizeof(conn_rec)));
-  connection->pool = local.pool();
-  request_rec* request = static_cast<request_rec*>(
-      apr_pcalloc(local.pool(), sizeof(request_rec)));
-  request->pool = local.pool();
-  request->connection = connection;
-  request->protocol = const_cast<char*>("HTTP/1.1");
-  request->status = 200;
-  request->headers_out = apr_table_make(local.pool(), 3);
-  apr_table_setn(request->headers_out, "Connection", "close");
-  apr_table_setn(request->headers_out, "Content-Type", "text/html");
-  apr_table_setn(request->headers_out, "Host", "www.example.com");
-  ap_filter_t* ap_filter = static_cast<ap_filter_t*>(
-      apr_pcalloc(local.pool(), sizeof(ap_filter_t)));
-  ap_filter->c = connection;
-  ap_filter->r = request;
-  apr_bucket_alloc_t* bucket_alloc = apr_bucket_alloc_create(local.pool());
-  apr_bucket_brigade* brigade = apr_brigade_create(local.pool(), bucket_alloc);
+  // Set the response headers of the request:
+  apr_table_setn(request_->headers_out, "Connection", "close");
+  apr_table_setn(request_->headers_out, "Content-Type", "text/html");
+  apr_table_setn(request_->headers_out, "Host", "www.example.com");
 
   // Send part of the header data into the filter:
-  APR_BRIGADE_INSERT_TAIL(brigade, ImmortalBucket(bucket_alloc, kHeaderData1));
-  ASSERT_EQ(APR_SUCCESS, http_to_spdy_filter.Write(ap_filter, brigade));
-  apr_brigade_cleanup(brigade);
+  AddImmortalBucket(kHeaderData1);
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
 
-  // Expect to get a single SYN_STREAM frame out with all the headers (read
+  // Expect to get a single SYN_REPLY frame out with all the headers (read
   // from request->headers_out rather than the data we put in):
   {
-    ASSERT_TRUE(output_queue.Pop(&frame));
+    ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_TRUE(frame->is_control_frame());
-    const spdy::SpdySynStreamControlFrame& syn_stream_frame =
-        *static_cast<spdy::SpdySynStreamControlFrame*>(frame);
-    ASSERT_EQ(stream_id, syn_stream_frame.stream_id());
-    ASSERT_EQ(spdy::CONTROL_FLAG_NONE, syn_stream_frame.flags());
+    ASSERT_EQ(spdy::SYN_REPLY,
+              static_cast<spdy::SpdyControlFrame*>(frame)->type());
+    const spdy::SpdySynReplyControlFrame& syn_reply_frame =
+        *static_cast<spdy::SpdySynReplyControlFrame*>(frame);
+    ASSERT_EQ(stream_id, syn_reply_frame.stream_id());
+    ASSERT_EQ(spdy::CONTROL_FLAG_NONE, syn_reply_frame.flags());
     // TODO(mdsteele): Once we upgrade our version of SpdyFramer and thus have
     //   an easy way to parse the headers block of a SYN_STREAM frame without
     //   decompression, check the key/value pairs here and make sure we get out
     //   the same headers we put in.
     delete frame;
   }
-  ASSERT_FALSE(output_queue.Pop(&frame));
+  ASSERT_FALSE(output_queue_.Pop(&frame));
 
   // Send the rest of the header data into the filter:
-  APR_BRIGADE_INSERT_TAIL(brigade, ImmortalBucket(bucket_alloc, kHeaderData2));
-  ASSERT_EQ(APR_SUCCESS, http_to_spdy_filter.Write(ap_filter, brigade));
-  apr_brigade_cleanup(brigade);
+  AddImmortalBucket(kHeaderData2);
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
 
   // Expect to get nothing more out yet:
-  ASSERT_FALSE(output_queue.Pop(&frame));
+  ASSERT_FALSE(output_queue_.Pop(&frame));
 
   // Now send in some body data (kBodyData1), with a FLUSH bucket:
-  request->sent_bodyct = 1;
-  APR_BRIGADE_INSERT_TAIL(brigade, ImmortalBucket(bucket_alloc, kBodyData1));
-  APR_BRIGADE_INSERT_TAIL(brigade, apr_bucket_flush_create(bucket_alloc));
-  ASSERT_EQ(APR_SUCCESS, http_to_spdy_filter.Write(ap_filter, brigade));
-  apr_brigade_cleanup(brigade);
+  request_->sent_bodyct = 1;
+  AddImmortalBucket(kBodyData1);
+  AddFlushBucket();
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
 
   // Expect to get a single data frame out, containing kBodyData1:
   {
-    ASSERT_TRUE(output_queue.Pop(&frame));
+    ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_FALSE(frame->is_control_frame());
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
@@ -132,30 +162,28 @@ TEST(HttpToSpdyFilterTest, Simple) {
                                       data_frame.length()));
     delete frame;
   }
-  ASSERT_FALSE(output_queue.Pop(&frame));
+  ASSERT_FALSE(output_queue_.Pop(&frame));
 
   // Send in some more body data (kBodyData2), this time with no FLUSH bucket:
-  APR_BRIGADE_INSERT_TAIL(brigade, ImmortalBucket(bucket_alloc, kBodyData2));
-  ASSERT_EQ(APR_SUCCESS, http_to_spdy_filter.Write(ap_filter, brigade));
-  apr_brigade_cleanup(brigade);
+  AddImmortalBucket(kBodyData2);
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
 
   // Expect to get nothing more out yet (because there's too little data to be
   // worth sending a frame):
-  ASSERT_FALSE(output_queue.Pop(&frame));
+  ASSERT_FALSE(output_queue_.Pop(&frame));
 
   // Send lots more body data, again with a FLUSH bucket:
   {
     const std::string big_data(6000, 'x');
-    APR_BRIGADE_INSERT_TAIL(brigade, ImmortalBucket(bucket_alloc, big_data));
-    APR_BRIGADE_INSERT_TAIL(brigade, apr_bucket_flush_create(bucket_alloc));
-    ASSERT_EQ(APR_SUCCESS, http_to_spdy_filter.Write(ap_filter, brigade));
-    apr_brigade_cleanup(brigade);
+    AddImmortalBucket(big_data);
+    AddFlushBucket();
+    ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
   }
 
   // This time, we should get two data frames out, the first of which should
   // start with kBodyData2:
   {
-    ASSERT_TRUE(output_queue.Pop(&frame));
+    ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_FALSE(frame->is_control_frame());
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
@@ -167,7 +195,7 @@ TEST(HttpToSpdyFilterTest, Simple) {
     delete frame;
   }
   {
-    ASSERT_TRUE(output_queue.Pop(&frame));
+    ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_FALSE(frame->is_control_frame());
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
@@ -178,23 +206,22 @@ TEST(HttpToSpdyFilterTest, Simple) {
     ASSERT_TRUE(data.ends_with("xxxxxxx"));
     delete frame;
   }
-  ASSERT_FALSE(output_queue.Pop(&frame));
+  ASSERT_FALSE(output_queue_.Pop(&frame));
 
   // Finally, send a bunch more data ending with kBodyData3, followed by an EOS
   // bucket:
   {
     const std::string big_data(6000, 'y');
-    APR_BRIGADE_INSERT_TAIL(brigade, ImmortalBucket(bucket_alloc, big_data));
-    APR_BRIGADE_INSERT_TAIL(brigade, ImmortalBucket(bucket_alloc, kBodyData3));
-    APR_BRIGADE_INSERT_TAIL(brigade, apr_bucket_eos_create(bucket_alloc));
-    ASSERT_EQ(APR_SUCCESS, http_to_spdy_filter.Write(ap_filter, brigade));
-    apr_brigade_cleanup(brigade);
+    AddImmortalBucket(big_data);
+    AddImmortalBucket(kBodyData3);
+    AddEosBucket();
+    ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
   }
 
   // We should get two last data frames, the latter ending with kBodyData3 and
   // having FLAG_FIN set.
   {
-    ASSERT_TRUE(output_queue.Pop(&frame));
+    ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_FALSE(frame->is_control_frame());
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
@@ -206,7 +233,7 @@ TEST(HttpToSpdyFilterTest, Simple) {
     delete frame;
   }
   {
-    ASSERT_TRUE(output_queue.Pop(&frame));
+    ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_FALSE(frame->is_control_frame());
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
@@ -217,7 +244,79 @@ TEST(HttpToSpdyFilterTest, Simple) {
     ASSERT_TRUE(data.ends_with(kBodyData3));
     delete frame;
   }
-  ASSERT_FALSE(output_queue.Pop(&frame));
+  ASSERT_FALSE(output_queue_.Pop(&frame));
+}
+
+const char* kServerPushHeaderData =
+    "GET /foo/bar/style.css HTTP/1.1\r\n"
+    "Connection: close\r\n"
+    "Content-Type: text/css\r\n"
+    "Host: www.example.com\r\n"
+    "\r\n";
+const char* kServerPushBodyData =
+    "BODY { color: red; }\n"
+    "H1 { color: blue; }\n";
+
+TEST_F(HttpToSpdyFilterTest, ServerPush) {
+  // Set up our data structures that we're testing:
+  const spdy::SpdyStreamId stream_id = 4;
+  const spdy::SpdyStreamId associated_stream_id = 3;
+  const spdy::SpdyPriority priority = 1;
+  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
+                              &output_queue_);
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  spdy::SpdyFrame* frame;
+
+  // Set the response headers of the request:
+  apr_table_setn(request_->headers_out, "Connection", "close");
+  apr_table_setn(request_->headers_out, "Content-Type", "text/html");
+  apr_table_setn(request_->headers_out, "Host", "www.example.com");
+
+  // Send the header data into the filter:
+  AddImmortalBucket(kServerPushHeaderData);
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+
+  // This is a server push, so expect to get a single SYN_STREAM frame (rather
+  // than a SYN_REPLY frame) with all the headers and with FLAG_UNIDIRECTIONAL
+  // set:
+  {
+    ASSERT_TRUE(output_queue_.Pop(&frame));
+    ASSERT_TRUE(frame->is_control_frame());
+    ASSERT_EQ(spdy::SYN_STREAM,
+              static_cast<spdy::SpdyControlFrame*>(frame)->type());
+    const spdy::SpdySynStreamControlFrame& syn_stream_frame =
+        *static_cast<spdy::SpdySynStreamControlFrame*>(frame);
+    ASSERT_EQ(stream_id, syn_stream_frame.stream_id());
+    ASSERT_EQ(associated_stream_id, syn_stream_frame.associated_stream_id());
+    ASSERT_EQ(priority, syn_stream_frame.priority());
+    ASSERT_EQ(spdy::CONTROL_FLAG_UNIDIRECTIONAL, syn_stream_frame.flags());
+    // TODO(mdsteele): Once we upgrade our version of SpdyFramer and thus have
+    //   an easy way to parse the headers block of a SYN_STREAM frame without
+    //   decompression, check the key/value pairs here and make sure we get out
+    //   the same headers we put in.
+    delete frame;
+  }
+  ASSERT_FALSE(output_queue_.Pop(&frame));
+
+  // Now send in the body data followed by an EOS bucket:
+  request_->sent_bodyct = 1;
+  AddImmortalBucket(kServerPushBodyData);
+  AddEosBucket();
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+
+  // We should get a single data frame, with FLAG_FIN set.
+  {
+    ASSERT_TRUE(output_queue_.Pop(&frame));
+    ASSERT_FALSE(frame->is_control_frame());
+    const spdy::SpdyDataFrame& data_frame =
+        *static_cast<spdy::SpdyDataFrame*>(frame);
+    ASSERT_EQ(stream_id, data_frame.stream_id());
+    ASSERT_EQ(spdy::DATA_FLAG_FIN, data_frame.flags());
+    const base::StringPiece data(data_frame.payload(), data_frame.length());
+    ASSERT_EQ(kServerPushBodyData, data);
+    delete frame;
+  }
+  ASSERT_FALSE(output_queue_.Pop(&frame));
 }
 
 }  // namespace

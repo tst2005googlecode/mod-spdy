@@ -30,13 +30,27 @@ class SpdyFramePriorityQueue;
 // and the connection thread.
 class SpdyStream {
  public:
-  SpdyStream(spdy::SpdyStreamId stream_id, spdy::SpdyPriority priority,
+  SpdyStream(spdy::SpdyStreamId stream_id,
+             spdy::SpdyStreamId associated_stream_id_,
+             spdy::SpdyPriority priority,
              SpdyFramePriorityQueue* output_queue);
-
   ~SpdyStream();
+
+  // Return true if this stream was initiated by the server, false if it was
+  // initiated by the client.
+  bool is_server_push() const;
 
   // Get the ID for this SPDY stream.
   spdy::SpdyStreamId stream_id() const { return stream_id_; }
+
+  // Get the ID for the SPDY stream with which this one is associated.  By the
+  // SPDY spec, if there is no associated stream, this will be zero.
+  spdy::SpdyStreamId associated_stream_id() const {
+    return associated_stream_id_;
+  }
+
+  // Get the priority of this stream.
+  spdy::SpdyPriority priority() const { return priority_; }
 
   // Return true if this stream has been aborted and should shut down.
   bool is_aborted() const;
@@ -63,6 +77,7 @@ class SpdyStream {
 
  private:
   const spdy::SpdyStreamId stream_id_;
+  const spdy::SpdyStreamId associated_stream_id_;
   const spdy::SpdyPriority priority_;
   SpdyFrameQueue input_queue_;
   SpdyFramePriorityQueue* output_queue_;
