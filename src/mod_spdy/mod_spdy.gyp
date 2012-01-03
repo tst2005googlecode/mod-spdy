@@ -132,6 +132,7 @@
         '<(DEPTH)',
       ],
       'sources': [
+        'apache/apr_thread_pool_executor_test.cc',
         'apache/filters/http_to_spdy_filter_test.cc',
         'apache/filters/spdy_to_http_filter_test.cc',
         'apache/pool_util_test.cc',

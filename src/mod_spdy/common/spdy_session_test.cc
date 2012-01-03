@@ -14,11 +14,15 @@
 
 #include "mod_spdy/common/spdy_session.h"
 
+#include <list>
+#include <string>
+
 #include "base/basictypes.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session_io.h"
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/instaweb/util/public/function.h"
+#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -67,20 +71,31 @@ class SpdySessionTest : public testing::Test {
   SpdySessionTest()
       : session_(&config_, &session_io_, &task_factory_, &executor_) {}
 
- protected:
-  // Push a PING frame onto the given SpdyFramer.
-  static mod_spdy::SpdySessionIO::ReadStatus ReadPingFrame(
+  // Use as gMock action for ProcessAvailableInput:
+  //   Invoke(this, &SpdySessionTest::ReadNextInputChunk)
+  mod_spdy::SpdySessionIO::ReadStatus ReadNextInputChunk(
       bool block, spdy::SpdyFramer* framer) {
+    if (input_queue_.empty()) {
+      return mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED;
+    }
+    const std::string chunk = input_queue_.front();
+    input_queue_.pop_front();
+    framer->ProcessInput(chunk.data(), chunk.size());
+    return mod_spdy::SpdySessionIO::READ_SUCCESS;
+  }
+
+ protected:
+  // Push a PING frame into the input queue.
+  void PushPingFrame(unsigned char id) {
     // TODO(mdsteele): Sadly, the version of SpdyFramer we're currently using
     // doesn't provide a method for creating PING frames.  So for now, we'll
     // create one manually here.
     const char data[] = {
       0x80, 0x02, 0x00, 0x06,  // SPDY v2, frame type = 6
       0x00, 0x00, 0x00, 0x04,  // flags = 0, frame length = 4
-      0x00, 0x00, 0x00, 0x01   // ping ID = 1
+      0x00, 0x00, 0x00,   id   // ping ID
     };
-    framer->ProcessInput(data, arraysize(data));
-    return mod_spdy::SpdySessionIO::READ_SUCCESS;
+    input_queue_.push_back(std::string(data, arraysize(data)));
   }
 
   mod_spdy::SpdyServerConfig config_;
@@ -88,6 +103,7 @@ class SpdySessionTest : public testing::Test {
   MockSpdyStreamTaskFactory task_factory_;
   InlineExecutor executor_;
   mod_spdy::SpdySession session_;
+  std::list<std::string> input_queue_;
 };
 
 // Define a gMock matcher that checks that a const spdy::SpdyFrame& is a
@@ -109,10 +125,11 @@ TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
 // aborting, so that we can exit the Run loop).
 TEST_F(SpdySessionTest, SinglePing) {
   testing::InSequence seq;
+  PushPingFrame(1);
   EXPECT_CALL(session_io_, IsConnectionAborted())
       .WillOnce(Return(false));
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), _))
-      .WillOnce(Invoke(ReadPingFrame));
+      .WillOnce(Invoke(this, &SpdySessionTest::ReadNextInputChunk));
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::PING)))
       .WillOnce(Return(true));
   EXPECT_CALL(session_io_, IsConnectionAborted())

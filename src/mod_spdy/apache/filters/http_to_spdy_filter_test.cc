@@ -23,10 +23,45 @@
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
+#include "mod_spdy/common/version.h"
+#include "net/spdy/spdy_frame_builder.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
+
+// TODO(mdsteele): In more recent versions of net/spdy/, this is a static
+//   method on SpdyFramer.  We should upgrade and use that instead of
+//   duplicating it here.
+bool ParseHeaderBlockInBuffer(const char* header_data,
+                              size_t header_length,
+                              spdy::SpdyHeaderBlock* block) {
+  // Code from spdy_framer.cc:
+  spdy::SpdyFrameBuilder builder(header_data, header_length);
+  void* iter = NULL;
+  uint16 num_headers;
+  if (builder.ReadUInt16(&iter, &num_headers)) {
+    int index;
+    for (index = 0; index < num_headers; ++index) {
+      std::string name;
+      std::string value;
+      if (!builder.ReadString(&iter, &name))
+        break;
+      if (!builder.ReadString(&iter, &value))
+        break;
+      if (!name.size() || !value.size())
+        return false;
+      if (block->find(name) == block->end()) {
+        (*block)[name] = value;
+      } else {
+        return false;
+      }
+    }
+    return index == num_headers &&
+        iter == header_data + header_length;
+  }
+  return false;
+}
 
 class HttpToSpdyFilterTest : public testing::Test {
  public:
@@ -122,6 +157,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // from request->headers_out rather than the data we put in):
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
+    ASSERT_TRUE(frame != NULL);
     ASSERT_TRUE(frame->is_control_frame());
     ASSERT_EQ(spdy::SYN_REPLY,
               static_cast<spdy::SpdyControlFrame*>(frame)->type());
@@ -129,10 +165,18 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
         *static_cast<spdy::SpdySynReplyControlFrame*>(frame);
     ASSERT_EQ(stream_id, syn_reply_frame.stream_id());
     ASSERT_EQ(spdy::CONTROL_FLAG_NONE, syn_reply_frame.flags());
-    // TODO(mdsteele): Once we upgrade our version of SpdyFramer and thus have
-    //   an easy way to parse the headers block of a SYN_STREAM frame without
-    //   decompression, check the key/value pairs here and make sure we get out
-    //   the same headers we put in.
+
+    spdy::SpdyHeaderBlock block;
+    ASSERT_TRUE(ParseHeaderBlockInBuffer(syn_reply_frame.header_block(),
+                                         syn_reply_frame.header_block_len(),
+                                         &block));
+    EXPECT_EQ(5, block.size());
+    EXPECT_EQ("text/html", block["content-type"]);
+    EXPECT_EQ("www.example.com", block["host"]);
+    EXPECT_EQ("200", block["status"]);
+    EXPECT_EQ("HTTP/1.1", block["version"]);
+    EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
+              block["x-mod-spdy"]);
     delete frame;
   }
   ASSERT_FALSE(output_queue_.Pop(&frame));
@@ -269,7 +313,7 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
 
   // Set the response headers of the request:
   apr_table_setn(request_->headers_out, "Connection", "close");
-  apr_table_setn(request_->headers_out, "Content-Type", "text/html");
+  apr_table_setn(request_->headers_out, "Content-Type", "text/css");
   apr_table_setn(request_->headers_out, "Host", "www.example.com");
 
   // Send the header data into the filter:
@@ -290,10 +334,18 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
     ASSERT_EQ(associated_stream_id, syn_stream_frame.associated_stream_id());
     ASSERT_EQ(priority, syn_stream_frame.priority());
     ASSERT_EQ(spdy::CONTROL_FLAG_UNIDIRECTIONAL, syn_stream_frame.flags());
-    // TODO(mdsteele): Once we upgrade our version of SpdyFramer and thus have
-    //   an easy way to parse the headers block of a SYN_STREAM frame without
-    //   decompression, check the key/value pairs here and make sure we get out
-    //   the same headers we put in.
+
+    spdy::SpdyHeaderBlock block;
+    ASSERT_TRUE(ParseHeaderBlockInBuffer(syn_stream_frame.header_block(),
+                                         syn_stream_frame.header_block_len(),
+                                         &block));
+    EXPECT_EQ(5, block.size());
+    EXPECT_EQ("text/css", block["content-type"]);
+    EXPECT_EQ("www.example.com", block["host"]);
+    EXPECT_EQ("200", block["status"]);
+    EXPECT_EQ("HTTP/1.1", block["version"]);
+    EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
+              block["x-mod-spdy"]);
     delete frame;
   }
   ASSERT_FALSE(output_queue_.Pop(&frame));
