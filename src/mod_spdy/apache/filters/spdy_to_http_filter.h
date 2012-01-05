@@ -58,10 +58,9 @@ class SpdyToHttpFilter {
   // Append the contents of a data frame to data_buffer_.
   void DecodeDataFrame(const spdy::SpdyDataFrame& frame);
 
-  // Called when we see a FLAG_FIN on a DATA or HEADERS frame.  This sends the
-  // "last-chunk" indicator and whatever trailing headers (if any) we have
-  // buffered.
-  void AppendTrailingHeaders();
+  // Called when we see a FLAG_FIN.  This terminates the request and appends
+  // whatever trailing headers (if any) we have buffered.
+  void FinishRequest();
 
   // Send a RST_STREAM frame and abort the stream.
   void AbortStream(spdy::SpdyStatusCodes status);
@@ -70,6 +69,7 @@ class SpdyToHttpFilter {
   std::string trailing_headers_;
   std::string data_buffer_;
   int next_read_start_;
+  bool received_any_data_frames_yet_;
   bool end_of_stream_reached_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyToHttpFilter);

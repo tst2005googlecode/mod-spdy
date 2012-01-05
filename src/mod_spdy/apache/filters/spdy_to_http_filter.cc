@@ -144,6 +144,34 @@ void HttpStringVisitor::OnNoMoreChunks() {
   string_->append("0\r\n");
 }
 
+// Functions to test for FLAG_FIN.  Using these functions instead of testing
+// flags() directly helps guard against mixing up & with && or mixing up
+// CONTROL_FLAG_FIN with DATA_FLAG_FIN.
+bool HasControlFlagFinSet(const spdy::SpdyControlFrame& frame) {
+  return bool(frame.flags() & spdy::CONTROL_FLAG_FIN);
+}
+bool HasDataFlagFinSet(const spdy::SpdyDataFrame& frame) {
+  return bool(frame.flags() & spdy::DATA_FLAG_FIN);
+}
+
+// Remove any HTTP headers that we always want to ignore; we do this just
+// before translating the headers into HTTP.
+void RemoveHeadersWeDoNotWant(spdy::SpdyHeaderBlock* block) {
+  // If the client sent a Content-Length header, ignore it.  We'd rather rely
+  // on the SPDY framing layer to determine when a request is complete.
+  block->erase("content-length");
+
+  // The client shouldn't be sending us a Transfer-Encoding header; it's pretty
+  // pointless over SPDY.  If they do send one, just ignore it; we may be
+  // overriding it later anyway.
+  spdy::SpdyHeaderBlock::iterator iter = block->find("transfer-encoding");
+  if (iter != block->end()) {
+    LOG(WARNING) << "Client sent \"transfer-encoding: " << iter->second
+                 << "\" header over SPDY.  Why would they do that?";
+    block->erase(iter);
+  }
+}
+
 }  // namespace
 
 namespace mod_spdy {
@@ -151,6 +179,7 @@ namespace mod_spdy {
 SpdyToHttpFilter::SpdyToHttpFilter(SpdyStream* stream)
     : stream_(stream),
       next_read_start_(0),
+      received_any_data_frames_yet_(false),
       end_of_stream_reached_(false) {
   DCHECK(stream_ != NULL);
 }
@@ -378,26 +407,15 @@ void SpdyToHttpFilter::DecodeSynStreamFrame(
     return;
   }
 
-  const bool flag_fin = frame.flags() & spdy::CONTROL_FLAG_FIN;
-
-  // If the SYN_STREAM isn't going to be the last input frame on this stream,
-  // we need to use chunked encoding when translating to HTTP, to allow for
-  // later DATA and HEADERS frames.
-  if (!flag_fin) {
-    // Tell Apache that the HTTP request we're producing will use chunked
-    // encoding.
-    block["transfer-encoding"] = "chunked";
-    // According to RFC 2616 section 4.4, the Transfer-Encoding and
-    // Content-Length headers should not both be present, so we remove any
-    // Content-Length header that the client may have sent before translating
-    // to HTTP.
-    block.erase("content-length");
-  }
-
+  // Translate the headers to HTTP.
+  RemoveHeadersWeDoNotWant(&block);
   GenerateHeadersFromHeaderBlock(block, &visitor);
-  visitor.OnHeadersComplete();
 
-  end_of_stream_reached_ |= flag_fin;
+  // If this is the last (i.e. only) frame on this stream, finish off the HTTP
+  // request.
+  if (HasControlFlagFinSet(frame)) {
+    FinishRequest();
+  }
 }
 
 void SpdyToHttpFilter::DecodeHeadersFrame(
@@ -413,37 +431,58 @@ void SpdyToHttpFilter::DecodeHeadersFrame(
   }
 
   // Translate the headers to HTTP and append to our trailing_headers_ buffer.
-  HttpStringVisitor visitor(&trailing_headers_);
+  RemoveHeadersWeDoNotWant(&block);
+  HttpStringVisitor visitor(received_any_data_frames_yet_ ?
+                            &trailing_headers_ : &data_buffer_);
   GenerateHeadersFromHeaderBlock(block, &visitor);
+  DCHECK(received_any_data_frames_yet_ || trailing_headers_.empty());
 
   // If this is the last frame on this stream, finish off the HTTP request.
-  if (frame.flags() & spdy::DATA_FLAG_FIN) {
-    end_of_stream_reached_ = true;
-    AppendTrailingHeaders();
+  if (HasControlFlagFinSet(frame)) {
+    FinishRequest();
   }
 }
 
 void SpdyToHttpFilter::DecodeDataFrame(const spdy::SpdyDataFrame& frame) {
   HttpStringVisitor visitor(&data_buffer_);
+
+  // If this is the first data frame in the stream, we need to close the HTTP
+  // headers section.  We also need to set Transfer-Encoding: chunked.
+  if (!received_any_data_frames_yet_) {
+    received_any_data_frames_yet_ = true;
+    visitor.OnHeader("transfer-encoding", "chunked");
+    visitor.OnHeadersComplete();
+  }
+
+  // Translate the SPDY data frame into an HTTP data chunk.
   visitor.OnDataChunk(frame.payload(), frame.length());
 
   // If this is the last frame on this stream, finish off the HTTP request.
-  if (frame.flags() & spdy::DATA_FLAG_FIN) {
-    end_of_stream_reached_ = true;
-    AppendTrailingHeaders();
+  if (HasDataFlagFinSet(frame)) {
+    FinishRequest();
   }
 }
 
-void SpdyToHttpFilter::AppendTrailingHeaders() {
+void SpdyToHttpFilter::FinishRequest() {
   HttpStringVisitor visitor(&data_buffer_);
-  visitor.OnNoMoreChunks();
-  // Append whatever trailing headers we've buffered, if any.
-  // TODO(mdsteele): With a more careful design, we could probably avoid all
-  //   this string copying.
-  data_buffer_.append(trailing_headers_);
-  trailing_headers_.clear();
+
+  if (received_any_data_frames_yet_) {
+    visitor.OnNoMoreChunks();
+    // Append whatever trailing headers we've buffered, if any.
+    // TODO(mdsteele): With a more careful design, we could probably avoid all
+    //   this string copying.
+    data_buffer_.append(trailing_headers_);
+    trailing_headers_.clear();
+  } else {
+    // We only ever add to trailing_headers_ after receiving at least one data
+    // frame, so if we haven't received any data frames then trailing_headers_
+    // should still be empty.
+    DCHECK(trailing_headers_.empty());
+  }
+
   // Indicate that this request is finished.
   visitor.OnHeadersComplete();
+  end_of_stream_reached_ = true;
 }
 
 void SpdyToHttpFilter::AbortStream(spdy::SpdyStatusCodes status) {
