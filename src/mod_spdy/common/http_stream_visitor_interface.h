@@ -15,7 +15,9 @@
 #ifndef MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_
 #define MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_
 
-#include <stddef.h>  // for size_t
+#include "base/basictypes.h"
+
+namespace base { class StringPiece; }
 
 namespace mod_spdy {
 
@@ -25,34 +27,48 @@ class HttpStreamVisitorInterface {
   HttpStreamVisitorInterface();
   virtual ~HttpStreamVisitorInterface();
 
-  // Called when an HTTP status line is visited. Indicates that a new
-  // HTTP request is being visited.
-  virtual void OnStatusLine(const char *method,
-                            const char *scheme,
-                            const char *host,
-                            const char *path,
-                            const char *version) = 0;
+  // Called when an HTTP request line is visited. Indicates that a new HTTP
+  // request is being visited.
+  virtual void OnRequestLine(const base::StringPiece& method,
+                             const base::StringPiece& path,
+                             const base::StringPiece& version) = 0;
 
-  // Called zero or more times, after OnStatusLine, once for each HTTP
-  // header.
-  virtual void OnHeader(const char *key, const char *value) = 0;
+  // Called zero or more times, once for each leading (i.e. normal, not
+  // trailing) HTTP header.  This is called after OnRequestLine but before
+  // OnLeadingHeadersComplete.
+  virtual void OnLeadingHeader(const base::StringPiece& key,
+                               const base::StringPiece& value) = 0;
 
-  // Called once, after all HTTP headers have been visited.
-  virtual void OnHeadersComplete() = 0;
+  // Called after the leading HTTP headers have been visited.  This will be
+  // called exactly once when the leading headers are done (even if there were
+  // no leading headers).
+  virtual void OnLeadingHeadersComplete() = 0;
 
   // Called zero or more times, after OnHeadersComplete, once for each
-  // "chunk" of the HTTP body. Chunks are delivered sequentially.
-  virtual void OnBody(const char *data, size_t data_len) = 0;
+  // "chunk" of the HTTP body.
+  virtual void OnDataChunk(const base::StringPiece& data) = 0;
 
-  // Called once, after all HTTP headers have been visited, after
-  // OnHeadersComplete has been called, and after all calls to OnBody have
-  // completed.
+  // Called when there will be no more data chunks.  There may still be
+  // trailing headers, however.
+  virtual void OnDataChunksComplete() = 0;
+
+  // Called zero or more times, once for each trailing header.  This is called
+  // after OnDataChunksComplete but before OnTrailingHeadersComplete.
+  virtual void OnTrailingHeader(const base::StringPiece& key,
+                                const base::StringPiece& value) = 0;
+
+  // Called after all the trailing HTTP headers have been visited.  If there
+  // were any trailing headers, this will definitely be called; if there were
+  // no trailing headers, it is optional.
+  virtual void OnTrailingHeadersComplete() = 0;
+
+  // Called once when the HTTP request is totally done.  This is called
+  // immediately after one of OnLeadingHeadersComplete, OnDataChunksComplete,
+  // or OnTrailingHeadersComplete.  After this, no more methods will be called.
   virtual void OnComplete() = 0;
 
-  // Called if an abnormal termination of the stream occurs. If
-  // OnTerminate gets called, no other methods will be called on the
-  // visitor.
-  virtual void OnTerminate() = 0;
+ private:
+  DISALLOW_COPY_AND_ASSIGN(HttpStreamVisitorInterface);
 };
 
 }  // namespace mod_spdy

@@ -21,6 +21,8 @@
 #include "util_filter.h"
 
 #include "base/basictypes.h"
+#include "mod_spdy/common/http_string_builder.h"
+#include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
@@ -44,33 +46,29 @@ class SpdyToHttpFilter {
                     apr_off_t readbytes);
 
  private:
+  // Return true if we've received a FLAG_FIN (i.e. EOS has been reached).
+  bool end_of_stream_reached() const { return visitor_.is_complete(); }
+
   // Try to get the next SPDY frame on this stream, convert it into HTTP, and
   // append the resulting data to data_buffer_.  If the block argument is
   // APR_BLOCK_READ, this function will block until a frame comes in (or the
   // stream is closed).
   bool GetNextFrame(apr_read_type_e block);
 
-  // Translate a SYN_STREAM frame to HTTP and append it to data_buffer_.
-  void DecodeSynStreamFrame(const spdy::SpdySynStreamControlFrame& frame);
-  // Translate a HEADERS frame to HTTP and buffer it in trailing_headers_, to
-  // be appended to data_buffer_ at the end of the data payload.
-  void DecodeHeadersFrame(const spdy::SpdyHeadersControlFrame& frame);
-  // Append the contents of a data frame to data_buffer_.
-  void DecodeDataFrame(const spdy::SpdyDataFrame& frame);
-
-  // Called when we see a FLAG_FIN.  This terminates the request and appends
-  // whatever trailing headers (if any) we have buffered.
-  void FinishRequest();
+  // Pass the given frame to the SpdyToHttpConverter, and deal with the return
+  // code appropriately.
+  bool DecodeSynStreamFrame(const spdy::SpdySynStreamControlFrame& frame);
+  bool DecodeHeadersFrame(const spdy::SpdyHeadersControlFrame& frame);
+  bool DecodeDataFrame(const spdy::SpdyDataFrame& frame);
 
   // Send a RST_STREAM frame and abort the stream.
   void AbortStream(spdy::SpdyStatusCodes status);
 
   SpdyStream* const stream_;
-  std::string trailing_headers_;
   std::string data_buffer_;
+  HttpStringBuilder visitor_;
+  SpdyToHttpConverter converter_;
   int next_read_start_;
-  bool received_any_data_frames_yet_;
-  bool end_of_stream_reached_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyToHttpFilter);
 };

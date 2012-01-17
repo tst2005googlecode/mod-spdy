@@ -15,49 +15,57 @@
 #ifndef MOD_SPDY_SPDY_TO_HTTP_CONVERTER_H_
 #define MOD_SPDY_SPDY_TO_HTTP_CONVERTER_H_
 
+#include "base/basictypes.h"
 #include "net/spdy/spdy_framer.h"
+#include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
 
 class HttpStreamVisitorInterface;
 
-// SpdyFramerVisitorInterface that converts SpdyFrames to HTTP
-// streams, and passes the HTTP stream to the specified
-// HttpStreamVisitorInterface.
-class SpdyToHttpConverter : public spdy::SpdyFramerVisitorInterface {
+// Incrementally converts SPDY frames to HTTP streams, and passes the HTTP
+// stream to the specified HttpStreamVisitorInterface.
+class SpdyToHttpConverter {
  public:
-  SpdyToHttpConverter(spdy::SpdyFramer *framer,
-                      HttpStreamVisitorInterface *visitor);
-  virtual ~SpdyToHttpConverter();
+  explicit SpdyToHttpConverter(HttpStreamVisitorInterface* visitor);
+  ~SpdyToHttpConverter();
 
-  virtual void OnError(spdy::SpdyFramer *framer);
-  virtual void OnControl(const spdy::SpdyControlFrame *frame);
-  virtual void OnStreamFrameData(spdy::SpdyStreamId stream_id,
-                                 const char *data,
-                                 size_t len);
+  enum Status {
+    SPDY_CONVERTER_SUCCESS,
+    FRAME_BEFORE_SYN_STREAM,  // first frame was not a SYN_STREAM
+    FRAME_AFTER_FIN,  // received another frame after a FLAG_FIN
+    EXTRA_SYN_STREAM,  // received an additional SYN_STREAM after the first
+    INVALID_HEADER_BLOCK,  // the headers could not be parsed
+    BAD_REQUEST  // the headers didn't constitute a valid HTTP request
+  };
 
-  bool HasError() const { return error_; }
+  static const char* StatusString(Status status);
+
+  // Convert the SPDY frame to HTTP and make appropriate calls to the visitor.
+  // In some cases data may be buffered, but everything will get flushed out to
+  // the visitor by the time the final frame (with FLAG_FIN set) is done.
+  Status ConvertSynStreamFrame(const spdy::SpdySynStreamControlFrame& frame);
+  Status ConvertHeadersFrame(const spdy::SpdyHeadersControlFrame& frame);
+  Status ConvertDataFrame(const spdy::SpdyDataFrame& frame);
 
 private:
-  void OnSynStream(const spdy::SpdySynStreamControlFrame *frame);
+  // Called when we see a FLAG_FIN.  This terminates the request and appends
+  // whatever trailing headers (if any) we have buffered.
+  void FinishRequest();
 
-  spdy::SpdyFramer *const framer_;
-  HttpStreamVisitorInterface *const visitor_;
-  bool error_;
+  enum State {
+    NO_FRAMES_YET,        // We haven't seen any frames yet.
+    RECEIVED_SYN_STREAM,  // We've seen the SYN_STREAM, but no DATA yet.
+    RECEIVED_DATA,        // We've seen at least one DATA frame.
+    RECEIVED_FLAG_FIN     // We've seen the FLAG_FIN; no more frames allowed.
+  };
+
+  HttpStreamVisitorInterface* const visitor_;
+  spdy::SpdyHeaderBlock trailing_headers_;
+  State state_;
+
+  DISALLOW_COPY_AND_ASSIGN(SpdyToHttpConverter);
 };
-
-// Generate an HTTP request line from the given SPDY header block by calling
-// the OnStatusLine() method of the given visitor, and return true.  If there's
-// an error, this will return false without calling any methods on the visitor.
-bool GenerateRequestLineFromHeaderBlock(const spdy::SpdyHeaderBlock& headers,
-                                        HttpStreamVisitorInterface* visitor);
-
-// Convert the given SPDY header block (e.g. from a SYN_STREAM, SYN_REPLY, or
-// HEADERS frame) into HTTP headers by calling the OnHeader() method of the
-// given visitor.  Note that this does not call OnStatusLine() or
-// OnHeadersComplete() on the visitor.
-void GenerateHeadersFromHeaderBlock(const spdy::SpdyHeaderBlock& headers,
-                                    HttpStreamVisitorInterface* visitor);
 
 }  // namespace mod_spdy
 

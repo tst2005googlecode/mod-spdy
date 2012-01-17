@@ -28,149 +28,11 @@
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
-namespace spdy { typedef std::map<std::string, std::string> SpdyHeaderBlock; }
-
 namespace {
 
 // If, during an AP_MODE_GETLINE read, we pull in this much data (or more)
 // without seeing a linebreak, just give up and return what we have.
 const size_t kGetlineThreshold = 4096;
-
-// TODO(mdsteele): In more recent versions of net/spdy/, this is a static
-//   method on SpdyFramer.  We should upgrade and use that instead of
-//   duplicating it here.
-bool ParseHeaderBlockInBuffer(const char* header_data,
-                              size_t header_length,
-                              spdy::SpdyHeaderBlock* block) {
-  // Code from spdy_framer.cc:
-  spdy::SpdyFrameBuilder builder(header_data, header_length);
-  void* iter = NULL;
-  uint16 num_headers;
-  if (builder.ReadUInt16(&iter, &num_headers)) {
-    int index;
-    for (index = 0; index < num_headers; ++index) {
-      std::string name;
-      std::string value;
-      if (!builder.ReadString(&iter, &name))
-        break;
-      if (!builder.ReadString(&iter, &value))
-        break;
-      if (!name.size() || !value.size())
-        return false;
-      if (block->find(name) == block->end()) {
-        (*block)[name] = value;
-      } else {
-        return false;
-      }
-    }
-    return index == num_headers &&
-        iter == header_data + header_length;
-  }
-  return false;
-}
-
-class HttpStringVisitor : public mod_spdy::HttpStreamVisitorInterface {
- public:
-  explicit HttpStringVisitor(std::string* str)
-      : string_(str), has_error_(false) {}
-  ~HttpStringVisitor() {}
-
-  bool has_error() const { return has_error_; }
-
-  // HttpStreamVisitorInterface methods:
-  virtual void OnStatusLine(const char* method, const char* scheme,
-                            const char* host, const char* path,
-                            const char* version);
-  virtual void OnHeader(const char* key, const char* value);
-  virtual void OnHeadersComplete();
-  virtual void OnBody(const char* data, size_t size);
-  virtual void OnComplete() {}
-  virtual void OnTerminate() { has_error_ = true; }
-
-  // Additional methods.
-  // TODO(mdsteele): Possibly these should be added to the
-  //   HttpStreamVisitorInterface class.
-  void OnDataChunk(const char* data, size_t size);
-  void OnNoMoreChunks();
-
- private:
-  std::string* const string_;
-  bool has_error_;
-
-  DISALLOW_COPY_AND_ASSIGN(HttpStringVisitor);
-};
-
-void HttpStringVisitor::OnStatusLine(const char* method, const char* scheme,
-                                     const char* host, const char* path,
-                                     const char* version) {
-  string_->reserve(string_->size() + strlen(method) + strlen(path) +
-                   strlen(version) + 4);
-  string_->append(method);
-  string_->push_back(' ');
-  string_->append(path);
-  string_->push_back(' ');
-  string_->append(version);
-  string_->append("\r\n");
-}
-
-void HttpStringVisitor::OnHeader(const char* key, const char* value) {
-  string_->reserve(string_->size() + strlen(key) + strlen(value) + 4);
-  string_->append(key);
-  string_->append(": ");
-  string_->append(value);
-  string_->append("\r\n");
-}
-
-void HttpStringVisitor::OnHeadersComplete() {
-  string_->append("\r\n");
-}
-
-void HttpStringVisitor::OnBody(const char* data, size_t size) {
-  string_->append(data, size);
-}
-
-void HttpStringVisitor::OnDataChunk(const char* data, size_t size) {
-  // Encode the data as an HTTP data chunk.  See RFC 2616 section 3.6.1 for
-  // details.
-  string_->reserve(string_->size() + size + 8);
-  base::StringAppendF(string_, "%X\r\n", size);
-  string_->append(data, size);
-  string_->append("\r\n");
-}
-
-void HttpStringVisitor::OnNoMoreChunks() {
-  // Indicate that there are no more HTTP data chunks coming.  See RFC 2616
-  // section 3.6.1 for details.
-  string_->append("0\r\n");
-}
-
-// Functions to test for FLAG_FIN.  Using these functions instead of testing
-// flags() directly helps guard against mixing up & with && or mixing up
-// CONTROL_FLAG_FIN with DATA_FLAG_FIN.
-bool HasControlFlagFinSet(const spdy::SpdyControlFrame& frame) {
-  return bool(frame.flags() & spdy::CONTROL_FLAG_FIN);
-}
-bool HasDataFlagFinSet(const spdy::SpdyDataFrame& frame) {
-  return bool(frame.flags() & spdy::DATA_FLAG_FIN);
-}
-
-// Remove any HTTP headers that we always want to ignore; we do this just
-// before translating the headers into HTTP.
-void RemoveHeadersWeDoNotWant(spdy::SpdyHeaderBlock* block) {
-  // If the client sent a Content-Length header, ignore it.  We'd rather rely
-  // on the SPDY framing layer to determine when a request is complete.
-  block->erase("content-length");
-
-  // The client shouldn't be sending us a Transfer-Encoding header; it's pretty
-  // pointless over SPDY.  If they do send one, just ignore it; we may be
-  // overriding it later anyway.
-  spdy::SpdyHeaderBlock::iterator iter = block->find("transfer-encoding");
-  if (iter != block->end()) {
-    LOG(WARNING) << "Client sent \"transfer-encoding: " << iter->second
-                 << "\" header over SPDY.  Why would they do that?";
-    block->erase(iter);
-  }
-}
 
 }  // namespace
 
@@ -178,9 +40,9 @@ namespace mod_spdy {
 
 SpdyToHttpFilter::SpdyToHttpFilter(SpdyStream* stream)
     : stream_(stream),
-      next_read_start_(0),
-      received_any_data_frames_yet_(false),
-      end_of_stream_reached_(false) {
+      visitor_(&data_buffer_),
+      converter_(&visitor_),
+      next_read_start_(0) {
   DCHECK(stream_ != NULL);
 }
 
@@ -232,7 +94,7 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
 
   // If there will never be any more data on this stream, return EOF.  (That's
   // what ap_core_input_filter() in core_filters.c does.)
-  if (end_of_stream_reached_ && data_buffer_.empty()) {
+  if (end_of_stream_reached() && data_buffer_.empty()) {
     return APR_EOF;
   }
 
@@ -316,7 +178,7 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   }
 
   // If this is the last bit of data from this stream, send an EOS bucket.
-  if (end_of_stream_reached_ && bytes_read == data_buffer_.size()) {
+  if (end_of_stream_reached() && bytes_read == data_buffer_.size()) {
     APR_BRIGADE_INSERT_TAIL(brigade, apr_bucket_eos_create(
         brigade->bucket_alloc));
     success = true;
@@ -340,7 +202,7 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
 }
 
 bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
-  if (end_of_stream_reached_) {
+  if (end_of_stream_reached()) {
     return false;
   }
 
@@ -362,13 +224,11 @@ bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
         static_cast<spdy::SpdyControlFrame*>(frame.get());
     switch (ctrl_frame->type()) {
       case spdy::SYN_STREAM:
-        DecodeSynStreamFrame(
+        return DecodeSynStreamFrame(
             *static_cast<spdy::SpdySynStreamControlFrame*>(ctrl_frame));
-        break;
       case spdy::HEADERS:
-        DecodeHeadersFrame(
+        return DecodeHeadersFrame(
             *static_cast<spdy::SpdyHeadersControlFrame*>(ctrl_frame));
-        break;
       default:
         // Other frame types should be handled by the master connection, rather
         // than sent here.
@@ -379,110 +239,92 @@ bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
         return false;
     }
   } else {
-    DecodeDataFrame(*static_cast<spdy::SpdyDataFrame*>(frame.get()));
+    return DecodeDataFrame(
+        *static_cast<spdy::SpdyDataFrame*>(frame.get()));
   }
-
-  return true;
 }
 
-void SpdyToHttpFilter::DecodeSynStreamFrame(
+bool SpdyToHttpFilter::DecodeSynStreamFrame(
     const spdy::SpdySynStreamControlFrame& frame) {
-  spdy::SpdyHeaderBlock block;
-  if (!ParseHeaderBlockInBuffer(frame.header_block(), frame.header_block_len(),
-                                &block)) {
-    LOG(ERROR) << "Invalid SYN_STREAM header block in stream "
-               << stream_->stream_id();
-    AbortStream(spdy::PROTOCOL_ERROR);
-    return;
-  }
-
-  HttpStringVisitor visitor(&data_buffer_);
-  if (!GenerateRequestLineFromHeaderBlock(block, &visitor)) {
-    // TODO(mdsteeele): According to the SPDY spec, we're supposed to return an
-    //   HTTP 400 (Bad Request) reply in this case.  We need to do some minor
-    //   refactoring to make that possible.
-    LOG(DFATAL) << "Could not generate request line from SYN_STREAM frame"
-                << " in stream " << stream_->stream_id();
-    AbortStream(spdy::INTERNAL_ERROR);
-    return;
-  }
-
-  // Translate the headers to HTTP.
-  RemoveHeadersWeDoNotWant(&block);
-  GenerateHeadersFromHeaderBlock(block, &visitor);
-
-  // If this is the last (i.e. only) frame on this stream, finish off the HTTP
-  // request.
-  if (HasControlFlagFinSet(frame)) {
-    FinishRequest();
+  const SpdyToHttpConverter::Status status =
+      converter_.ConvertSynStreamFrame(frame);
+  switch (status) {
+    case SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS:
+      return true;
+    case SpdyToHttpConverter::EXTRA_SYN_STREAM:
+      // If we get multiple SYN_STREAM frames for a stream, we must abort
+      // with PROTOCOL_ERROR (SPDY draft 2 section 2.7.1).
+      LOG(ERROR) << "Client sent extra SYN_STREAM frame on stream "
+                 << stream_->stream_id();
+      AbortStream(spdy::PROTOCOL_ERROR);
+      return false;
+    case SpdyToHttpConverter::INVALID_HEADER_BLOCK:
+      LOG(ERROR) << "Invalid SYN_STREAM header block on stream "
+                 << stream_->stream_id();
+      AbortStream(spdy::PROTOCOL_ERROR);
+      return false;
+    case SpdyToHttpConverter::BAD_REQUEST:
+      // TODO(mdsteeele): According to the SPDY spec, we're supposed to return
+      //   an HTTP 400 (Bad Request) reply in this case (SPDY draft 3 section
+      //   3.2.1).  We need to do some refactoring to make that possible.
+      LOG(ERROR) << "Could not generate request line from SYN_STREAM frame"
+                  << " in stream " << stream_->stream_id();
+      AbortStream(spdy::REFUSED_STREAM);
+      return false;
+    default:
+      // No other outcome should be possible.
+      LOG(DFATAL) << "Got " << SpdyToHttpConverter::StatusString(status)
+                  << " from ConvertSynStreamFrame on stream "
+                  << stream_->stream_id();
+      AbortStream(spdy::INTERNAL_ERROR);
+      return false;
   }
 }
 
-void SpdyToHttpFilter::DecodeHeadersFrame(
+bool SpdyToHttpFilter::DecodeHeadersFrame(
     const spdy::SpdyHeadersControlFrame& frame) {
-  // Parse the headers from the HEADERS frame.
-  spdy::SpdyHeaderBlock block;
-  if (!ParseHeaderBlockInBuffer(frame.header_block(), frame.header_block_len(),
-                                &block)) {
-    LOG(ERROR) << "Invalid HEADERS header block in stream "
-               << stream_->stream_id();
-    AbortStream(spdy::PROTOCOL_ERROR);
-    return;
-  }
-
-  // Translate the headers to HTTP and append to our trailing_headers_ buffer.
-  RemoveHeadersWeDoNotWant(&block);
-  HttpStringVisitor visitor(received_any_data_frames_yet_ ?
-                            &trailing_headers_ : &data_buffer_);
-  GenerateHeadersFromHeaderBlock(block, &visitor);
-  DCHECK(received_any_data_frames_yet_ || trailing_headers_.empty());
-
-  // If this is the last frame on this stream, finish off the HTTP request.
-  if (HasControlFlagFinSet(frame)) {
-    FinishRequest();
-  }
-}
-
-void SpdyToHttpFilter::DecodeDataFrame(const spdy::SpdyDataFrame& frame) {
-  HttpStringVisitor visitor(&data_buffer_);
-
-  // If this is the first data frame in the stream, we need to close the HTTP
-  // headers section.  We also need to set Transfer-Encoding: chunked.
-  if (!received_any_data_frames_yet_) {
-    received_any_data_frames_yet_ = true;
-    visitor.OnHeader("transfer-encoding", "chunked");
-    visitor.OnHeadersComplete();
-  }
-
-  // Translate the SPDY data frame into an HTTP data chunk.
-  visitor.OnDataChunk(frame.payload(), frame.length());
-
-  // If this is the last frame on this stream, finish off the HTTP request.
-  if (HasDataFlagFinSet(frame)) {
-    FinishRequest();
+  const SpdyToHttpConverter::Status status =
+      converter_.ConvertHeadersFrame(frame);
+  switch (status) {
+    case SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS:
+      return true;
+    case SpdyToHttpConverter::FRAME_AFTER_FIN:
+      AbortStream(spdy::INVALID_STREAM);
+      return false;
+    case SpdyToHttpConverter::INVALID_HEADER_BLOCK:
+      LOG(ERROR) << "Invalid HEADERS header block on stream "
+                 << stream_->stream_id();
+      AbortStream(spdy::PROTOCOL_ERROR);
+      return false;
+    default:
+      // No other outcome should be possible.
+      LOG(DFATAL) << "Got " << SpdyToHttpConverter::StatusString(status)
+                  << " from ConvertHeadersFrame on stream "
+                  << stream_->stream_id();
+      AbortStream(spdy::INTERNAL_ERROR);
+      return false;
   }
 }
 
-void SpdyToHttpFilter::FinishRequest() {
-  HttpStringVisitor visitor(&data_buffer_);
-
-  if (received_any_data_frames_yet_) {
-    visitor.OnNoMoreChunks();
-    // Append whatever trailing headers we've buffered, if any.
-    // TODO(mdsteele): With a more careful design, we could probably avoid all
-    //   this string copying.
-    data_buffer_.append(trailing_headers_);
-    trailing_headers_.clear();
-  } else {
-    // We only ever add to trailing_headers_ after receiving at least one data
-    // frame, so if we haven't received any data frames then trailing_headers_
-    // should still be empty.
-    DCHECK(trailing_headers_.empty());
+bool SpdyToHttpFilter::DecodeDataFrame(const spdy::SpdyDataFrame& frame) {
+  const SpdyToHttpConverter::Status status =
+      converter_.ConvertDataFrame(frame);
+  switch (status) {
+    case SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS:
+      return true;
+    case SpdyToHttpConverter::FRAME_AFTER_FIN:
+      // If the stream is no longer open, we must send a RST_STREAM with
+      // INVALID_STREAM (SPDY draft 3 section 2.2.2).
+      AbortStream(spdy::INVALID_STREAM);
+      return false;
+    default:
+      // No other outcome should be possible.
+      LOG(DFATAL) << "Got " << SpdyToHttpConverter::StatusString(status)
+                  << " from ConvertDataFrame on stream "
+                  << stream_->stream_id();
+      AbortStream(spdy::INTERNAL_ERROR);
+      return false;
   }
-
-  // Indicate that this request is finished.
-  visitor.OnHeadersComplete();
-  end_of_stream_reached_ = true;
 }
 
 void SpdyToHttpFilter::AbortStream(spdy::SpdyStatusCodes status) {

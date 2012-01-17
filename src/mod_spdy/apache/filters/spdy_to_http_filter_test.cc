@@ -300,8 +300,8 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
                         "E\r\n"
                         "immediately!!\n\r\n"
                         "0\r\n"
-                        "x-super-cool: foo\r\n"
                         "x-awesome: quux\r\n"
+                        "x-super-cool: foo\r\n"
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();

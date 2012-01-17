@@ -34,6 +34,7 @@
         'common/executor.cc',
         'common/header_populator_interface.cc',
         'common/http_stream_visitor_interface.cc',
+        'common/http_string_builder.cc',
         'common/queued_worker_pool_executor.cc',
         'common/spdy_frame_priority_queue.cc',
         'common/spdy_frame_queue.cc',
