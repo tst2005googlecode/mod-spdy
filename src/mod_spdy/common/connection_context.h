@@ -27,12 +27,6 @@ class SpdyStream;
 // Shared context object for a SPDY connection.
 class ConnectionContext {
  public:
-  enum NpnState {
-    NOT_DONE_YET,
-    USING_SPDY,
-    NOT_USING_SPDY
-  };
-
   // Create a context object for a non-slave connection.
   ConnectionContext();
   // Create a context object for a slave connection.  The context object does
@@ -40,6 +34,11 @@ class ConnectionContext {
   explicit ConnectionContext(SpdyStream* slave_stream);
 
   ~ConnectionContext();
+
+  // Return true if we are using SPDY for this connection, which is the case if
+  // either 1) SPDY was chosen by NPN, or 2) we are assuming SPDY regardless of
+  // NPN.  For slave connections, this always returns true.
+  bool is_using_spdy() const;
 
   // Return true if this is a slave connection representing a SPDY stream, or
   // false if it is a "real" connection.
@@ -49,14 +48,36 @@ class ConnectionContext {
   // Requires that is_slave() is true.
   SpdyStream* slave_stream() const;
 
-  // Get the NPN state of this connection.
-  const NpnState npn_state() const { return npn_state_; }
+  enum NpnState {
+    // NOT_DONE_YET: NPN has not yet completed.
+    NOT_DONE_YET,
+    // USING_SPDY: We have agreed with the client to use SPDY for this
+    // connection.
+    USING_SPDY,
+    // NOT_USING_SPDY: We have decided not to use SPDY for this connection.
+    NOT_USING_SPDY
+  };
+
+  // Get the NPN state of this connection.  Unless you actually care about NPN
+  // itself, you probably don't want to use this method to check if SPDY is
+  // being used; instead, use is_using_spdy().  Requires that is_slave() is
+  // false.
+  const NpnState npn_state() const;
 
   // Set the NPN state of this connection.  Requires that is_slave() is false.
   void set_npn_state(NpnState state);
 
+  // If true, we are simply _assuming_ SPDY, regardless of the outcome of NPN.
+  // Requires that is_slave() is false.
+  bool is_assuming_spdy() const;
+
+  // Set whether we are assuming SPDY for this connection (regardless of NPN).
+  // Requires that is_slave() is false.
+  void set_assume_spdy(bool assume);
+
  private:
   NpnState npn_state_;
+  bool assume_spdy_;
   SpdyStream* const slave_stream_;
 
   DISALLOW_COPY_AND_ASSIGN(ConnectionContext);

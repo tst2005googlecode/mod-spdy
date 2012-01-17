@@ -40,35 +40,37 @@ void* MergeSpdyServerConfigs(apr_pool_t* pool, void* base, void* add) {
 
 namespace {
 
-const char* SetSpdyEnabled(cmd_parms* cmd, void* dir, const char* arg) {
+// A function suitable for for passing to AP_INIT_TAKE1 (and hence to
+// SPDY_CONFIG_COMMAND) for a config option that requires a boolean argument
+// ("on" or "off", case-insensitive; other strings will be rejected).  The
+// template argument is a setter method on SpdyServerConfig that takes a bool.
+template <void(SpdyServerConfig::*setter)(bool)>
+const char* SetBoolean(cmd_parms* cmd, void* dir, const char* arg) {
   if (0 == apr_strnatcasecmp(arg, "on")) {
-    GetServerConfig(cmd)->set_spdy_enabled(true);
+    (GetServerConfig(cmd)->*setter)(true);
     return NULL;
   } else if (0 == apr_strnatcasecmp(arg, "off")) {
-    GetServerConfig(cmd)->set_spdy_enabled(false);
+    (GetServerConfig(cmd)->*setter)(false);
     return NULL;
   } else {
-    return "SpdyEnabled on|off";
+    return apr_pstrcat(cmd->pool, cmd->cmd->name, " on|off", NULL);
   }
 }
 
-const char* SetMaxStreamsPerConnection(cmd_parms* cmd, void* dir,
-                                       const char* arg) {
+// A function suitable for for passing to AP_INIT_TAKE1 (and hence to
+// SPDY_CONFIG_COMMAND) for a config option that requires a positive integer
+// argument.  The template argument is a setter method on SpdyServerConfig that
+// takes an int; the method will only ever be called with a positive argument
+// (if the user gives a non-positive argument, or a string that isn't even an
+// integer, this function will reject it with an error message).
+template <void(SpdyServerConfig::*setter)(int)>
+const char* SetPositiveInt(cmd_parms* cmd, void* dir, const char* arg) {
   int value;
   if (!base::StringToInt(arg, &value) || value < 1) {
-    return "SpdyMaxStreamsPerConnection must specify a positive integer";
+    return apr_pstrcat(cmd->pool, cmd->cmd->name,
+                       " must specify a positive integer", NULL);
   }
-  GetServerConfig(cmd)->set_max_streams_per_connection(value);
-  return NULL;
-}
-
-const char* SetMaxThreadsPerProcess(cmd_parms* cmd, void* dir,
-                                    const char* arg) {
-  int value;
-  if (!base::StringToInt(arg, &value) || value < 1) {
-    return "SpdyMaxThreadsPerProcess must specify a positive integer";
-  }
-  GetServerConfig(cmd)->set_max_threads_per_process(value);
+  (GetServerConfig(cmd)->*setter)(value);
   return NULL;
 }
 
@@ -88,13 +90,21 @@ const char* SetMaxThreadsPerProcess(cmd_parms* cmd, void* dir,
 
 const command_rec kSpdyConfigCommands[] = {
   SPDY_CONFIG_COMMAND(
-      "SpdyEnabled", SetSpdyEnabled, "Enable SPDY support"),
+      "SpdyEnabled", SetBoolean<&SpdyServerConfig::set_spdy_enabled>,
+      "Enable SPDY support"),
   SPDY_CONFIG_COMMAND(
-      "SpdyMaxStreamsPerConnection", SetMaxStreamsPerConnection,
+      "SpdyMaxStreamsPerConnection",
+      SetPositiveInt<&SpdyServerConfig::set_max_streams_per_connection>,
       "Maxiumum number of simultaneous SPDY streams per connection"),
   SPDY_CONFIG_COMMAND(
-      "SpdyMaxThreadsPerProcess", SetMaxThreadsPerProcess,
+      "SpdyMaxThreadsPerProcess",
+      SetPositiveInt<&SpdyServerConfig::set_max_threads_per_process>,
       "Maxiumum number of worker threads to spawn per child process"),
+  // Debugging commands, which should not be used in production:
+  SPDY_CONFIG_COMMAND(
+      "SpdyDebugUseSpdyForNonSslConnections",
+      SetBoolean<&SpdyServerConfig::set_use_even_without_ssl>,
+      "Use SPDY even over non-SSL connections; DO NOT USE IN PRODUCTION"),
   {NULL}
 };
 

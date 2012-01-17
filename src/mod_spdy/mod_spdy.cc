@@ -60,7 +60,7 @@ namespace {
 // structural changes to the code.
 // TODO(mdsteele): Pretty soon we will probably need to support SPDY v3.
 const int kSpdyVersionNumber = 2;
-const char* kSpdyProtocolName = "spdy/2";
+const char* const kSpdyProtocolName = "spdy/2";
 
 // These global variables store the filter handles for our filters.  Normally,
 // global variables would be very dangerous in a concurrent environment like
@@ -93,8 +93,7 @@ apr_thread_pool* gPerProcessThreadPool = NULL;
 int spdy_get_version(conn_rec* connection) {
   const mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
-  if (context != NULL &&
-      context->npn_state() == mod_spdy::ConnectionContext::USING_SPDY) {
+  if (context != NULL && context->is_using_spdy()) {
     COMPILE_ASSERT(kSpdyVersionNumber != 0, version_number_is_nonzero);
     return kSpdyVersionNumber;
   }
@@ -178,6 +177,12 @@ void RetrieveOptionalFunctions() {
   // other hook functions will fail gracefully (i.e. do nothing) if these
   // functions are NULL, but if the user installed mod_spdy without mod_ssl and
   // expected it to do anything, we should warn them otherwise.
+  //
+  // Note: Alternatively, it may be that there's no mod_ssl, but mod_spdy has
+  // been configured to assume SPDY for non-SSL connections, in which case this
+  // warning is untrue.  But there's no easy way to check the server config
+  // from here, and normal users should never use that config option anyway
+  // (it's for debugging), so I don't think the spurious warning is a big deal.
   if (gDisableSslForConnection == NULL &&
       gIsUsingSslForConnection == NULL) {
     LOG(WARNING) << "It seems that mod_spdy is installed but mod_ssl isn't.  "
@@ -244,9 +249,14 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
   // Disable mod_ssl for the slave connection so it doesn't get in our way.
   if (gDisableSslForConnection == NULL ||
       gDisableSslForConnection(connection) == 0) {
-    // We wouldn't have a slave connection unless mod_ssl were installed and
-    // enabled on this server, so this outcome should be impossible.
-    LOG(DFATAL) << "mod_ssl missing for slave connection";
+    // Hmm, mod_ssl either isn't installed or isn't enabled.  That should be
+    // impossible (we wouldn't _have_ a slave connection without having SSL for
+    // the master connection), unless we're configured to assume SPDY for
+    // non-SSL connections.  Let's check if that's the case, and LOG(DFATAL) if
+    // it's not.
+    if (!mod_spdy::GetServerConfig(connection)->use_even_without_ssl()) {
+      LOG(DFATAL) << "mod_ssl missing for slave connection";
+    }
   }
   return OK;
 }
@@ -256,24 +266,37 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
 // checks if SSL is active; for slave connections, this adds our
 // connection-level filters and prevents core filters from being inserted.
 int PreConnection(conn_rec* connection, void* csd) {
-  const mod_spdy::ConnectionContext* context =
+  mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
 
   // If the connection context has not yet been created, this is a "real"
   // connection (not one of our slave connections).
   if (context == NULL) {
-    // Check if this connection is over SSL; if not, we definitely won't be
-    // using SPDY.
+    bool assume_spdy = false;
+
+    // Check if this connection is over SSL; if not, we can't do NPN, so we
+    // definitely won't be using SPDY (unless we're configured to assume SPDY
+    // for non-SSL connections).
     if (gIsUsingSslForConnection == NULL ||  // mod_ssl is not even loaded
         gIsUsingSslForConnection(connection) == 0) {
-      // This is not an SSL connection, so we can't talk SPDY on it.
-      return DECLINED;
+      // This is not an SSL connection, so we can't talk SPDY on it _unless_ we
+      // have opted to assume SPDY over non-SSL connections (presumably for
+      // debugging purposes; this would normally break browsers).
+      if (mod_spdy::GetServerConfig(connection)->use_even_without_ssl()) {
+        assume_spdy = true;
+      } else {
+        return DECLINED;
+      }
     }
 
     // Okay, we've got a real connection over SSL, so we'll be negotiating with
     // the client to see if we can use SPDY for this connection.  Create our
     // connection context object to keep track of the negotiation.
-    mod_spdy::CreateMasterConnectionContext(connection);
+    context = mod_spdy::CreateMasterConnectionContext(connection);
+    // If we're assuming SPDY, we don't even need to do the negotiation.
+    if (assume_spdy) {
+      context->set_assume_spdy(true);
+    }
     return OK;
   }
   // If the context has already been created, this is a slave connection.
@@ -336,43 +359,50 @@ int ProcessConnection(conn_rec* connection) {
     return DECLINED;
   }
 
-  // We need to pull some data through mod_ssl in order to force the SSL
-  // handshake, and hence NPN, to take place.  To that end, perform a small
-  // SPECULATIVE read (and then throw away whatever data we got).
-  apr_bucket_brigade* temp_brigade =
-      apr_brigade_create(connection->pool, connection->bucket_alloc);
-  const apr_status_t status =
-      ap_get_brigade(connection->input_filters, temp_brigade,
-                     AP_MODE_SPECULATIVE, APR_BLOCK_READ, 1);
-  apr_brigade_destroy(temp_brigade);
+  // Unless we're simply assuming SPDY for this connection, we need to do NPN
+  // to decide whether to use SPDY or not.
+  if (!context->is_assuming_spdy()) {
+    // We need to pull some data through mod_ssl in order to force the SSL
+    // handshake, and hence NPN, to take place.  To that end, perform a small
+    // SPECULATIVE read (and then throw away whatever data we got).
+    apr_bucket_brigade* temp_brigade =
+        apr_brigade_create(connection->pool, connection->bucket_alloc);
+    const apr_status_t status =
+        ap_get_brigade(connection->input_filters, temp_brigade,
+                       AP_MODE_SPECULATIVE, APR_BLOCK_READ, 1);
+    apr_brigade_destroy(temp_brigade);
 
-  // If we were unable to pull any data through, give up.
-  if (status != APR_SUCCESS) {
-    // EOF errors are to be expected sometimes (e.g. if the connection was
-    // closed).  If the error was something else, though, log an error.
-    if (!APR_STATUS_IS_EOF(status)) {
-      LOG(ERROR) << "Error during speculative read: " << status;
+    // If we were unable to pull any data through, give up.
+    if (status != APR_SUCCESS) {
+      // EOF errors are to be expected sometimes (e.g. if the connection was
+      // closed).  If the error was something else, though, log an error.
+      if (!APR_STATUS_IS_EOF(status)) {
+        LOG(ERROR) << "Error during speculative read: " << status;
+      }
+      return DECLINED;
     }
-    return DECLINED;
+
+    // If we did pull some data through, then NPN should have happened and our
+    // OnNextProtocolNegotiated() hook should have been called by now.  If NPN
+    // hasn't happened, it's probably because we're using an old version of
+    // mod_ssl that doesn't support NPN, in which case we should probably warn
+    // the user that mod_spdy isn't going to work.
+    if (context->npn_state() == mod_spdy::ConnectionContext::NOT_DONE_YET) {
+      LOG(WARNING) <<
+          ("NPN didn't happen during SSL handshake.  Probably you're using an "
+           "unpatched mod_ssl that doesn't support NPN.  Without NPN support, "
+           "the server cannot ever use SPDY.");
+    }
   }
 
-  // If we did pull some data through, then NPN should have happened and our
-  // OnNextProtocolNegotiated() hook should have been called by now.  If NPN
-  // hasn't happened, it's probably because we're using an old version of
-  // mod_ssl that doesn't support NPN, in which case we should probably warn
-  // the user that mod_spdy isn't going to work.
-  if (context->npn_state() == mod_spdy::ConnectionContext::NOT_DONE_YET) {
-    LOG(WARNING) << "NPN didn't happen during SSL handshake.  Probably you're "
-                 << "using an unpatched mod_ssl that doesn't support NPN.  "
-                 << "Without NPN support, the server cannot ever use SPDY.";
-  }
   // If NPN didn't choose SPDY, then don't use SPDY.
-  if (context->npn_state() != mod_spdy::ConnectionContext::USING_SPDY) {
+  if (!context->is_using_spdy()) {
     return DECLINED;
   }
 
-  // At this point, we and the client have agreed to use SPDY, so process this
-  // as a SPDY master connection.
+  // At this point, we and the client have agreed to use SPDY (either that, or
+  // we've been configured to use SPDY regardless of what the client says), so
+  // process this as a SPDY master connection.
   mod_spdy::ApacheSpdySessionIO session_io(connection);
   mod_spdy::ApacheSpdyStreamTaskFactory task_factory(connection);
   mod_spdy::AprThreadPoolExecutor executor(gPerProcessThreadPool);

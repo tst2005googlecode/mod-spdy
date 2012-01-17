@@ -19,6 +19,7 @@ namespace {
 const bool kDefaultSpdyEnabled = false;
 const int kDefaultMaxStreamsPerConnection = 100;
 const int kDefaultMaxThreadsPerProcess = 5;
+const int kDefaultUseEvenWithoutSsl = false;
 
 }  // namespace
 
@@ -27,7 +28,8 @@ namespace mod_spdy {
 SpdyServerConfig::SpdyServerConfig()
     : spdy_enabled_(kDefaultSpdyEnabled),
       max_streams_per_connection_(kDefaultMaxStreamsPerConnection),
-      max_threads_per_process_(kDefaultMaxThreadsPerProcess) {}
+      max_threads_per_process_(kDefaultMaxThreadsPerProcess),
+      use_even_without_ssl_(kDefaultUseEvenWithoutSsl) {}
 
 SpdyServerConfig::~SpdyServerConfig() {}
 
@@ -38,6 +40,8 @@ void SpdyServerConfig::MergeFrom(const SpdyServerConfig& a,
                                         b.max_streams_per_connection_);
   max_threads_per_process_.MergeFrom(a.max_threads_per_process_,
                                      b.max_threads_per_process_);
+  use_even_without_ssl_.MergeFrom(a.use_even_without_ssl_,
+                                  b.use_even_without_ssl_);
 }
 
 }  // namespace mod_spdy
