@@ -27,8 +27,8 @@ bool TryPopFrom(std::list<spdy::SpdyFrame*>* queue, spdy::SpdyFrame** frame) {
   if (queue->empty()) {
     return false;
   }
-  *frame = queue->back();
-  queue->pop_back();
+  *frame = queue->front();
+  queue->pop_front();
   return true;
 }
 
@@ -51,21 +51,29 @@ void SpdyFramePriorityQueue::Insert(spdy::SpdyPriority priority,
   base::AutoLock autolock(lock_);
   switch (priority) {
     case 0:
-      p0_queue_.push_front(frame);
+      p0_queue_.push_back(frame);
       break;
     case 1:
-      p1_queue_.push_front(frame);
+      p1_queue_.push_back(frame);
       break;
     case 2:
-      p2_queue_.push_front(frame);
+      p2_queue_.push_back(frame);
       break;
     case 3:
-      p3_queue_.push_front(frame);
+      p3_queue_.push_back(frame);
       break;
     default:
       LOG(DFATAL) << "Invalid priority value: " << priority;
-      p3_queue_.push_front(frame);
+      p3_queue_.push_back(frame);
   }
+  condvar_.Signal();
+}
+
+void SpdyFramePriorityQueue::InsertFront(spdy::SpdyFrame* frame) {
+  base::AutoLock autolock(lock_);
+  // To ensure that this frame is at the very front of the queue, we push it at
+  // the front of the highest-priority internal queue.
+  p0_queue_.push_front(frame);
   condvar_.Signal();
 }
 

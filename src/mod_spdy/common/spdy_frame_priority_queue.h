@@ -29,8 +29,8 @@ namespace mod_spdy {
 // A priority queue of SPDY frames, intended for multiplexing output frames
 // from multiple SPDY stream threads back to the SPDY connection thread and
 // allowing frames from high-priority streams to cut in front of lower-priority
-// streams.  This class is thread-safe -- the Insert() and Pop() methods may be
-// called concurrently by multiple threads.
+// streams.  This class is thread-safe -- its methods may be called
+// concurrently by multiple threads.
 class SpdyFramePriorityQueue {
  public:
   // Create an initially-empty queue.
@@ -41,6 +41,12 @@ class SpdyFramePriorityQueue {
   // ownership of the frame, and will delete it if the queue is deleted before
   // the frame is removed from the queue by the Pop method.
   void Insert(spdy::SpdyPriority priority, spdy::SpdyFrame* frame);
+
+  // Insert a frame at the *front* of the queue; it will be popped out before
+  // any other frame currently in the queue, regardless of priority.  The queue
+  // takes ownership of the frame, and will delete it if the queue is deleted
+  // before the frame is removed from the queue by the Pop method.
+  void InsertFront(spdy::SpdyFrame* frame);
 
   // Remove and provide a frame from the queue and return true, or return false
   // if the queue is empty.  The caller gains ownership of the provided frame
