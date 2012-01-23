@@ -119,4 +119,28 @@ void InstallLogMessageHandler(apr_pool_t* pool) {
   logging::SetLogMessageHandler(&LogMessageHandler);
 }
 
+void SetLoggingLevel(int apache_log_level, int vlog_level) {
+  switch (apache_log_level) {
+    case APLOG_EMERG:
+    case APLOG_ALERT:
+      logging::SetMinLogLevel(logging::LOG_FATAL);
+      break;
+    case APLOG_CRIT:
+      logging::SetMinLogLevel(logging::LOG_ERROR_REPORT);
+      break;
+    case APLOG_ERR:
+      logging::SetMinLogLevel(logging::LOG_ERROR);
+      break;
+    case APLOG_WARNING:
+      logging::SetMinLogLevel(logging::LOG_WARNING);
+      break;
+    case APLOG_NOTICE:
+    case APLOG_INFO:
+    case APLOG_DEBUG:
+    default:
+      logging::SetMinLogLevel(std::min(logging::LOG_INFO, -vlog_level));
+      break;
+  }
+}
+
 }  // namespace mod_spdy

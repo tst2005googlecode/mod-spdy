@@ -74,6 +74,18 @@ const char* SetPositiveInt(cmd_parms* cmd, void* dir, const char* arg) {
   return NULL;
 }
 
+// Like SetPositiveInt, but allows any non-negative value, not just positive.
+template <void(SpdyServerConfig::*setter)(int)>
+const char* SetNonNegativeInt(cmd_parms* cmd, void* dir, const char* arg) {
+  int value;
+  if (!base::StringToInt(arg, &value) || value < 0) {
+    return apr_pstrcat(cmd->pool, cmd->cmd->name,
+                       " must specify a non-negative integer", NULL);
+  }
+  (GetServerConfig(cmd)->*setter)(value);
+  return NULL;
+}
+
 }  // namespace
 
 // The reinterpret_cast is there because Apache's AP_INIT_TAKE1 macro needs to
@@ -101,6 +113,10 @@ const command_rec kSpdyConfigCommands[] = {
       SetPositiveInt<&SpdyServerConfig::set_max_threads_per_process>,
       "Maxiumum number of worker threads to spawn per child process"),
   // Debugging commands, which should not be used in production:
+  SPDY_CONFIG_COMMAND(
+      "SpdyDebugLoggingVerbosity",
+      SetNonNegativeInt<&SpdyServerConfig::set_vlog_level>,
+      "Set the verbosity of mod_spdy logging"),
   SPDY_CONFIG_COMMAND(
       "SpdyDebugUseSpdyForNonSslConnections",
       SetBoolean<&SpdyServerConfig::set_use_even_without_ssl>,

@@ -20,8 +20,14 @@
 namespace mod_spdy {
 
 // Install a log message handler that routes LOG() messages to the
-// apache error log. Should be called once at startup.
+// apache error log.  Should be called once, at server startup.
 void InstallLogMessageHandler(apr_pool_t* pool);
+
+// Set the logging level for LOG() messages, based on the Apache log level and
+// the VLOG-level specified in the server config.  Note that the VLOG level
+// will be ignored unless the Apache log verbosity is at NOTICE or higher.
+// Should be called once for each child process, at process startup.
+void SetLoggingLevel(int apache_log_level, int vlog_level);
 
 }  // namespace mod_spdy
 

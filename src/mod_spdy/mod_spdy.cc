@@ -203,6 +203,11 @@ void RetrieveOptionalFunctions() {
 // spawning worker threads.
 void ChildInit(apr_pool_t* pool, server_rec* server) {
   const mod_spdy::SpdyServerConfig* config = mod_spdy::GetServerConfig(server);
+
+  // Set the logging level for this process.
+  mod_spdy::SetLoggingLevel(server->loglevel, config->vlog_level());
+
+  // Create the per-process thread pool.
   const int max_threads = config->max_threads_per_process();
   const apr_status_t status = apr_thread_pool_create(
       &gPerProcessThreadPool, max_threads, max_threads, pool);
@@ -400,6 +405,8 @@ int ProcessConnection(conn_rec* connection) {
     return DECLINED;
   }
 
+  VLOG(1) << "Starting SPDY session for client " << connection->remote_ip;
+
   // At this point, we and the client have agreed to use SPDY (either that, or
   // we've been configured to use SPDY regardless of what the client says), so
   // process this as a SPDY master connection.
@@ -411,6 +418,8 @@ int ProcessConnection(conn_rec* connection) {
       &session_io, &task_factory, &executor);
   // This call will block until the session has closed down.
   spdy_session.Run();
+
+  VLOG(1) << "Terminating SPDY session for client " << connection->remote_ip;
 
   // Return OK to tell Apache that we handled this connection.
   return OK;

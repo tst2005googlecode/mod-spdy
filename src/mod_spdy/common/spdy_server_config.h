@@ -45,6 +45,9 @@ class SpdyServerConfig {
     return use_even_without_ssl_.get();
   }
 
+  // Return the maximum VLOG level we should use.
+  int vlog_level() const { return vlog_level_.get(); }
+
   // Setters.  Call only during the configuration phase.
   void set_spdy_enabled(bool b) { spdy_enabled_.set(b); }
   void set_max_streams_per_connection(int n) {
@@ -56,6 +59,7 @@ class SpdyServerConfig {
   void set_use_even_without_ssl(bool b) {
     use_even_without_ssl_.set(b);
   }
+  void set_vlog_level(int n) { vlog_level_.set(n); }
 
   // Set this config object to the merge of a and b.  Call only during the
   // configuration phase.
@@ -84,6 +88,7 @@ class SpdyServerConfig {
   Option<int> max_streams_per_connection_;
   Option<int> max_threads_per_process_;
   Option<bool> use_even_without_ssl_;
+  Option<int> vlog_level_;
   // Note: Add more config options here as needed; be sure to also update the
   //   MergeFrom method in spdy_server_config.cc.
 

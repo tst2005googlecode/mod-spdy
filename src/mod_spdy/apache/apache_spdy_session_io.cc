@@ -62,11 +62,33 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
     const apr_status_t status = ap_get_brigade(
         connection_->input_filters, input_brigade_, AP_MODE_READBYTES,
         read_type, kReadBytes);
-    if (status != APR_SUCCESS && !APR_STATUS_IS_EAGAIN(status)) {
-      ap_log_cerror(APLOG_MARK, APLOG_WARNING, status, connection_,
-                    "TryPullingData: ap_get_brigade failed (%d)",
-                    static_cast<int>(status));
-      // TODO(mdsteele): Shouldn't always return READ_CONNECTION_CLOSED here.
+    if (status == APR_SUCCESS) {
+      // Success; we'll process the brigade below.
+    } else if (APR_STATUS_IS_EAGAIN(status)) {
+      // EAGAIN probably indicates that we did a non-blocking read and no data
+      // was available.  So, just press on and process the brigade (it should
+      // be empty, but maybe there'll be metadata buckets or something).  Most
+      // likely we'll end up returning READ_NO_DATA at the end of this method.
+    } else if (APR_STATUS_IS_TIMEUP(status)) {
+      // TIMEUP tends to occur for blocking reads, if some upstream filter set
+      // a timeout.  Just like with EAGAIN, we'll press on and process the
+      // probably-empty brigade, but since these seem to be rare, let's VLOG
+      // here so that we can see when they happen.
+      VLOG(3) << "ap_get_brigade returned TIMEUP for client "
+              << connection_->remote_ip;
+    } else {
+      // Otherwise, something has gone wrong and we should consider the
+      // connection closed.  If the client merely closed the connection on us,
+      // we'll get an EOF error, which is fine; otherwise, something may be
+      // wrong, so we should log an error.
+      if (APR_STATUS_IS_EOF(status)) {
+        VLOG(2) << "ap_get_brigade returned EOF for client "
+                << connection_->remote_ip;
+      } else {
+        LOG(ERROR) << "ap_get_brigade failed with status=" << status
+                   << " for client " << connection_->remote_ip;
+      }
+      apr_brigade_cleanup(input_brigade_);
       return READ_CONNECTION_CLOSED;
     }
   }
