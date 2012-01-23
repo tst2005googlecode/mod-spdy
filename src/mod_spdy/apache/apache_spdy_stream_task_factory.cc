@@ -133,10 +133,6 @@ ApacheStreamTask::ApacheStreamTask(const conn_rec* master_connection,
 }
 
 void ApacheStreamTask::Run() {
-  ap_log_cerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, slave_connection_,
-                "Starting ApacheStreamTask::Run() for stream %d.",
-                static_cast<int>(stream_->stream_id()));
-
   if (!stream_->is_aborted()) {
     // In our context object for this connection, mark this connection as being
     // a slave.  Our pre-connection and process-connection hooks will notice
@@ -162,9 +158,6 @@ void ApacheStreamTask::Run() {
     ap_process_connection(slave_connection_, slave_socket_);
   }
 
-  ap_log_cerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, slave_connection_,
-                "Finishing ApacheStreamTask::Run() for stream %d.",
-                static_cast<int>(stream_->stream_id()));
 }
 
 }  // namespace

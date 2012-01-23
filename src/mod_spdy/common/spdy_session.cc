@@ -168,6 +168,7 @@ void SpdySession::OnControl(const spdy::SpdyControlFrame* frame) {
       break;
     case spdy::NOOP:
       // ignore NOOP frames
+      VLOG(4) << "Received NOOP frame";
       break;
     case spdy::PING:
       HandlePing(*frame);
@@ -194,6 +195,8 @@ void SpdySession::OnStreamFrameData(spdy::SpdyStreamId stream_id,
     base::AutoLock autolock(stream_map_lock_);
     SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
     if (iter != stream_map_.end()) {
+      VLOG(4) << "[stream " << stream_id << "] Received DATA (length="
+              << length << ")";
       SpdyStream* stream = iter->second->stream();
       // Copy the data into an _uncompressed_ SPDY data frame and post it to
       // the stream's input queue.
@@ -213,6 +216,8 @@ void SpdySession::OnStreamFrameData(spdy::SpdyStreamId stream_id,
   // RST_STREAM frame with error code INVALID_STREAM.  See
   // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-Data-frames
   // Note that we release the mutex *before* sending the frame.
+  LOG(WARNING) << "Client sent DATA (length=" << length
+               << ") for nonexistant stream " << stream_id;
   SendRstStreamFrame(stream_id, spdy::INVALID_STREAM);
 }
 
@@ -276,6 +281,7 @@ void SpdySession::HandleSynStream(
                               priority);
     stream_map_[stream_id] = task_wrapper;
     task_wrapper->stream()->PostInputFrame(decompressed_frame.release());
+    VLOG(2) << "Received SYN_STREAM; opening stream " << stream_id;
     executor_->AddTask(task_wrapper, priority);
   }
 }
@@ -293,6 +299,7 @@ void SpdySession::HandleRstStream(
     // stream without a fuss.
     case spdy::REFUSED_STREAM:
     case spdy::CANCEL:
+      VLOG(2) << "Client cancelled/refused stream " << stream_id;
       AbortStreamSilently(stream_id);
       break;
     // If there was a PROTOCOL_ERROR, the session is probably unrecoverable,
@@ -316,6 +323,7 @@ void SpdySession::HandleRstStream(
 
 void SpdySession::HandleSettings(
     const spdy::SpdySettingsControlFrame& frame) {
+  VLOG(4) << "Received SETTINGS frame";
   // TODO(mdsteele): For now, we ignore SETTINGS frames from the client.  Once
   // we implement server-push, we should at least pay attention to the
   // MAX_CONCURRENT_STREAMS setting from the client so that we don't overload
@@ -323,6 +331,7 @@ void SpdySession::HandleSettings(
 }
 
 void SpdySession::HandlePing(const spdy::SpdyControlFrame& frame) {
+  VLOG(4) << "Received PING frame";
   // The SPDY spec requires the server to ignore even-numbered PING frames that
   // it did not initiate.  See:
   // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-PING
@@ -339,6 +348,8 @@ void SpdySession::HandlePing(const spdy::SpdyControlFrame& frame) {
 }
 
 void SpdySession::HandleGoAway(const spdy::SpdyGoAwayControlFrame& frame) {
+  VLOG(4) << "Received GOAWAY frame (last_accepted_stream_id="
+          << frame.last_accepted_stream_id() << ")";
   // TODO(mdsteele): For now I think we can mostly ignore GOAWAY frames, but
   // once we implement server-push we definitely need to take note of them.
 }
@@ -360,6 +371,7 @@ void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
     base::AutoLock autolock(stream_map_lock_);
     SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
     if (iter != stream_map_.end()) {
+      VLOG(4) << "[stream " << stream_id << "] Received HEADERS frame";
       SpdyStream* stream = iter->second->stream();
       stream->PostInputFrame(decompressed_frame.release());
       return;
@@ -367,6 +379,7 @@ void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
   }
 
   // Note that we release the mutex *before* sending the frame.
+  LOG(WARNING) << "Client sent HEADERS for nonexistant stream " << stream_id;
   SendRstStreamFrame(stream_id, spdy::INVALID_STREAM);
 }
 
@@ -448,6 +461,7 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   // thread is currently in the middle of reading the stream map.
   base::AutoLock autolock(stream_map_lock_);
   const spdy::SpdyStreamId stream_id = task_wrapper->stream()->stream_id();
+  VLOG(2) << "[stream " << stream_id << "] Closing stream";
   DCHECK(stream_map_.count(stream_id) == 1);
   DCHECK(task_wrapper == stream_map_[stream_id]);
   stream_map_.erase(stream_id);
@@ -473,10 +487,13 @@ SpdySession::StreamTaskWrapper::~StreamTaskWrapper() {
 }
 
 void SpdySession::StreamTaskWrapper::Run() {
+  VLOG(3) << "[stream " << stream_.stream_id() << "] Starting task";
   subtask_->CallRun();
+  VLOG(3) << "[stream " << stream_.stream_id() << "] Finishing task";
 }
 
 void SpdySession::StreamTaskWrapper::Cancel() {
+  VLOG(3) << "[stream " << stream_.stream_id() << "] Cancelling task";
   subtask_->CallCancel();
 }
 
