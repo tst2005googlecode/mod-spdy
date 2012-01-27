@@ -252,9 +252,14 @@ void SpdySession::HandleSynStream(
   if (stream_id <= last_client_stream_id_) {
     LOG(WARNING) << "Client sent SYN_STREAM for non-increasing stream ID ("
                  << stream_id << " after " << last_client_stream_id_
-                 << ").  Aborting stream.";
+                 << ").";  //  Aborting stream.";
+#if 0
+    // TODO(mdsteele): re-enable this code block when
+    // http://code.google.com/p/chromium/issues/detail?id=111708 is
+    // fixed.
     AbortStream(stream_id, spdy::PROTOCOL_ERROR);
     return;
+#endif
   }
 
   {
@@ -274,7 +279,7 @@ void SpdySession::HandleSynStream(
     }
 
     // Initiate a new stream.
-    last_client_stream_id_ = stream_id;
+    last_client_stream_id_ = std::max(last_client_stream_id_, stream_id);
     const spdy::SpdyPriority priority = frame.priority();
     StreamTaskWrapper* task_wrapper =
         new StreamTaskWrapper(this, stream_id, frame.associated_stream_id(),
