@@ -204,8 +204,14 @@ void RetrieveOptionalFunctions() {
 void ChildInit(apr_pool_t* pool, server_rec* server) {
   const mod_spdy::SpdyServerConfig* config = mod_spdy::GetServerConfig(server);
 
-  // Set the logging level for this process.
+  // Set mod_spdy's logging level for this process.  We should do this even if
+  // mod_spdy is disabled on this server.
   mod_spdy::SetLoggingLevel(server->loglevel, config->vlog_level());
+
+  // If mod_spdy is disabled on this server, don't do any other setup.
+  if (!config->spdy_enabled()) {
+    return;
+  }
 
   // Create the per-process thread pool.
   const int max_threads = config->max_threads_per_process();
@@ -248,8 +254,10 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
     return DECLINED;
   }
 
-  // If the context has already been created, this must be a slave connection.
+  // If the context has already been created, this must be a slave connection
+  // (and mod_spdy must be enabled).
   DCHECK(context->is_slave());
+  DCHECK(mod_spdy::GetServerConfig(connection)->spdy_enabled());
 
   // Disable mod_ssl for the slave connection so it doesn't get in our way.
   if (gDisableSslForConnection == NULL ||
@@ -277,6 +285,14 @@ int PreConnection(conn_rec* connection, void* csd) {
   // If the connection context has not yet been created, this is a "real"
   // connection (not one of our slave connections).
   if (context == NULL) {
+    // If mod_spdy is disabled on this server, don't allocate our context
+    // object.
+    const mod_spdy::SpdyServerConfig* config =
+        mod_spdy::GetServerConfig(connection);
+    if (!config->spdy_enabled()) {
+      return DECLINED;
+    }
+
     bool assume_spdy = false;
 
     // Check if this connection is over SSL; if not, we can't do NPN, so we
@@ -287,7 +303,7 @@ int PreConnection(conn_rec* connection, void* csd) {
       // This is not an SSL connection, so we can't talk SPDY on it _unless_ we
       // have opted to assume SPDY over non-SSL connections (presumably for
       // debugging purposes; this would normally break browsers).
-      if (mod_spdy::GetServerConfig(connection)->use_even_without_ssl()) {
+      if (config->use_even_without_ssl()) {
         assume_spdy = true;
       } else {
         return DECLINED;
@@ -307,6 +323,7 @@ int PreConnection(conn_rec* connection, void* csd) {
   // If the context has already been created, this is a slave connection.
   else {
     DCHECK(context->is_slave());
+    DCHECK(mod_spdy::GetServerConfig(connection)->spdy_enabled());
 
     // Instantiate and add our SPDY-to-HTTP filter for the slave connection.
     // This is an Apache connection-level filter, so we add it here.  The
@@ -333,6 +350,13 @@ int PreConnection(conn_rec* connection, void* csd) {
 // determine if they are using SPDY; if not we returned DECLINED, but if so we
 // process this as a master SPDY connection and then return OK.
 int ProcessConnection(conn_rec* connection) {
+  // If mod_spdy is disabled on this server, don't use SPDY.
+  const mod_spdy::SpdyServerConfig* config =
+      mod_spdy::GetServerConfig(connection);
+  if (!config->spdy_enabled()) {
+    return DECLINED;
+  }
+
   // We do not want to attach to non-inbound connections (e.g. connections
   // created by mod_proxy).  Non-inbound connections do not get a scoreboard
   // hook, so we abort if the connection doesn't have the scoreboard hook.  See
@@ -414,8 +438,7 @@ int ProcessConnection(conn_rec* connection) {
   mod_spdy::ApacheSpdyStreamTaskFactory task_factory(connection);
   mod_spdy::AprThreadPoolExecutor executor(gPerProcessThreadPool);
   mod_spdy::SpdySession spdy_session(
-      mod_spdy::GetServerConfig(connection),
-      &session_io, &task_factory, &executor);
+      config, &session_io, &task_factory, &executor);
   // This call will block until the session has closed down.
   spdy_session.Run();
 
@@ -428,8 +451,8 @@ int ProcessConnection(conn_rec* connection) {
 // Called by mod_ssl when it needs to decide what protocols to advertise to the
 // client during Next Protocol Negotiation (NPN).
 int AdvertiseNpnProtocols(conn_rec* connection, apr_array_header_t* protos) {
-  // If the config file has disabled mod_spdy for this server, then we
-  // shouldn't advertise SPDY to the client.
+  // If mod_spdy is disabled on this server, then we shouldn't advertise SPDY
+  // to the client.
   if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
     return DECLINED;
   }
@@ -446,13 +469,19 @@ int AdvertiseNpnProtocols(conn_rec* connection, apr_array_header_t* protos) {
 // informing us which protocol was chosen by the client.
 int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
                              apr_size_t proto_name_len) {
+  // If mod_spdy is disabled on this server, then ignore the results of NPN.
+  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    return DECLINED;
+  }
+
   mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
 
-  // Our context object should have already been created in our pre-connection
-  // hook, unless this is a non-SSL connection.  But if it's a non-SSL
-  // connection, then NPN shouldn't be happening, and this hook shouldn't be
-  // getting called!  So, let's LOG(DFATAL) if context is NULL here.
+  // Given that mod_spdy is enabled, our context object should have already
+  // been created in our pre-connection hook, unless this is a non-SSL
+  // connection.  But if it's a non-SSL connection, then NPN shouldn't be
+  // happening, and this hook shouldn't be getting called!  So, let's
+  // LOG(DFATAL) if context is NULL here.
   if (context == NULL) {
     LOG(DFATAL) << "NPN happened, but there is no connection context.";
     return DECLINED;
@@ -487,12 +516,18 @@ int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
 // Invoked once per HTTP request.  See http_request.h for details.
 void InsertRequestFilters(request_rec* request) {
   conn_rec* connection = request->connection;
+
+  // If mod_spdy is disabled on this server, then don't insert any filters.
+  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    return;
+  }
+
   const mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
 
-  // Our context object should be present by now (having been created in our
-  // pre-connection hook) unless this is a non-SSL connection, in which case we
-  // definitely aren't using SPDY.
+  // Given that mod_spdy is enabled, our context object should be present by
+  // now (having been created in our pre-connection hook) unless this is a
+  // non-SSL connection, in which case we definitely aren't using SPDY.
   if (context == NULL) {
     return;
   }

@@ -49,7 +49,9 @@ ConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
 
 // Get the connection object that was attached to this connection by
 // CreateConnectionContext; return NULL if CreateConnectionContext has not been
-// called for this connection.
+// called for this connection, which will be the case if 1) mod_spdy is
+// disabled on this server, 2) this is a non-SSL connection, or 3) this is not
+// a slave connection, and the pre-connection hook hasn't fired yet.
 ConnectionContext* GetConnectionContext(conn_rec* connection);
 
 }  // namespace mod_spdy
