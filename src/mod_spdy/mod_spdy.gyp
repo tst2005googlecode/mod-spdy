@@ -72,6 +72,7 @@
         'apache/filters/http_to_spdy_filter.cc',
         'apache/filters/spdy_to_http_filter.cc',
         'apache/log_message_handler.cc',
+        'apache/pool_util.cc',
         'apache/response_header_populator.cc',
       ],
     },

@@ -15,6 +15,8 @@
 #ifndef MOD_SPDY_APACHE_POOL_UTIL_H_
 #define MOD_SPDY_APACHE_POOL_UTIL_H_
 
+#include <string>
+
 #include "apr_pools.h"
 #include "base/logging.h"
 
@@ -80,6 +82,9 @@ template <class T>
 void PoolUnregisterDelete(apr_pool_t* pool, T* object) {
   apr_pool_cleanup_kill(pool, object, DeletionFunction<T>);
 }
+
+// Return a string describing the given APR status code.
+std::string AprStatusString(apr_status_t status);
 
 }  // namespace mod_spdy
 

@@ -466,7 +466,7 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   // thread is currently in the middle of reading the stream map.
   base::AutoLock autolock(stream_map_lock_);
   const spdy::SpdyStreamId stream_id = task_wrapper->stream()->stream_id();
-  VLOG(2) << "[stream " << stream_id << "] Closing stream";
+  VLOG(2) << "Closing stream " << stream_id;
   DCHECK(stream_map_.count(stream_id) == 1);
   DCHECK(task_wrapper == stream_map_[stream_id]);
   stream_map_.erase(stream_id);
@@ -492,13 +492,10 @@ SpdySession::StreamTaskWrapper::~StreamTaskWrapper() {
 }
 
 void SpdySession::StreamTaskWrapper::Run() {
-  VLOG(3) << "[stream " << stream_.stream_id() << "] Starting task";
   subtask_->CallRun();
-  VLOG(3) << "[stream " << stream_.stream_id() << "] Finishing task";
 }
 
 void SpdySession::StreamTaskWrapper::Cancel() {
-  VLOG(3) << "[stream " << stream_.stream_id() << "] Cancelling task";
   subtask_->CallCancel();
 }
 

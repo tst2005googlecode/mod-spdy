@@ -16,15 +16,19 @@
 
 #include <limits>
 #include <string>
-#include "base/debug/debugger.h"
-#include "base/debug/stack_trace.h"
-#include "base/logging.h"
-#include "httpd.h"
 
+#include "httpd.h"
 // When HAVE_SYSLOG is defined, apache http_log.h will include syslog.h, which
 // #defined LOG_* as numbers. This conflicts with what we are using those here.
 #undef HAVE_SYSLOG
 #include "http_log.h"
+
+#include "base/debug/debugger.h"
+#include "base/debug/stack_trace.h"
+#include "base/logging.h"
+#include "base/threading/thread_local.h"
+#include "mod_spdy/apache/pool_util.h"
+#include "mod_spdy/common/spdy_stream.h"
 
 // Make sure we don't attempt to use LOG macros here, since doing so
 // would cause us to go into an infinite log loop.
@@ -33,10 +37,86 @@
 
 namespace {
 
+class LogHandler;
+
 apr_pool_t* log_pool = NULL;
+base::ThreadLocalPointer<LogHandler>* gThreadLocalLogHandler = NULL;
 
 const int kMaxInt = std::numeric_limits<int>::max();
 int log_level_cutoff = kMaxInt;
+
+class LogHandler {
+ public:
+  explicit LogHandler(LogHandler* parent) : parent_(parent) {}
+  virtual ~LogHandler() {}
+  virtual void Log(int log_level, const std::string& message) = 0;
+  LogHandler* parent() const { return parent_; }
+ private:
+  LogHandler* parent_;
+  DISALLOW_COPY_AND_ASSIGN(LogHandler);
+};
+
+// Log a message with the given LogHandler; if the LogHandler is NULL, fall
+// back to using ap_log_perror.
+void LogWithHandler(LogHandler* handler, int log_level,
+                    const std::string& message) {
+  if (handler != NULL) {
+    handler->Log(log_level, message);
+  } else {
+    ap_log_perror(APLOG_MARK, log_level, APR_SUCCESS, log_pool,
+                  "%s", message.c_str());
+  }
+}
+
+void PopLogHandler() {
+  CHECK(gThreadLocalLogHandler);
+  LogHandler* handler = gThreadLocalLogHandler->Get();
+  CHECK(handler);
+  gThreadLocalLogHandler->Set(handler->parent());
+  delete handler;
+}
+
+class ServerLogHandler : public LogHandler {
+ public:
+  ServerLogHandler(LogHandler* parent, server_rec* server)
+      : LogHandler(parent), server_(server) {}
+  virtual void Log(int log_level, const std::string& message) {
+    ap_log_error(APLOG_MARK, log_level, APR_SUCCESS, server_,
+                 "%s", message.c_str());
+  }
+ private:
+  server_rec* const server_;
+  DISALLOW_COPY_AND_ASSIGN(ServerLogHandler);
+};
+
+class ConnectionLogHandler : public LogHandler {
+ public:
+  ConnectionLogHandler(LogHandler* parent, conn_rec* connection)
+      : LogHandler(parent), connection_(connection) {}
+  virtual void Log(int log_level, const std::string& message) {
+    ap_log_cerror(APLOG_MARK, log_level, APR_SUCCESS, connection_,
+                  "%s", message.c_str());
+  }
+ private:
+  conn_rec* const connection_;
+  DISALLOW_COPY_AND_ASSIGN(ConnectionLogHandler);
+};
+
+class StreamLogHandler : public LogHandler {
+ public:
+  StreamLogHandler(LogHandler* parent, conn_rec* connection,
+                   const mod_spdy::SpdyStream* stream)
+      : LogHandler(parent), connection_(connection), stream_(stream) {}
+  virtual void Log(int log_level, const std::string& message) {
+    ap_log_cerror(APLOG_MARK, log_level, APR_SUCCESS, connection_,
+                  "[stream %d] %s", static_cast<int>(stream_->stream_id()),
+                  message.c_str());
+  }
+ private:
+  conn_rec* const connection_;
+  const mod_spdy::SpdyStream* const stream_;
+  DISALLOW_COPY_AND_ASSIGN(StreamLogHandler);
+};
 
 int GetApacheLogLevel(int severity) {
   switch (severity) {
@@ -82,8 +162,7 @@ bool LogMessageHandler(int severity, const char* file, int line,
   }
 
   if (this_log_level <= log_level_cutoff || log_level_cutoff == kMaxInt) {
-    ap_log_perror(APLOG_MARK, this_log_level, APR_SUCCESS, log_pool,
-                  "%s", message.c_str());
+    LogWithHandler(gThreadLocalLogHandler->Get(), this_log_level, message);
   }
 
   if (severity == logging::LOG_FATAL) {
@@ -110,8 +189,41 @@ bool kShowTickcount = false;
 
 namespace mod_spdy {
 
+ScopedServerLogHandler::ScopedServerLogHandler(server_rec* server) {
+  CHECK(gThreadLocalLogHandler);
+  gThreadLocalLogHandler->Set(new ServerLogHandler(
+      gThreadLocalLogHandler->Get(), server));
+}
+
+ScopedServerLogHandler::~ScopedServerLogHandler() {
+  PopLogHandler();
+}
+
+ScopedConnectionLogHandler::ScopedConnectionLogHandler(conn_rec* connection) {
+  CHECK(gThreadLocalLogHandler);
+  gThreadLocalLogHandler->Set(new ConnectionLogHandler(
+      gThreadLocalLogHandler->Get(), connection));
+}
+
+ScopedConnectionLogHandler::~ScopedConnectionLogHandler() {
+  PopLogHandler();
+}
+
+ScopedStreamLogHandler::ScopedStreamLogHandler(conn_rec* slave_connection,
+                                               const SpdyStream* stream) {
+  CHECK(gThreadLocalLogHandler);
+  gThreadLocalLogHandler->Set(new StreamLogHandler(
+      gThreadLocalLogHandler->Get(), slave_connection, stream));
+}
+
+ScopedStreamLogHandler::~ScopedStreamLogHandler() {
+  PopLogHandler();
+}
+
 void InstallLogMessageHandler(apr_pool_t* pool) {
   log_pool = pool;
+  gThreadLocalLogHandler = new base::ThreadLocalPointer<LogHandler>();
+  PoolRegisterDelete(pool, gThreadLocalLogHandler);
   logging::SetLogItems(kShowProcessId,
                        kShowThreadId,
                        kShowTimestamp,

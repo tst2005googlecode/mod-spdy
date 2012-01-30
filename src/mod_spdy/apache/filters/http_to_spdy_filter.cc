@@ -49,6 +49,7 @@
 #include "apr_strings.h"
 
 #include "base/logging.h"
+#include "mod_spdy/apache/pool_util.h"  // for AprStatusString
 #include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/version.h"
@@ -176,7 +177,8 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
         Send(filter, true);
         status = apr_bucket_read(bucket, &data, &data_length, APR_BLOCK_READ);
         if (status != APR_SUCCESS) {
-          LOG(ERROR) << "Blocking read failed with status code " << status;
+          LOG(ERROR) << "Blocking read failed with status " << status << ": "
+                     << AprStatusString(status);
           return status;
         }
         data_buffer_.append(data, static_cast<size_t>(data_length));

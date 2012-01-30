@@ -207,6 +207,7 @@ void ChildInit(apr_pool_t* pool, server_rec* server) {
   // Set mod_spdy's logging level for this process.  We should do this even if
   // mod_spdy is disabled on this server.
   mod_spdy::SetLoggingLevel(server->loglevel, config->vlog_level());
+  mod_spdy::ScopedServerLogHandler log_handler(server);
 
   // If mod_spdy is disabled on this server, don't do any other setup.
   if (!config->spdy_enabled()) {
@@ -218,9 +219,8 @@ void ChildInit(apr_pool_t* pool, server_rec* server) {
   const apr_status_t status = apr_thread_pool_create(
       &gPerProcessThreadPool, max_threads, max_threads, pool);
   if (status != APR_SUCCESS) {
-    ap_log_error(APLOG_MARK, APLOG_ALERT, status, server,
-                 "Could not create mod_spdy thread pool; "
-                 "mod_spdy will not function.");
+    LOG(DFATAL) << "Could not create mod_spdy thread pool (status="
+                << status << "); mod_spdy will not function.";
   } else {
     // TODO(mdsteele): This is very strange.  If you _don't_ have this next
     // line (and we wouldn't expect to need it, having allocated the thread
@@ -245,6 +245,8 @@ void ChildInit(apr_pool_t* pool, server_rec* server) {
 // A pre-connection hook, to be run _before_ mod_ssl's pre-connection hook.
 // Disables mod_ssl for our slave connections.
 int DisableSslForSlaves(conn_rec* connection, void* csd) {
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
+
   const mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
 
@@ -279,6 +281,8 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
 // checks if SSL is active; for slave connections, this adds our
 // connection-level filters and prevents core filters from being inserted.
 int PreConnection(conn_rec* connection, void* csd) {
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
+
   mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
 
@@ -350,6 +354,8 @@ int PreConnection(conn_rec* connection, void* csd) {
 // determine if they are using SPDY; if not we returned DECLINED, but if so we
 // process this as a master SPDY connection and then return OK.
 int ProcessConnection(conn_rec* connection) {
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
+
   // If mod_spdy is disabled on this server, don't use SPDY.
   const mod_spdy::SpdyServerConfig* config =
       mod_spdy::GetServerConfig(connection);
@@ -406,7 +412,8 @@ int ProcessConnection(conn_rec* connection) {
       // EOF errors are to be expected sometimes (e.g. if the connection was
       // closed).  If the error was something else, though, log an error.
       if (!APR_STATUS_IS_EOF(status)) {
-        LOG(ERROR) << "Error during speculative read: " << status;
+        LOG(ERROR) << "Speculative read failed with status " << status << ": "
+                   << mod_spdy::AprStatusString(status);
       }
       return DECLINED;
     }
@@ -429,7 +436,7 @@ int ProcessConnection(conn_rec* connection) {
     return DECLINED;
   }
 
-  VLOG(1) << "Starting SPDY session for client " << connection->remote_ip;
+  VLOG(1) << "Starting SPDY session";
 
   // At this point, we and the client have agreed to use SPDY (either that, or
   // we've been configured to use SPDY regardless of what the client says), so
@@ -442,7 +449,7 @@ int ProcessConnection(conn_rec* connection) {
   // This call will block until the session has closed down.
   spdy_session.Run();
 
-  VLOG(1) << "Terminating SPDY session for client " << connection->remote_ip;
+  VLOG(1) << "Terminating SPDY session";
 
   // Return OK to tell Apache that we handled this connection.
   return OK;
@@ -469,6 +476,8 @@ int AdvertiseNpnProtocols(conn_rec* connection, apr_array_header_t* protos) {
 // informing us which protocol was chosen by the client.
 int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
                              apr_size_t proto_name_len) {
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
+
   // If mod_spdy is disabled on this server, then ignore the results of NPN.
   if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
     return DECLINED;

@@ -20,6 +20,7 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
+#include "mod_spdy/apache/pool_util.h"  // for AprStatusString
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
@@ -74,19 +75,17 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
       // a timeout.  Just like with EAGAIN, we'll press on and process the
       // probably-empty brigade, but since these seem to be rare, let's VLOG
       // here so that we can see when they happen.
-      VLOG(3) << "ap_get_brigade returned TIMEUP for client "
-              << connection_->remote_ip;
+      VLOG(3) << "ap_get_brigade returned TIMEUP";
     } else {
       // Otherwise, something has gone wrong and we should consider the
       // connection closed.  If the client merely closed the connection on us,
       // we'll get an EOF error, which is fine; otherwise, something may be
       // wrong, so we should log an error.
       if (APR_STATUS_IS_EOF(status)) {
-        VLOG(2) << "ap_get_brigade returned EOF for client "
-                << connection_->remote_ip;
+        VLOG(2) << "ap_get_brigade returned EOF";
       } else {
-        LOG(ERROR) << "ap_get_brigade failed with status=" << status
-                   << " for client " << connection_->remote_ip;
+        LOG(ERROR) << "ap_get_brigade failed with status " << status << ": "
+                   << AprStatusString(status);
       }
       apr_brigade_cleanup(input_brigade_);
       return READ_CONNECTION_CLOSED;
@@ -113,8 +112,8 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
         //   will always succeed.  However, in theory there could be another
         //   filter between us and mod_ssl, and in theory it could be sending
         //   us bucket types for which non-blocking reads can fail.
-        ap_log_cerror(APLOG_MARK, APLOG_ERR, status, connection_,
-                      "TryPullingData: apr_bucket_read failed");
+        LOG(ERROR) << "apr_bucket_read failed with status " << status << ": "
+                   << AprStatusString(status);
       }
 
       const size_t consumed = framer->ProcessInput(data, data_length);

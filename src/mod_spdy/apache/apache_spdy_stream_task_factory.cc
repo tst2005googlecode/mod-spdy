@@ -31,6 +31,7 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "mod_spdy/apache/config_util.h"
+#include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -50,7 +51,7 @@ class ApacheStreamTask : public net_instaweb::Function {
  protected:
   // net_instaweb::Function methods:
   virtual void Run();
-  virtual void Cancel() {}
+  virtual void Cancel();
 
  private:
   SpdyStream* const stream_;
@@ -133,6 +134,8 @@ ApacheStreamTask::ApacheStreamTask(const conn_rec* master_connection,
 }
 
 void ApacheStreamTask::Run() {
+  ScopedStreamLogHandler log_handler(slave_connection_, stream_);
+  VLOG(3) << "Starting stream task";
   if (!stream_->is_aborted()) {
     // In our context object for this connection, mark this connection as being
     // a slave.  Our pre-connection and process-connection hooks will notice
@@ -157,7 +160,14 @@ void ApacheStreamTask::Run() {
     // connection is complete.
     ap_process_connection(slave_connection_, slave_socket_);
   }
+  VLOG(3) << "Finishing stream task";
+}
 
+void ApacheStreamTask::Cancel() {
+  if (VLOG_IS_ON(3)) {
+    ScopedStreamLogHandler log_handler(slave_connection_, stream_);
+    VLOG(3) << "Cancelling stream task";
+  }
 }
 
 }  // namespace

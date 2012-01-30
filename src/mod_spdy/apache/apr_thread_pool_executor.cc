@@ -22,6 +22,7 @@
 #include "base/logging.h"
 #include "base/stl_util-inl.h"
 #include "base/synchronization/lock.h"
+#include "mod_spdy/apache/pool_util.h"  // for AprStatusString
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_protocol.h"
 
@@ -85,7 +86,8 @@ void AprThreadPoolExecutor::AddTask(net_instaweb::Function* task,
   // shouldn't happen), then we should kill the task at this point so we don't
   // leak memory.
   if (status != APR_SUCCESS) {
-    LOG(DFATAL) << "apr_thread_pool_push failed (status=" << status << ")";
+    LOG(DFATAL) << "apr_thread_pool_push failed with status " << status << ": "
+                << AprStatusString(status);
     task->CallCancel();  // Cancel and delete the Function object.
     delete task_data;
     return;
