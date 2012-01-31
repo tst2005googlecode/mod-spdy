@@ -407,11 +407,21 @@ int ProcessConnection(conn_rec* connection) {
                        AP_MODE_SPECULATIVE, APR_BLOCK_READ, 1);
     apr_brigade_destroy(temp_brigade);
 
-    // If we were unable to pull any data through, give up.
+    // If we were unable to pull any data through, give up and return DECLINED.
     if (status != APR_SUCCESS) {
-      // EOF errors are to be expected sometimes (e.g. if the connection was
-      // closed).  If the error was something else, though, log an error.
-      if (!APR_STATUS_IS_EOF(status)) {
+      // Depending on exactly what went wrong, we may want to log something
+      // before returning DECLINED.
+      if (APR_STATUS_IS_EOF(status)) {
+        // EOF errors are to be expected sometimes (e.g. if the connection was
+        // closed), and we should just quietly give up.  No need to log in this
+        // case.
+      } else if (APR_STATUS_IS_TIMEUP(status)) {
+        // TIMEUP errors also seem to happen occasionally.  I think we should
+        // also give up in this case, but I'm not sure yet; for now let's VLOG
+        // when it happens, to help with debugging [mdsteele].
+        VLOG(1) << "Speculative read returned TIMEUP.";
+      } else {
+        // Any other error might be a real problem, so let's log it.
         LOG(ERROR) << "Speculative read failed with status " << status << ": "
                    << mod_spdy::AprStatusString(status);
       }
