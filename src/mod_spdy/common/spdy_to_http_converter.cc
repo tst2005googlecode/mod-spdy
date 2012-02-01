@@ -269,8 +269,12 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
     visitor_->OnLeadingHeadersComplete();
   }
 
-  // Translate the SPDY data frame into an HTTP data chunk.
-  visitor_->OnDataChunk(base::StringPiece(frame.payload(), frame.length()));
+  // Translate the SPDY data frame into an HTTP data chunk.  However, we must
+  // not emit a zero-length chunk, as that would be interpreted as the
+  // data-chunks-complete marker.
+  if (frame.length() > 0) {
+    visitor_->OnDataChunk(base::StringPiece(frame.payload(), frame.length()));
+  }
 
   // If this is the last frame on this stream, finish off the HTTP request.
   if (HasDataFlagFinSet(frame)) {

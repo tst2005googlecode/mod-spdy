@@ -101,6 +101,13 @@ TEST_F(SpdyToHttpConverterTest, MultiFrameStream) {
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
             converter_.ConvertDataFrame(*data_frame_1));
 
+  // Should be no call to OnDataChunk for an empty data frame.
+  scoped_ptr<spdy::SpdyDataFrame> data_frame_empty(
+      framer_.CreateDataFrame(
+          stream_id, "", 0, spdy::DATA_FLAG_NONE));
+  EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
+            converter_.ConvertDataFrame(*data_frame_empty));
+
   EXPECT_CALL(visitor_, OnDataChunk(Eq(kVersion)));
   EXPECT_CALL(visitor_, OnDataChunksComplete());
   EXPECT_CALL(visitor_, OnComplete());

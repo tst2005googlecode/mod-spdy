@@ -386,4 +386,77 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
   ExpectEndOfBrigade();
 }
 
+TEST_F(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
+  // Send a SYN_STREAM frame from the client.
+  spdy::SpdyHeaderBlock headers;
+  headers["host"] = "www.example.org";
+  headers["method"] = "POST";
+  headers["referer"] = "https://www.example.org/index.html";
+  headers["scheme"] = "https";
+  headers["url"] = "/do/some/stuff.py";
+  headers["version"] = "HTTP/1.1";
+  PostSynStreamFrame(spdy::CONTROL_FLAG_NONE, &headers);
+
+  // Now send a few DATA frames, with a zero-length data frame in the middle.
+  PostDataFrame(spdy::DATA_FLAG_NONE, "Please do");
+  PostDataFrame(spdy::DATA_FLAG_NONE, " some ");
+  PostDataFrame(spdy::DATA_FLAG_NONE, "");
+  PostDataFrame(spdy::DATA_FLAG_FIN, "stuff.\n");
+
+  // Read in all the data.  The empty data frame should be ignored.
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
+                        "host: www.example.org\r\n"
+                        "referer: https://www.example.org/index.html\r\n"
+                        "transfer-encoding: chunked\r\n"
+                        "\r\n"
+                        "9\r\n"
+                        "Please do\r\n"
+                        "6\r\n"
+                        " some \r\n"
+                        "7\r\n"
+                        "stuff.\n\r\n"
+                        "0\r\n"
+                        "\r\n");
+  ExpectEosBucket();
+  ExpectEndOfBrigade();
+}
+
+TEST_F(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
+  // Send a SYN_STREAM frame from the client.
+  spdy::SpdyHeaderBlock headers;
+  headers["host"] = "www.example.org";
+  headers["method"] = "POST";
+  headers["referer"] = "https://www.example.org/index.html";
+  headers["scheme"] = "https";
+  headers["url"] = "/do/some/stuff.py";
+  headers["version"] = "HTTP/1.1";
+  PostSynStreamFrame(spdy::CONTROL_FLAG_NONE, &headers);
+
+  // Now send a few DATA frames, with a zero-length data frame at the end.
+  PostDataFrame(spdy::DATA_FLAG_NONE, "Please do");
+  PostDataFrame(spdy::DATA_FLAG_NONE, " some ");
+  PostDataFrame(spdy::DATA_FLAG_NONE, "stuff.\n");
+  PostDataFrame(spdy::DATA_FLAG_FIN, "");
+
+  // Read in all the data.  The empty data frame should be ignored (except for
+  // its FLAG_FIN).
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
+                        "host: www.example.org\r\n"
+                        "referer: https://www.example.org/index.html\r\n"
+                        "transfer-encoding: chunked\r\n"
+                        "\r\n"
+                        "9\r\n"
+                        "Please do\r\n"
+                        "6\r\n"
+                        " some \r\n"
+                        "7\r\n"
+                        "stuff.\n\r\n"
+                        "0\r\n"
+                        "\r\n");
+  ExpectEosBucket();
+  ExpectEndOfBrigade();
+}
+
 }  // namespace
