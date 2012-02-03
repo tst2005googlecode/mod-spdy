@@ -198,7 +198,6 @@ TEST_F(SpdyToHttpFilterTest, SimpleGetRequest) {
 TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
   // Send a SYN_STREAM frame from the client.
   spdy::SpdyHeaderBlock headers;
-  headers["content-length"] = "67";
   headers["host"] = "www.example.com";
   headers["method"] = "POST";
   headers["referer"] = "https://www.example.com/index.html";
@@ -354,7 +353,6 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
 
   // Send a HEADERS frame before sending any data frames.
   spdy::SpdyHeaderBlock headers2;
-  headers2["content-length"] = "45";
   headers2["user-agent"] = "ModSpdyUnitTest/1.0";
   PostHeadersFrame(spdy::CONTROL_FLAG_NONE, &headers2);
 
@@ -455,6 +453,82 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
                         "stuff.\n\r\n"
                         "0\r\n"
                         "\r\n");
+  ExpectEosBucket();
+  ExpectEndOfBrigade();
+}
+
+TEST_F(SpdyToHttpFilterTest, PostRequestWithContentLength) {
+  // Send a SYN_STREAM frame from the client.
+  spdy::SpdyHeaderBlock headers;
+  headers["host"] = "www.example.org";
+  headers["method"] = "POST";
+  headers["referer"] = "https://www.example.org/index.html";
+  headers["scheme"] = "https";
+  headers["url"] = "/do/some/stuff.py";
+  headers["version"] = "HTTP/1.1";
+  PostSynStreamFrame(spdy::CONTROL_FLAG_NONE, &headers);
+
+  // Send a few more headers before sending data, including a content-length.
+  spdy::SpdyHeaderBlock headers2;
+  headers2["content-length"] = "22";
+  headers2["user-agent"] = "ModSpdyUnitTest/1.0";
+  PostHeadersFrame(spdy::CONTROL_FLAG_NONE, &headers2);
+
+  // Now send a few DATA frames.
+  PostDataFrame(spdy::DATA_FLAG_NONE, "Please do");
+  PostDataFrame(spdy::DATA_FLAG_NONE, " some ");
+  PostDataFrame(spdy::DATA_FLAG_FIN, "stuff.\n");
+
+  // Read in all the data.  Because we supplied a content-length, chunked
+  // encoding should not be used (to support modules that don't work with
+  // chunked requests).
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
+                        "host: www.example.org\r\n"
+                        "referer: https://www.example.org/index.html\r\n"
+                        "content-length: 22\r\n"
+                        "user-agent: ModSpdyUnitTest/1.0\r\n"
+                        "\r\n"
+                        "Please do some stuff.\n");
+  ExpectEosBucket();
+  ExpectEndOfBrigade();
+}
+
+TEST_F(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
+  // Send a SYN_STREAM frame from the client, including a content-length.
+  spdy::SpdyHeaderBlock headers;
+  headers["content-length"] = "22";
+  headers["host"] = "www.example.org";
+  headers["method"] = "POST";
+  headers["referer"] = "https://www.example.org/index.html";
+  headers["scheme"] = "https";
+  headers["url"] = "/do/some/stuff.py";
+  headers["version"] = "HTTP/1.1";
+  PostSynStreamFrame(spdy::CONTROL_FLAG_NONE, &headers);
+
+  // Now send a few DATA frames.
+  PostDataFrame(spdy::DATA_FLAG_NONE, "Please do");
+  PostDataFrame(spdy::DATA_FLAG_NONE, " some ");
+  PostDataFrame(spdy::DATA_FLAG_NONE, "stuff.\n");
+
+  // Finish with a HEADERS frame.
+  spdy::SpdyHeaderBlock headers2;
+  headers2["x-metadata"] = "foobar";
+  headers2["x-whatever"] = "quux";
+  PostHeadersFrame(spdy::CONTROL_FLAG_FIN, &headers2);
+
+  // Read in all the data.  Because we supplied a content-length, chunked
+  // encoding should not be used, and as an unfortunately consequence, we must
+  // therefore ignore the trailing headers (justified in that, at least in
+  // HTTP, they're generally only used for ignorable metadata; in fact, they're
+  // not generally used at all).
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
+                        "content-length: 22\r\n"
+                        "host: www.example.org\r\n"
+                        "referer: https://www.example.org/index.html\r\n"
+                        "\r\n"
+                        "Please do some stuff.\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
 }

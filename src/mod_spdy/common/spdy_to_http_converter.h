@@ -49,6 +49,8 @@ class SpdyToHttpConverter {
   Status ConvertDataFrame(const spdy::SpdyDataFrame& frame);
 
 private:
+  // Called to generate leading headers from a SYN_STREAM or HEADERS frame.
+  void GenerateLeadingHeaders(const spdy::SpdyHeaderBlock& block);
   // Called when we see a FLAG_FIN.  This terminates the request and appends
   // whatever trailing headers (if any) we have buffered.
   void FinishRequest();
@@ -63,6 +65,7 @@ private:
   HttpStreamVisitorInterface* const visitor_;
   spdy::SpdyHeaderBlock trailing_headers_;
   State state_;
+  bool use_chunking_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyToHttpConverter);
 };

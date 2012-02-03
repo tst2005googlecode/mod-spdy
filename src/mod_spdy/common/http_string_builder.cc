@@ -70,6 +70,12 @@ void HttpStringBuilder::OnLeadingHeadersComplete() {
   string_->append("\r\n");
 }
 
+void HttpStringBuilder::OnRawData(const base::StringPiece& data) {
+  DCHECK(state_ == LEADING_HEADERS_COMPLETE || state_ == RAW_DATA);
+  state_ = RAW_DATA;
+  data.AppendToString(string_);
+}
+
 void HttpStringBuilder::OnDataChunk(const base::StringPiece& data) {
   DCHECK(state_ == LEADING_HEADERS_COMPLETE || state_ == DATA_CHUNKS);
   state_ = DATA_CHUNKS;
@@ -104,6 +110,7 @@ void HttpStringBuilder::OnTrailingHeadersComplete() {
 
 void HttpStringBuilder::OnComplete() {
   DCHECK(state_ == LEADING_HEADERS_COMPLETE ||
+         state_ == RAW_DATA ||
          state_ == DATA_CHUNKS_COMPLETE ||
          state_ == TRAILING_HEADERS_COMPLETE);
   if (state_ == DATA_CHUNKS_COMPLETE) {

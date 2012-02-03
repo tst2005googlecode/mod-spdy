@@ -103,56 +103,26 @@ bool GenerateRequestLine(const spdy::SpdyHeaderBlock& block,
   return true;
 }
 
-// Convert the given SPDY header block (e.g. from a SYN_STREAM, SYN_REPLY, or
-// HEADERS frame) into HTTP headers by calling the specified method (either
-// OnLeadingHeader or OnTrailingHeader) of the given visitor.
+// Convert the given SPDY header into HTTP header(s) by splitting on NUL bytes
+// calling the specified method (either OnLeadingHeader or OnTrailingHeader) of
+// the given visitor.
 template <void(mod_spdy::HttpStreamVisitorInterface::*OnHeader)(
     const base::StringPiece& key, const base::StringPiece& value)>
-void GenerateHeaders(const spdy::SpdyHeaderBlock& block,
-                     mod_spdy::HttpStreamVisitorInterface* visitor) {
-  for (spdy::SpdyHeaderBlock::const_iterator it = block.begin();
-       it != block.end(); ++it) {
-    const base::StringPiece key = it->first;
-    const base::StringPiece value = it->second;
-
-    // Skip SPDY-specific (i.e. non-HTTP) headers.
-    if (key == kMethod || key == kScheme || key == kPath || key == kVersion) {
-      continue;
+void InsertHeader(const base::StringPiece key,
+                  const base::StringPiece value,
+                  mod_spdy::HttpStreamVisitorInterface* visitor) {
+  // Split header values on null characters, emitting a separate
+  // header key-value pair for each substring. Logic from
+  // net/spdy/spdy_session.cc
+  for (size_t start = 0, end = 0; end != value.npos; start = end) {
+    start = value.find_first_not_of('\0', start);
+    if (start == value.npos) {
+      break;
     }
-
-    // Skip headers that are ignored by SPDY.
-    if (key == kConnection || key == kKeepAlive) {
-      continue;
-    }
-
-    // If the client sent a Content-Length header, ignore it.  We'd rather rely
-    // on the SPDY framing layer to determine when a request is complete.
-    if (key == kContentLength) {
-      continue;
-    }
-
-    // The client shouldn't be sending us a Transfer-Encoding header; it's
-    // pretty pointless over SPDY.  If they do send one, just ignore it; we may
-    // be overriding it later anyway.
-    if (key == kTransferEncoding) {
-      LOG(WARNING) << "Client sent \"transfer-encoding: " << value
-                   << "\" header over SPDY.  Why would they do that?";
-      continue;
-    }
-
-    // Split header values on null characters, emitting a separate
-    // header key-value pair for each substring. Logic from
-    // net/spdy/spdy_session.cc
-    for (size_t start = 0, end = 0; end != value.npos; start = end) {
-      start = value.find_first_not_of('\0', start);
-      if (start == value.npos) {
-        break;
-      }
-      end = value.find('\0', start);
-      (visitor->*OnHeader)(key, (end != value.npos ?
-                                 value.substr(start, (end - start)) :
-                                 value.substr(start)));
-    }
+    end = value.find('\0', start);
+    (visitor->*OnHeader)(key, (end != value.npos ?
+                               value.substr(start, (end - start)) :
+                               value.substr(start)));
   }
 }
 
@@ -162,7 +132,8 @@ namespace mod_spdy {
 
 SpdyToHttpConverter::SpdyToHttpConverter(HttpStreamVisitorInterface* visitor)
     : visitor_(visitor),
-      state_(NO_FRAMES_YET) {
+      state_(NO_FRAMES_YET),
+      use_chunking_(true) {
   CHECK(visitor);
 }
 
@@ -201,8 +172,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertSynStreamFrame(
   }
 
   // Translate the headers to HTTP.
-  GenerateHeaders<&HttpStreamVisitorInterface::OnLeadingHeader>(
-      block, visitor_);
+  GenerateLeadingHeaders(block);
 
   // If this is the last (i.e. only) frame on this stream, finish off the HTTP
   // request.
@@ -225,10 +195,15 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
   // data frames, then we need to save these headers for later and send them as
   // trailing headers.  Otherwise, we can send them immediately.
   if (state_ == RECEIVED_DATA) {
-    if (!ParseHeaderBlockInBuffer(frame.header_block(),
-                                  frame.header_block_len(),
-                                  &trailing_headers_)) {
-      return INVALID_HEADER_BLOCK;
+    if (use_chunking_) {
+      if (!ParseHeaderBlockInBuffer(frame.header_block(),
+                                    frame.header_block_len(),
+                                    &trailing_headers_)) {
+        return INVALID_HEADER_BLOCK;
+      }
+    } else {
+      LOG(WARNING) << "Client sent trailing headers, "
+                   << "but we had to ignore them.";
     }
   } else {
     DCHECK(state_ == RECEIVED_SYN_STREAM);
@@ -238,8 +213,9 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
                                   frame.header_block_len(), &block)) {
       return INVALID_HEADER_BLOCK;
     }
-    GenerateHeaders<&HttpStreamVisitorInterface::OnLeadingHeader>(
-        block, visitor_);
+
+    // Translate the headers to HTTP.
+    GenerateLeadingHeaders(block);
   }
 
   // If this is the last frame on this stream, finish off the HTTP request.
@@ -261,19 +237,27 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
   // If this is the first data frame in the stream, we need to close the HTTP
   // headers section (for streams where there are never any data frames, we
   // close the headers section in FinishRequest instead).  Just before we do,
-  // we also need to set Transfer-Encoding: chunked.
-  if (state_ != RECEIVED_DATA) {
-    DCHECK(state_ == RECEIVED_SYN_STREAM);
+  // we also need to set Transfer-Encoding: chunked, unless we're not using
+  // chunked encoding due to having received a Content-Length header.
+  if (state_ == RECEIVED_SYN_STREAM) {
     state_ = RECEIVED_DATA;
-    visitor_->OnLeadingHeader(kTransferEncoding, kChunked);
+    if (use_chunking_) {
+      visitor_->OnLeadingHeader(kTransferEncoding, kChunked);
+    }
     visitor_->OnLeadingHeadersComplete();
   }
+  DCHECK(state_ == RECEIVED_DATA);
 
   // Translate the SPDY data frame into an HTTP data chunk.  However, we must
   // not emit a zero-length chunk, as that would be interpreted as the
   // data-chunks-complete marker.
   if (frame.length() > 0) {
-    visitor_->OnDataChunk(base::StringPiece(frame.payload(), frame.length()));
+    const base::StringPiece data(frame.payload(), frame.length());
+    if (use_chunking_) {
+      visitor_->OnDataChunk(data);
+    } else {
+      visitor_->OnRawData(data);
+    }
   }
 
   // If this is the last frame on this stream, finish off the HTTP request.
@@ -284,17 +268,67 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
   return SPDY_CONVERTER_SUCCESS;
 }
 
+// Convert the given SPDY header block (e.g. from a SYN_STREAM or HEADERS
+// frame) into HTTP headers by calling OnLeadingHeader on the given visitor.
+void SpdyToHttpConverter::GenerateLeadingHeaders(
+    const spdy::SpdyHeaderBlock& block) {
+  for (spdy::SpdyHeaderBlock::const_iterator it = block.begin();
+       it != block.end(); ++it) {
+    const base::StringPiece key = it->first;
+    const base::StringPiece value = it->second;
+
+    // Skip SPDY-specific (i.e. non-HTTP) headers.
+    if (key == kMethod || key == kScheme || key == kPath || key == kVersion) {
+      continue;
+    }
+
+    // Skip headers that are ignored by SPDY.
+    if (key == kConnection || key == kKeepAlive) {
+      continue;
+    }
+
+    // If the client sent a Content-Length header, take note, so that we'll
+    // know not to used chunked encoding.
+    if (key == kContentLength) {
+      use_chunking_ = false;
+    }
+
+    // The client shouldn't be sending us a Transfer-Encoding header; it's
+    // pretty pointless over SPDY.  If they do send one, just ignore it; we may
+    // be overriding it later anyway.
+    if (key == kTransferEncoding) {
+      LOG(WARNING) << "Client sent \"transfer-encoding: " << value
+                   << "\" header over SPDY.  Why would they do that?";
+      continue;
+    }
+
+    InsertHeader<&HttpStreamVisitorInterface::OnLeadingHeader>(
+        key, value, visitor_);
+  }
+}
+
 void SpdyToHttpConverter::FinishRequest() {
   if (state_ == RECEIVED_DATA) {
-    // Indicate that there is no more data coming.
-    visitor_->OnDataChunksComplete();
+    if (use_chunking_) {
+      // Indicate that there is no more data coming.
+      visitor_->OnDataChunksComplete();
 
-    // Append whatever trailing headers we've buffered, if any.
-    if (!trailing_headers_.empty()) {
-      GenerateHeaders<&HttpStreamVisitorInterface::OnTrailingHeader>(
-          trailing_headers_, visitor_);
-      trailing_headers_.clear();
-      visitor_->OnTrailingHeadersComplete();
+      // Append whatever trailing headers we've buffered, if any.
+      if (!trailing_headers_.empty()) {
+        for (spdy::SpdyHeaderBlock::const_iterator it =
+                 trailing_headers_.begin();
+             it != trailing_headers_.end(); ++it) {
+          InsertHeader<&HttpStreamVisitorInterface::OnTrailingHeader>(
+              it->first, it->second, visitor_);
+        }
+        trailing_headers_.clear();
+        visitor_->OnTrailingHeadersComplete();
+      }
+    } else {
+      // We don't add to trailing_headers_ if we're in no-chunk mode (we simply
+      // ignore trailing HEADERS frames), so trailing_headers_ should still be
+      // empty.
+      DCHECK(trailing_headers_.empty());
     }
   } else {
     DCHECK(state_ == RECEIVED_SYN_STREAM);

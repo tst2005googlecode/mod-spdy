@@ -37,6 +37,7 @@ class HttpStringBuilder : public HttpStreamVisitorInterface {
   virtual void OnLeadingHeader(const base::StringPiece& key,
                             const base::StringPiece& value);
   virtual void OnLeadingHeadersComplete();
+  virtual void OnRawData(const base::StringPiece& data);
   virtual void OnDataChunk(const base::StringPiece& data);
   virtual void OnDataChunksComplete();
   virtual void OnTrailingHeader(const base::StringPiece& key,
@@ -49,6 +50,7 @@ class HttpStringBuilder : public HttpStreamVisitorInterface {
     REQUEST_LINE,
     LEADING_HEADERS,
     LEADING_HEADERS_COMPLETE,
+    RAW_DATA,
     DATA_CHUNKS,
     DATA_CHUNKS_COMPLETE,
     TRAILING_HEADERS,

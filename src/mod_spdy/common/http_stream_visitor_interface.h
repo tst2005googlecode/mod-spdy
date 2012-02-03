@@ -44,16 +44,26 @@ class HttpStreamVisitorInterface {
   // no leading headers).
   virtual void OnLeadingHeadersComplete() = 0;
 
-  // Called zero or more times, after OnHeadersComplete, once for each
-  // "chunk" of the HTTP body.
+  // Called zero or more times, after OnLeadingHeadersComplete.  This method is
+  // mutually exclusive with OnDataChunk and OnDataChunksComplete; either data
+  // will be raw or chunked, but not both.  If raw data is used, there cannot
+  // be trailing headers; the raw data section will be terminated by the call
+  // to OnComplete.
+  virtual void OnRawData(const base::StringPiece& data) = 0;
+
+  // Called zero or more times, after OnLeadingHeadersComplete, once for each
+  // "chunk" of the HTTP body.  This method is mutually exclusive with
+  // OnRawData; either data will be raw or chunked, but not both.
   virtual void OnDataChunk(const base::StringPiece& data) = 0;
 
   // Called when there will be no more data chunks.  There may still be
-  // trailing headers, however.
+  // trailing headers, however.  This method is mutually exclusive with
+  // OnRawData; either data will be raw or chunked, but not both.
   virtual void OnDataChunksComplete() = 0;
 
   // Called zero or more times, once for each trailing header.  This is called
-  // after OnDataChunksComplete but before OnTrailingHeadersComplete.
+  // after OnDataChunksComplete but before OnTrailingHeadersComplete.  It
+  // cannot be called if OnRawData was used.
   virtual void OnTrailingHeader(const base::StringPiece& key,
                                 const base::StringPiece& value) = 0;
 
@@ -63,8 +73,9 @@ class HttpStreamVisitorInterface {
   virtual void OnTrailingHeadersComplete() = 0;
 
   // Called once when the HTTP request is totally done.  This is called
-  // immediately after one of OnLeadingHeadersComplete, OnDataChunksComplete,
-  // or OnTrailingHeadersComplete.  After this, no more methods will be called.
+  // immediately after one of OnLeadingHeadersComplete, OnRawData,
+  // OnDataChunksComplete, or OnTrailingHeadersComplete.  After this, no more
+  // methods will be called.
   virtual void OnComplete() = 0;
 
  private:

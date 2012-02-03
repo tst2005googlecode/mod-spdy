@@ -44,6 +44,7 @@ class MockHttpStreamVisitor: public mod_spdy::HttpStreamVisitorInterface {
   MOCK_METHOD2(OnLeadingHeader, void(const base::StringPiece&,
                                      const base::StringPiece&));
   MOCK_METHOD0(OnLeadingHeadersComplete, void());
+  MOCK_METHOD1(OnRawData, void(const base::StringPiece&));
   MOCK_METHOD1(OnDataChunk, void(const base::StringPiece&));
   MOCK_METHOD0(OnDataChunksComplete, void());
   MOCK_METHOD2(OnTrailingHeader, void(const base::StringPiece&,
@@ -236,6 +237,64 @@ TEST_F(SpdyToHttpConverterTest, TrailingHeaders) {
   EXPECT_CALL(visitor_, OnTrailingHeader(Eq("quux"), Eq("baz")))
       .InSequence(s1, s2);
   EXPECT_CALL(visitor_, OnTrailingHeadersComplete()).InSequence(s1, s2);
+  EXPECT_CALL(visitor_, OnComplete()).InSequence(s1, s2);
+
+  EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
+            converter_.ConvertHeadersFrame(*headers_frame));
+}
+
+TEST_F(SpdyToHttpConverterTest, WithContentLength) {
+  // First, send a SYN_STREAM frame without FLAG_FIN set.  We should get the
+  // headers out that we sent, but no call yet to OnLeadingHeadersComplete,
+  // because there might still be a HEADERS frame.
+  AddRequiredHeaders();
+  headers_["content-length"] = "11";
+  scoped_ptr<spdy::SpdySynStreamControlFrame> syn_frame(
+      framer_.CreateSynStream(
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          spdy::CONTROL_FLAG_NONE,  // flags
+          false,  // use compression
+          &headers_));
+
+  Sequence s1, s2;
+  EXPECT_CALL(visitor_, OnRequestLine(Eq(kMethod), Eq(kPath), Eq(kVersion)))
+      .InSequence(s1, s2);
+  EXPECT_CALL(visitor_, OnLeadingHeader(Eq("content-length"), Eq("11")))
+      .InSequence(s1);
+  EXPECT_CALL(visitor_, OnLeadingHeader(Eq("host"), Eq(kHost)))
+      .InSequence(s2);
+
+  EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
+            converter_.ConvertSynStreamFrame(*syn_frame));
+
+  // Next, send a DATA frame.  This should trigger the end of the leading
+  // headers (along with the data itself, of course), but because we sent a
+  // content-length, the data should not be chunked.
+  scoped_ptr<spdy::SpdyDataFrame> data_frame(framer_.CreateDataFrame(
+      1,  // stream ID
+      "foobar=quux",  // data
+      11, // data length
+      spdy::DATA_FLAG_NONE));  // flags
+
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete()).InSequence(s1, s2);
+  EXPECT_CALL(visitor_, OnRawData(Eq("foobar=quux"))).InSequence(s1, s2);
+
+  EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
+            converter_.ConvertDataFrame(*data_frame));
+
+  // Finally, send a HEADERS frame with FLAG_FIN set.  Since we're not chunking
+  // this stream, the trailing headers should be ignored.
+  headers_.clear();
+  headers_["x-metadata"] = "baz";
+  scoped_ptr<spdy::SpdyHeadersControlFrame> headers_frame(
+      framer_.CreateHeaders(
+          1,  // stream ID
+          spdy::CONTROL_FLAG_FIN,  // flags
+          false,  // use compression
+          &headers_));
+
   EXPECT_CALL(visitor_, OnComplete()).InSequence(s1, s2);
 
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
