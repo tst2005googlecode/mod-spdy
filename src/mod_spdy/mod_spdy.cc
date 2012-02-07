@@ -199,6 +199,37 @@ void RetrieveOptionalFunctions() {
   }
 }
 
+// Called after configuration has completed.
+int PostConfig(apr_pool_t* pconf, apr_pool_t* plog, apr_pool_t* ptemp,
+               server_rec* server_list) {
+  // Check if any of the virtual hosts have mod_spdy enabled.
+  bool any_enabled = false;
+  for (server_rec* server = server_list; server != NULL;
+       server = server->next) {
+    if (mod_spdy::GetServerConfig(server)->spdy_enabled()) {
+      any_enabled = true;
+      break;
+    }
+  }
+  // Log a message indicating whether mod_spdy is enabled or not.  It's all too
+  // easy to install mod_spdy and forget to turn it on, so this may be helpful
+  // for debugging server behavior.
+  if (any_enabled) {
+    // TODO(mdsteele): Once mod_spdy is more stable, change this message and
+    //   downgrade from WARNING to INFO.
+    LOG(WARNING) << "mod_spdy is installed, and enabled on one or more "
+                 << "virtual hosts.  Please note that mod_spdy is still "
+                 << "beta, and may have stability issues.";
+  } else {
+    LOG(WARNING) << "mod_spdy is installed, but has not been enabled in the "
+                 << "Apache config; SPDY will not be used by this server.  "
+                 << "See http://code.google.com/p/mod-spdy/wiki/ConfigOptions "
+                 << "for how to enable.";
+  }
+
+  return OK;
+}
+
 // Called exactly once for each child process, before that process starts
 // spawning worker threads.
 void ChildInit(apr_pool_t* pool, server_rec* server) {
@@ -581,11 +612,6 @@ void InsertRequestFilters(request_rec* request) {
 void RegisterHooks(apr_pool_t* pool) {
   mod_spdy::InstallLogMessageHandler(pool);
 
-  // Let users know that they are installing an experimental module.
-  LOG(WARNING) << "mod_spdy is currently an experimental Apache module. "
-               << "It is not yet suitable for production environments "
-               << "and may have stability issues.";
-
   static const char* const modules_core[] = {"core.c", NULL};
   static const char* const modules_mod_ssl[] = {"mod_ssl.c", NULL};
 
@@ -597,14 +623,14 @@ void RegisterHooks(apr_pool_t* pool) {
       NULL,                       // successors
       APR_HOOK_MIDDLE);           // position
 
+  // Register a hook to be called after configuration has completed.  We use
+  // this hook to log whether or not mod_spdy is enabled on this server.
+  ap_hook_post_config(PostConfig, NULL, NULL, APR_HOOK_MIDDLE);
+
   // Register a hook to be called once for each child process spawned by
   // Apache, before the MPM starts spawning worker threads.  We use this hook
   // to initialize our per-process thread pool.
-  ap_hook_child_init(
-      ChildInit,                  // hook function to be called
-      NULL,                       // predecessors
-      NULL,                       // successors
-      APR_HOOK_MIDDLE);           // position
+  ap_hook_child_init(ChildInit, NULL, NULL, APR_HOOK_MIDDLE);
 
   // Register a pre-connection hook to turn off mod_ssl for our slave
   // connections.  This must run before mod_ssl's pre-connection hook, so that
@@ -643,20 +669,12 @@ void RegisterHooks(apr_pool_t* pool) {
   // ourselves in APR_HOOK_FIRST so we can get an early look at the connection.
   // If it turns out not to be a SPDY connection, we'll get out of the way and
   // let other modules deal with it.
-  ap_hook_process_connection(
-      ProcessConnection,          // hook function to be called
-      NULL,                       // predecessors
-      NULL,                       // successors
-      APR_HOOK_FIRST);            // position
+  ap_hook_process_connection(ProcessConnection, NULL, NULL, APR_HOOK_FIRST);
 
   // Register a hook to be called when adding filters for each new request.
   // This hook will insert our HTTP-to-SPDY and anti-chunking filter into our
   // slave connections.
-  ap_hook_insert_filter(
-      InsertRequestFilters,       // hook function to be called
-      NULL,                       // predecessors
-      NULL,                       // successors
-      APR_HOOK_MIDDLE);           // position
+  ap_hook_insert_filter(InsertRequestFilters, NULL, NULL, APR_HOOK_MIDDLE);
 
   // Register a hook with mod_ssl to be called when deciding what protocols to
   // advertise during Next Protocol Negotiatiation (NPN); we'll use this
