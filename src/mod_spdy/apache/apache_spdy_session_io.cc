@@ -93,8 +93,9 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
   }
 
   bool pushed_any_data = false;
-  apr_bucket* bucket = APR_BRIGADE_FIRST(input_brigade_);
-  while (bucket != APR_BRIGADE_SENTINEL(input_brigade_)) {
+  while (!APR_BRIGADE_EMPTY(input_brigade_)) {
+    apr_bucket* bucket = APR_BRIGADE_FIRST(input_brigade_);
+
     if (APR_BUCKET_IS_METADATA(bucket)) {
       // Metadata bucket.  We don't care about EOS or FLUSH buckets here (or
       // other, unknown metadata buckets), and there's no further filter to
@@ -130,9 +131,7 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
     }
 
     // Delete this bucket and move on to the next one.
-    apr_bucket* next = APR_BUCKET_NEXT(bucket);
     apr_bucket_delete(bucket);
-    bucket = next;
   }
 
   // We deleted buckets as we went, so the brigade should be empty now.

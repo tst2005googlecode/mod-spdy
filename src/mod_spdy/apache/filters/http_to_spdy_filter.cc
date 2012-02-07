@@ -133,9 +133,24 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
 
   request_rec* const request = filter->r;
 
-  for (apr_bucket* bucket = APR_BRIGADE_FIRST(input_brigade);
-       bucket != APR_BRIGADE_SENTINEL(input_brigade);
-       bucket = APR_BUCKET_NEXT(bucket)) {
+  // Loop through the brigade, reading and sending data.  We delete each bucket
+  // once we have successfully consumed it, before moving on to the next
+  // bucket.  There are two reasons to delete buckets as we go:
+  //
+  //   1) Some output filters (such as mod_deflate) that come before us will
+  //      expect us to empty out the brigade that they give us before we
+  //      return.  If we don't do so, the second time they call us we'll see
+  //      all those same buckets again (along with the new buckets).
+  //
+  //   2) Some bucket types such as FILE don't store their data in memory, and
+  //      when read, split into two buckets: one containing some data, and the
+  //      other representing the rest of the file.  If we read in all buckets
+  //      in the brigade without deleting ones we're done with, we will
+  //      eventually read the whole file into memory; by deleting buckets as we
+  //      go, only a portion of the file is in memory at a time.
+  while (!APR_BRIGADE_EMPTY(input_brigade)) {
+    apr_bucket* bucket = APR_BRIGADE_FIRST(input_brigade);
+
     if (APR_BUCKET_IS_METADATA(bucket)) {
       if (APR_BUCKET_IS_EOS(bucket)) {
         // EOS bucket -- there should be no more buckets in this stream.
@@ -145,6 +160,9 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
         end_of_stream_reached_ = true;
         RETURN_IF_STREAM_ABORT(filter);
         Send(filter, false);
+        // We consumed the EOS bucket successfully, so delete it before
+        // returning.
+        apr_bucket_delete(bucket);
         return APR_SUCCESS;
       } else if (APR_BUCKET_IS_FLUSH(bucket)) {
         // FLUSH bucket -- call Send() immediately and flush the data buffer.
@@ -179,10 +197,14 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
         if (status != APR_SUCCESS) {
           LOG(ERROR) << "Blocking read failed with status " << status << ": "
                      << AprStatusString(status);
-          return status;
+          // Since we didn't successfully consume this bucket, don't delete it;
+          // rather, leave it (and any remaining buckets) in the brigade.
+          return status;  // failure
         }
         data_buffer_.append(data, static_cast<size_t>(data_length));
       } else {
+        // Since we didn't successfully consume this bucket, don't delete it;
+        // rather, leave it (and any remaining buckets) in the brigade.
         return status;  // failure
       }
 
@@ -193,6 +215,10 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
         Send(filter, false);
       }
     }
+
+    // We consumed this bucket successfully, so delete it and move on to the
+    // next.
+    apr_bucket_delete(bucket);
   }
 
   // If we haven't sent the headers yet (because we've never called Send()),
@@ -201,6 +227,10 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
     RETURN_IF_STREAM_ABORT(filter);
     Send(filter, false);
   }
+
+  // We went through the whole brigade successfully, so it must be empty when
+  // we return (see http://code.google.com/p/mod-spdy/issues/detail?id=17).
+  DCHECK(APR_BRIGADE_EMPTY(input_brigade));
   return APR_SUCCESS;
 }
 

@@ -103,7 +103,10 @@ class HttpToSpdyFilterTest : public testing::Test {
 
   apr_status_t WriteBrigade(mod_spdy::HttpToSpdyFilter* filter) {
     apr_status_t status = filter->Write(ap_filter_, brigade_);
-    apr_brigade_cleanup(brigade_);
+    if (!APR_BRIGADE_EMPTY(brigade_)) {
+      ADD_FAILURE() << "Brigade not empty after filter->Write()";
+      apr_brigade_cleanup(brigade_);
+    }
     return status;
   }
 
