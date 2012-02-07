@@ -35,14 +35,26 @@ echo "mod_ssl already exists at $MODSSL_SO_DESTPATH. Please remove."
 exit 1
 fi
 
-BUILDROOT=$(mktemp -d)
+if [ -z "$BUILDROOT" ]; then
+  BUILDROOT=$(mktemp -d)
+  REMOVE_BUILDROOT=1
+else
+  REMOVE_BUILDROOT=0
+fi
+
+if [ ! -d "$BUILDROOT" ]; then
+echo "Not a directory: $BUILDROOT"
+exit 1
+fi
 
 function do_cleanup {
 echo ""
 echo "Build aborted."
-echo -n "Cleaning up ... "
-rm -rf "$BUILDROOT"
-echo "done"
+if [ $REMOVE_BUILDROOT -eq 1 ]; then
+  echo -n "Cleaning up ... "
+  rm -rf "$BUILDROOT"
+  echo "done"
+fi
 exit 1
 }
 
@@ -74,7 +86,14 @@ APACHE_HTTPD_MODSSL_NPN_PATCH="mod_ssl_npn.patch"
 OPENSSL_SRC_ROOT=${OPENSSL_SRC_TGZ%.tar.gz}
 APACHE_HTTPD_SRC_ROOT=${APACHE_HTTPD_SRC_TGZ%.tar.gz}
 
+OPENSSL_BUILDLOG=$(mktemp -p /tmp openssl_buildlog.XXXXXXXXXX)
+APACHE_HTTPD_BUILDLOG=$(mktemp -p /tmp httpd_buildlog.XXXXXXXXXX)
+
 pushd $BUILDROOT >/dev/null
+
+# If a build fails part way through you can set RESUMEBUILD=1 to skip
+# the download/unpack/configure steps.
+if [[ $RESUMEBUILD -ne 1 ]]; then
 
 download_file $OPENSSL_SRC_TGZ_URL $OPENSSL_SRC_TGZ ef66ad92539014e1a8fe33bdd8159bad
 download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ b24ca6db942a4f8e57c357e5e3058d31
@@ -82,9 +101,20 @@ download_file $APACHE_HTTPD_MODSSL_NPN_PATCH_URL $APACHE_HTTPD_MODSSL_NPN_PATCH 
 
 echo ""
 
-OPENSSL_BUILDLOG=$(mktemp -p /tmp openssl_buildlog.XXXXXXXXXX)
-
 uncompress_file $OPENSSL_SRC_TGZ
+uncompress_file $APACHE_HTTPD_SRC_TGZ
+
+pushd $APACHE_HTTPD_SRC_ROOT >/dev/null
+echo -n "Applying Apache mod_ssl NPN patch ... "
+patch -p0 <$BUILDROOT/$APACHE_HTTPD_MODSSL_NPN_PATCH
+if [ $? -ne 0 ]; then
+echo "Failed to patch."
+do_cleanup
+fi
+echo "done"
+popd >/dev/null
+
+echo ""
 
 pushd $OPENSSL_SRC_ROOT >/dev/null
 echo -n "Configuring OpenSSL ... "
@@ -94,7 +124,11 @@ echo "Failed. Build log at $OPENSSL_BUILDLOG."
 do_cleanup
 fi
 echo "done"
+popd >/dev/null
 
+fi  # [[ $RESUMEBUILD -ne 1 ]]
+
+pushd $OPENSSL_SRC_ROOT >/dev/null
 echo -n "Building OpenSSL (this may take a while) ... "
 make INSTALL_PREFIX=$(pwd) install >> $OPENSSL_BUILDLOG 2>&1
 if [ $? -ne 0 ]; then
@@ -108,19 +142,7 @@ rm -f "$OPENSSL_BUILDLOG"
 
 echo ""
 
-APACHE_HTTPD_BUILDLOG=$(mktemp -p /tmp httpd_buildlog.XXXXXXXXXX)
-
-uncompress_file $APACHE_HTTPD_SRC_TGZ
-
 pushd $APACHE_HTTPD_SRC_ROOT >/dev/null
-echo -n "Applying Apache mod_ssl NPN patch ... "
-patch -p0 <$BUILDROOT/$APACHE_HTTPD_MODSSL_NPN_PATCH >> $APACHE_HTTPD_BUILDLOG
-if [ $? -ne 0 ]; then
-echo "Failed. Build log at $APACHE_HTTPD_BUILDLOG."
-do_cleanup
-fi
-echo "done"
-
 echo -n "Configuring Apache mod_ssl ... "
 ./configure --enable-ssl=shared --with-ssl=$BUILDROOT/$OPENSSL_SRC_ROOT/usr/local/ssl >> $APACHE_HTTPD_BUILDLOG
 if [ $? -ne 0 ]; then
@@ -151,7 +173,9 @@ fi
 
 cp $MODSSL_SO_SRCPATH $MODSSL_SO_DESTPATH
 
-rm -rf "$BUILDROOT"
+if [ $REMOVE_BUILDROOT -eq 1 ]; then
+  rm -rf "$BUILDROOT"
+fi
 
 echo ""
 echo "Generated mod_ssl.so at $MODSSL_SO_DESTPATH."
