@@ -61,6 +61,7 @@ namespace {
 // TODO(mdsteele): Pretty soon we will probably need to support SPDY v3.
 const int kSpdyVersionNumber = 2;
 const char* const kSpdyProtocolName = "spdy/2";
+const char* const kHttpProtocolName = "http/1.1";
 
 // These global variables store the filter handles for our filters.  Normally,
 // global variables would be very dangerous in a concurrent environment like
@@ -498,7 +499,7 @@ int ProcessConnection(conn_rec* connection) {
 
 // Called by mod_ssl when it needs to decide what protocols to advertise to the
 // client during Next Protocol Negotiation (NPN).
-int AdvertiseNpnProtocols(conn_rec* connection, apr_array_header_t* protos) {
+int AdvertiseSpdy(conn_rec* connection, apr_array_header_t* protos) {
   // If mod_spdy is disabled on this server, then we shouldn't advertise SPDY
   // to the client.
   if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
@@ -510,6 +511,31 @@ int AdvertiseNpnProtocols(conn_rec* connection, apr_array_header_t* protos) {
   //   we want to support both v2 and v3, we need to advertise both of them
   //   here; the one we prefer (presumably v3) should be pushed first.
   APR_ARRAY_PUSH(protos, const char*) = kSpdyProtocolName;
+  return OK;
+}
+
+// Called by mod_ssl (along with the AdvertiseSpdy function) when it needs to
+// decide what protocols to advertise to the client during Next Protocol
+// Negotiation (NPN).  These two functions are separate so that AdvertiseSpdy
+// can run early in the hook order, and AdvertiseHttp can run late.
+int AdvertiseHttp(conn_rec* connection, apr_array_header_t* protos) {
+  // If mod_spdy is disabled on this server, don't do anything.
+  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    return DECLINED;
+  }
+
+  // Apache definitely supports HTTP/1.1, and so it ought to advertise it
+  // during NPN.  However, the Apache core HTTP module doesn't yet know about
+  // this hook, so we advertise HTTP/1.1 for them.  But to be future-proof, we
+  // don't add "http/1.1" to the list if it's already there.
+  for (int i = 0; i < protos->nelts; ++i) {
+    if (!strcmp(APR_ARRAY_IDX(protos, i, const char*), kHttpProtocolName)) {
+      return DECLINED;
+    }
+  }
+
+  // No one's advertised HTTP/1.1 yet, so let's do it now.
+  APR_ARRAY_PUSH(protos, const char*) = kHttpProtocolName;
   return OK;
 }
 
@@ -684,10 +710,17 @@ void RegisterHooks(apr_pool_t* pool) {
   APR_OPTIONAL_HOOK(
       ssl,                        // prefix of optional hook
       npn_advertise_protos_hook,  // name of optional hook
-      AdvertiseNpnProtocols,      // hook function to be called
+      AdvertiseSpdy,              // hook function to be called
       NULL,                       // predecessors
       NULL,                       // successors
       APR_HOOK_MIDDLE);           // position
+  // If we're advertising SPDY support via NPN, we ought to also advertise HTTP
+  // support.  Ideally, the Apache core HTTP module would do this, but for now
+  // it doesn't, so we'll do it for them.  We use APR_HOOK_LAST here, since
+  // http/1.1 is our last choice.  Note that our AdvertiseHttp function won't
+  // add "http/1.1" to the list if it's already there, so this is future-proof.
+  APR_OPTIONAL_HOOK(ssl, npn_advertise_protos_hook,
+                    AdvertiseHttp, NULL, NULL, APR_HOOK_LAST);
 
   // Register a hook with mod_ssl to be called when NPN has been completed and
   // the next protocol decided upon.  This hook will check if we're actually to
