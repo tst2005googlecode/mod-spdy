@@ -21,6 +21,7 @@
 #include "http_connection.h"
 #include "http_config.h"
 #include "http_log.h"
+#include "http_protocol.h"
 #include "http_request.h"
 #include "apr_optional.h"
 #include "apr_optional_hooks.h"
@@ -589,13 +590,14 @@ int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
   return OK;
 }
 
-// Invoked once per HTTP request.  See http_request.h for details.
-void InsertRequestFilters(request_rec* request) {
+// Invoked once per HTTP request, when the request object is created.  We use
+// this to insert our protocol-level output filter.
+int InsertProtocolFilters(request_rec* request) {
   conn_rec* connection = request->connection;
 
   // If mod_spdy is disabled on this server, then don't insert any filters.
   if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
-    return;
+    return DECLINED;
   }
 
   const mod_spdy::ConnectionContext* context =
@@ -605,18 +607,18 @@ void InsertRequestFilters(request_rec* request) {
   // now (having been created in our pre-connection hook) unless this is a
   // non-SSL connection, in which case we definitely aren't using SPDY.
   if (context == NULL) {
-    return;
+    return DECLINED;
   }
 
   // If this isn't one of our slave connections, don't insert any filters.
   if (!context->is_slave()) {
-    return;
+    return DECLINED;
   }
 
-  // Instantiate and add our HTTP-to-SPDY filter (and also our anti-chunking
-  // filter) for the slave connection.  This is an Apache request-level filter,
-  // so we add it here.  The corresponding SPDY-to-HTTP filter is
-  // connection-level, so we add that one in PreConnection().
+  // Instantiate and add our HTTP-to-SPDY filter for the slave connection.
+  // This is an Apache protocol-level filter (specifically,
+  // AP_FTYPE_TRANSCODE), so we add it here.  The corresponding SPDY-to-HTTP
+  // filter is connection-level, so we add that one in PreConnection().
   mod_spdy::HttpToSpdyFilter* http_to_spdy_filter =
       new mod_spdy::HttpToSpdyFilter(context->slave_stream());
   PoolRegisterDelete(request->pool, http_to_spdy_filter);
@@ -627,6 +629,31 @@ void InsertRequestFilters(request_rec* request) {
       request,                    // request object
       connection);                // connection object
 
+  return OK;
+}
+
+// Invoked once (or possibly twice) per HTTP request.  However, in cases where
+// it is called twice, content-level filters (that is, those with filter type <
+// AP_FTYPE_PROTOCOL) are discarded before the second invocation.  Since we use
+// this hook only to insert such filters, that is fine.
+void InsertContentFilters(request_rec* request) {
+  conn_rec* connection = request->connection;
+
+  // If mod_spdy is disabled on this server, then don't insert any filters.
+  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    return;
+  }
+
+  // Same check as in InsertProtocolFilters above: proceed only if our context
+  // is present and this is a slave connection.
+  const mod_spdy::ConnectionContext* context =
+      mod_spdy::GetConnectionContext(connection);
+  if (context == NULL || !context->is_slave()) {
+    return;
+  }
+
+  // Instantiate our anti-chunking filter for the slave connection.  This is an
+  // Apache content-level filter, so we add it here.
   ap_add_output_filter_handle(
       gAntiChunkingFilterHandle,  // filter handle
       NULL,                       // context (any void* we want)
@@ -697,10 +724,38 @@ void RegisterHooks(apr_pool_t* pool) {
   // let other modules deal with it.
   ap_hook_process_connection(ProcessConnection, NULL, NULL, APR_HOOK_FIRST);
 
-  // Register a hook to be called when adding filters for each new request.
-  // This hook will insert our HTTP-to-SPDY and anti-chunking filter into our
-  // slave connections.
-  ap_hook_insert_filter(InsertRequestFilters, NULL, NULL, APR_HOOK_MIDDLE);
+  // Register three different hooks to insert our request filters.  Now, this
+  // is a little tricky.  We have two output filters, which must be inserted
+  // (exactly once) for all requests whether they error or not: one with type
+  // AP_FTYPE_TRANSCODE and one with type AP_FTYPE_PROTOCOL-1.  Why not insert
+  // both from just one hook?  Because there's no one hook that's appropriate.
+  // This is roughly how these three hooks are used by Apache:
+  //   * The request is read, the request object is created, and the
+  //     post_read_request hook is called.
+  //   * Authentication is checked; if a 401 is generated, then all request
+  //     filters with type < AP_FTYPE_PROTOCOL are removed, the
+  //     insert_error_filter hook is called, and the error response is sent.
+  //   * Otherwise, the insert_filter hook is called, and the request is
+  //     processed.
+  //   * If the request results in an error (e.g. 500), then all request
+  //     filters with type < AP_FTYPE_PROTOCOL are removed, the
+  //     insert_error_filter hook is called, and the error response is sent.
+  // Our filter with type AP_FTYPE_PROTOCOL-1 will get removed in either error
+  // case, so we must add it back in the insert_error_filter hook.  We must
+  // also add it in the insert_filter hook, in the case that no error occurs;
+  // so we can just use the same function for both of these hooks.  To avoid
+  // our AP_FTYPE_TRANSCODE filter from getting added twice in the case of
+  // e.g. 500 errors, we add it not in that function, but from the
+  // post_read_request hook.  The result is relatively clean: one function for
+  // adding each of our two output filters, one of which is called by one hook
+  // and one of which is called by two.
+  // See also http://code.google.com/p/mod-spdy/issues/detail?id=24
+  ap_hook_post_read_request(
+      InsertProtocolFilters, NULL, NULL, APR_HOOK_MIDDLE);
+  ap_hook_insert_filter(
+      InsertContentFilters, NULL, NULL, APR_HOOK_MIDDLE);
+  ap_hook_insert_error_filter(
+      InsertContentFilters, NULL, NULL, APR_HOOK_MIDDLE);
 
   // Register a hook with mod_ssl to be called when deciding what protocols to
   // advertise during Next Protocol Negotiatiation (NPN); we'll use this
