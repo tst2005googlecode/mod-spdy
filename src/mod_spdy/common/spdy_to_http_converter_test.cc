@@ -16,7 +16,7 @@
 
 #include "base/scoped_ptr.h"
 #include "base/string_piece.h"
-#include "mod_spdy/common/http_stream_visitor_interface.h"
+#include "mod_spdy/common/http_request_visitor_interface.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -36,7 +36,7 @@ const char* kPath = "/";
 const char* kVersion = "HTTP/1.1";
 const char kMultiValue[] = "this\0is\0\0\0four\0\0headers";
 
-class MockHttpStreamVisitor: public mod_spdy::HttpStreamVisitorInterface {
+class MockHttpRequestVisitor: public mod_spdy::HttpRequestVisitorInterface {
  public:
   MOCK_METHOD3(OnRequestLine, void(const base::StringPiece&,
                                    const base::StringPiece&,
@@ -66,7 +66,7 @@ class SpdyToHttpConverterTest : public testing::Test {
     headers_["version"] = kVersion;
   }
 
-  MockHttpStreamVisitor visitor_;
+  MockHttpRequestVisitor visitor_;
   SpdyToHttpConverter converter_;
   spdy::SpdyFramer framer_;
   spdy::SpdyHeaderBlock headers_;

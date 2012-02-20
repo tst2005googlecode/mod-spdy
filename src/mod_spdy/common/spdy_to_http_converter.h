@@ -21,13 +21,13 @@
 
 namespace mod_spdy {
 
-class HttpStreamVisitorInterface;
+class HttpRequestVisitorInterface;
 
 // Incrementally converts SPDY frames to HTTP streams, and passes the HTTP
-// stream to the specified HttpStreamVisitorInterface.
+// stream to the specified HttpRequestVisitorInterface.
 class SpdyToHttpConverter {
  public:
-  explicit SpdyToHttpConverter(HttpStreamVisitorInterface* visitor);
+  explicit SpdyToHttpConverter(HttpRequestVisitorInterface* visitor);
   ~SpdyToHttpConverter();
 
   enum Status {
@@ -62,7 +62,7 @@ private:
     RECEIVED_FLAG_FIN     // We've seen the FLAG_FIN; no more frames allowed.
   };
 
-  HttpStreamVisitorInterface* const visitor_;
+  HttpRequestVisitorInterface* const visitor_;
   spdy::SpdyHeaderBlock trailing_headers_;
   State state_;
   bool use_chunking_;

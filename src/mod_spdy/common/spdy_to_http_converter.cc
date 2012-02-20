@@ -17,7 +17,7 @@
 #include "base/logging.h"
 #include "base/string_number_conversions.h"  // for Int64ToString
 #include "base/string_piece.h"
-#include "mod_spdy/common/http_stream_visitor_interface.h"
+#include "mod_spdy/common/http_request_visitor_interface.h"
 #include "net/spdy/spdy_frame_builder.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
@@ -84,7 +84,7 @@ bool ParseHeaderBlockInBuffer(const char* header_data,
 // the OnStatusLine() method of the given visitor, and return true.  If there's
 // an error, this will return false without calling any methods on the visitor.
 bool GenerateRequestLine(const spdy::SpdyHeaderBlock& block,
-                         mod_spdy::HttpStreamVisitorInterface* visitor) {
+                         mod_spdy::HttpRequestVisitorInterface* visitor) {
   spdy::SpdyHeaderBlock::const_iterator method = block.find(kMethod);
   spdy::SpdyHeaderBlock::const_iterator scheme = block.find(kScheme);
   spdy::SpdyHeaderBlock::const_iterator host = block.find(kHost);
@@ -106,11 +106,11 @@ bool GenerateRequestLine(const spdy::SpdyHeaderBlock& block,
 // Convert the given SPDY header into HTTP header(s) by splitting on NUL bytes
 // calling the specified method (either OnLeadingHeader or OnTrailingHeader) of
 // the given visitor.
-template <void(mod_spdy::HttpStreamVisitorInterface::*OnHeader)(
+template <void(mod_spdy::HttpRequestVisitorInterface::*OnHeader)(
     const base::StringPiece& key, const base::StringPiece& value)>
 void InsertHeader(const base::StringPiece key,
                   const base::StringPiece value,
-                  mod_spdy::HttpStreamVisitorInterface* visitor) {
+                  mod_spdy::HttpRequestVisitorInterface* visitor) {
   // Split header values on null characters, emitting a separate
   // header key-value pair for each substring. Logic from
   // net/spdy/spdy_session.cc
@@ -130,7 +130,7 @@ void InsertHeader(const base::StringPiece key,
 
 namespace mod_spdy {
 
-SpdyToHttpConverter::SpdyToHttpConverter(HttpStreamVisitorInterface* visitor)
+SpdyToHttpConverter::SpdyToHttpConverter(HttpRequestVisitorInterface* visitor)
     : visitor_(visitor),
       state_(NO_FRAMES_YET),
       use_chunking_(true) {
@@ -302,7 +302,7 @@ void SpdyToHttpConverter::GenerateLeadingHeaders(
       continue;
     }
 
-    InsertHeader<&HttpStreamVisitorInterface::OnLeadingHeader>(
+    InsertHeader<&HttpRequestVisitorInterface::OnLeadingHeader>(
         key, value, visitor_);
   }
 }
@@ -318,7 +318,7 @@ void SpdyToHttpConverter::FinishRequest() {
         for (spdy::SpdyHeaderBlock::const_iterator it =
                  trailing_headers_.begin();
              it != trailing_headers_.end(); ++it) {
-          InsertHeader<&HttpStreamVisitorInterface::OnTrailingHeader>(
+          InsertHeader<&HttpRequestVisitorInterface::OnTrailingHeader>(
               it->first, it->second, visitor_);
         }
         trailing_headers_.clear();

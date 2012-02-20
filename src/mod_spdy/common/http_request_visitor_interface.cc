@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "mod_spdy/common/http_stream_visitor_interface.h"
+#include "mod_spdy/common/http_request_visitor_interface.h"
 
 namespace mod_spdy {
 
-HttpStreamVisitorInterface::HttpStreamVisitorInterface() {}
-HttpStreamVisitorInterface::~HttpStreamVisitorInterface() {}
+HttpRequestVisitorInterface::HttpRequestVisitorInterface() {}
+HttpRequestVisitorInterface::~HttpRequestVisitorInterface() {}
 
 }  // namespace mod_spdy

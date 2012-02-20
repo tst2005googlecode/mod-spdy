@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_
-#define MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_
+#ifndef MOD_SPDY_COMMON_HTTP_REQUEST_VISITOR_INTERFACE_H_
+#define MOD_SPDY_COMMON_HTTP_REQUEST_VISITOR_INTERFACE_H_
 
 #include "base/basictypes.h"
 
@@ -22,10 +22,10 @@ namespace base { class StringPiece; }
 namespace mod_spdy {
 
 // Interface that gets called back as an HTTP stream is visited.
-class HttpStreamVisitorInterface {
+class HttpRequestVisitorInterface {
  public:
-  HttpStreamVisitorInterface();
-  virtual ~HttpStreamVisitorInterface();
+  HttpRequestVisitorInterface();
+  virtual ~HttpRequestVisitorInterface();
 
   // Called when an HTTP request line is visited. Indicates that a new HTTP
   // request is being visited.
@@ -79,9 +79,9 @@ class HttpStreamVisitorInterface {
   virtual void OnComplete() = 0;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(HttpStreamVisitorInterface);
+  DISALLOW_COPY_AND_ASSIGN(HttpRequestVisitorInterface);
 };
 
 }  // namespace mod_spdy
 
-#endif  // MOD_SPDY_COMMON_HTTP_STREAM_VISITOR_INTERFACE_H_
+#endif  // MOD_SPDY_COMMON_HTTP_REQUEST_VISITOR_INTERFACE_H_

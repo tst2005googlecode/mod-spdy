@@ -18,19 +18,19 @@
 #include <string>
 
 #include "base/basictypes.h"
-#include "mod_spdy/common/http_stream_visitor_interface.h"
+#include "mod_spdy/common/http_request_visitor_interface.h"
 
 namespace mod_spdy {
 
-// An HttpStreamVisitorInterface class that appends to a std::string.
-class HttpStringBuilder : public HttpStreamVisitorInterface {
+// An HttpRequestVisitorInterface class that appends to a std::string.
+class HttpStringBuilder : public HttpRequestVisitorInterface {
  public:
   explicit HttpStringBuilder(std::string* str);
   virtual ~HttpStringBuilder();
 
   bool is_complete() const { return state_ == COMPLETE; }
 
-  // HttpStreamVisitorInterface methods:
+  // HttpRequestVisitorInterface methods:
   virtual void OnRequestLine(const base::StringPiece& method,
                              const base::StringPiece& path,
                              const base::StringPiece& version);

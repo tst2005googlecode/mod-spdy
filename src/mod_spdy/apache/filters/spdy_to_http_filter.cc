@@ -21,7 +21,6 @@
 #include "base/scoped_ptr.h"
 #include "base/string_piece.h"
 #include "base/stringprintf.h"
-#include "mod_spdy/common/http_stream_visitor_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/spdy/spdy_frame_builder.h"
