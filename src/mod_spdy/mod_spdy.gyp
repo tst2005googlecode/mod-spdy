@@ -34,6 +34,8 @@
         'common/executor.cc',
         'common/header_populator_interface.cc',
         'common/http_request_visitor_interface.cc',
+        'common/http_response_parser.cc',
+        'common/http_response_visitor_interface.cc',
         'common/http_string_builder.cc',
         'common/queued_worker_pool_executor.cc',
         'common/spdy_frame_priority_queue.cc',
@@ -114,6 +116,7 @@
       ],
       'sources': [
         'common/header_populator_interface_test.cc',
+        'common/http_response_parser_test.cc',
         'common/spdy_frame_priority_queue_test.cc',
         'common/spdy_frame_queue_test.cc',
         'common/spdy_session_test.cc',

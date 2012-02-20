@@ -22,6 +22,7 @@
       'sources': [
         # TODO(mdsteele): Add sources here as we need them.
         'instaweb/util/function.cc',
+        'instaweb/util/string_util.cc',
       ],
     },
     {
