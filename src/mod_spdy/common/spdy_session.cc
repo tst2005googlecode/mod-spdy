@@ -14,6 +14,8 @@
 
 #include "mod_spdy/common/spdy_session.h"
 
+#include <utility>  // for make_pair
+
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/scoped_ptr.h"
@@ -44,6 +46,10 @@ SpdySession::SpdySession(const SpdyServerConfig* config,
 SpdySession::~SpdySession() {}
 
 void SpdySession::Run() {
+  // Send a SETTINGS frame when the connection first opens, to inform the
+  // client of our MAX_CONCURRENT_STREAMS limit.
+  SendSettingsFrame();
+
   // Initial amount time to block when waiting for output -- we start with
   // this, and as long as we fail to perform any input OR output, we increase
   // exponentially to the max, resetting when we succeed again.
@@ -417,6 +423,20 @@ bool SpdySession::SendRstStreamFrame(spdy::SpdyStreamId stream_id,
                                      spdy::SpdyStatusCodes status) {
   return SendFrame(spdy::SpdyFramer::CreateRstStream(stream_id, status));
 }
+
+bool SpdySession::SendSettingsFrame() {
+  // For now, we only tell the client about our MAX_CONCURRENT_STREAMS limit.
+  // In the future maybe we can do fancier things with the other settings.
+  spdy::SpdySettings settings;
+  spdy::SettingsFlagsAndId flags_and_id(0);
+  flags_and_id.set_flags(0);
+  flags_and_id.set_id(spdy::SETTINGS_MAX_CONCURRENT_STREAMS);
+  settings.push_back(std::make_pair(
+      flags_and_id,
+      static_cast<uint32>(config_->max_streams_per_connection())));
+  return SendFrame(spdy::SpdyFramer::CreateSettings(settings));
+}
+
 
 void SpdySession::StopSession() {
   session_stopped_ = true;

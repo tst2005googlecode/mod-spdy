@@ -109,6 +109,7 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
   bool SendGoAwayFrame();
   bool SendRstStreamFrame(spdy::SpdyStreamId stream_id,
                           spdy::SpdyStatusCodes status);
+  bool SendSettingsFrame();
 
   // Close down the whole session, post-haste.  Block until all stream
   // threads have shut down.

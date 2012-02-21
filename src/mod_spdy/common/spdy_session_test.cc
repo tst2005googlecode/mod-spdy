@@ -115,6 +115,8 @@ MATCHER_P(IsControlFrameOfType, type, "") {
 
 // Test that if the connection is already aborted, we stop immediately.
 TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)))
+      .WillOnce(Return(false));
   EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
 
   session_.Run();
@@ -126,6 +128,8 @@ TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
 TEST_F(SpdySessionTest, SinglePing) {
   testing::InSequence seq;
   PushPingFrame(1);
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)))
+      .WillOnce(Return(true));
   EXPECT_CALL(session_io_, IsConnectionAborted())
       .WillOnce(Return(false));
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), _))
