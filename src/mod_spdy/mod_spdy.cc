@@ -204,6 +204,8 @@ void RetrieveOptionalFunctions() {
 // Called after configuration has completed.
 int PostConfig(apr_pool_t* pconf, apr_pool_t* plog, apr_pool_t* ptemp,
                server_rec* server_list) {
+  mod_spdy::ScopedServerLogHandler log_handler(server_list);
+
   // Check if any of the virtual hosts have mod_spdy enabled.
   bool any_enabled = false;
   for (server_rec* server = server_list; server != NULL;
@@ -213,6 +215,7 @@ int PostConfig(apr_pool_t* pconf, apr_pool_t* plog, apr_pool_t* ptemp,
       break;
     }
   }
+
   // Log a message indicating whether mod_spdy is enabled or not.  It's all too
   // easy to install mod_spdy and forget to turn it on, so this may be helpful
   // for debugging server behavior.
@@ -234,21 +237,41 @@ int PostConfig(apr_pool_t* pconf, apr_pool_t* plog, apr_pool_t* ptemp,
 
 // Called exactly once for each child process, before that process starts
 // spawning worker threads.
-void ChildInit(apr_pool_t* pool, server_rec* server) {
-  const mod_spdy::SpdyServerConfig* config = mod_spdy::GetServerConfig(server);
+void ChildInit(apr_pool_t* pool, server_rec* server_list) {
+  mod_spdy::ScopedServerLogHandler log_handler(server_list);
 
-  // Set mod_spdy's logging level for this process.  We should do this even if
-  // mod_spdy is disabled on this server.
-  mod_spdy::SetLoggingLevel(server->loglevel, config->vlog_level());
-  mod_spdy::ScopedServerLogHandler log_handler(server);
+  // Check whether mod_spdy is enabled for any server_rec in the list, and
+  // determine the most verbose log level of any server in the list.
+  bool spdy_enabled = false;
+  int max_apache_log_level = APLOG_EMERG;  // the least verbose log level
+  COMPILE_ASSERT(APLOG_INFO > APLOG_ERR, bigger_number_means_more_verbose);
+  for (server_rec* server = server_list; server != NULL;
+       server = server->next) {
+    spdy_enabled |= mod_spdy::GetServerConfig(server)->spdy_enabled();
+    if (server->loglevel > max_apache_log_level) {
+      max_apache_log_level = server->loglevel;
+    }
+  }
 
-  // If mod_spdy is disabled on this server, don't do any other setup.
-  if (!config->spdy_enabled()) {
+  // There are a couple config options we need to check (vlog_level and
+  // max_threads_per_process) that are only settable at the top level of the
+  // config, so it doesn't matter which server in the list we read them from.
+  const mod_spdy::SpdyServerConfig* top_level_config =
+      mod_spdy::GetServerConfig(server_list);
+
+  // We set mod_spdy's global logging level to that of the most verbose server
+  // in the list.  The scoped logging handlers we establish will sometimes
+  // restrict things further, if they are for a less verbose virtual host.
+  mod_spdy::SetLoggingLevel(max_apache_log_level,
+                            top_level_config->vlog_level());
+
+  // If mod_spdy is not enabled on any server_rec, don't do any other setup.
+  if (!spdy_enabled) {
     return;
   }
 
   // Create the per-process thread pool.
-  const int max_threads = config->max_threads_per_process();
+  const int max_threads = top_level_config->max_threads_per_process();
   const apr_status_t status = apr_thread_pool_create(
       &gPerProcessThreadPool, max_threads, max_threads, pool);
   if (status != APR_SUCCESS) {
@@ -594,6 +617,7 @@ int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
 // this to insert our protocol-level output filter.
 int InsertProtocolFilters(request_rec* request) {
   conn_rec* connection = request->connection;
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
 
   // If mod_spdy is disabled on this server, then don't insert any filters.
   if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
@@ -638,6 +662,7 @@ int InsertProtocolFilters(request_rec* request) {
 // this hook only to insert such filters, that is fine.
 void InsertContentFilters(request_rec* request) {
   conn_rec* connection = request->connection;
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
 
   // If mod_spdy is disabled on this server, then don't insert any filters.
   if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {

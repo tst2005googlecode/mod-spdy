@@ -86,6 +86,15 @@ const char* SetNonNegativeInt(cmd_parms* cmd, void* dir, const char* arg) {
   return NULL;
 }
 
+// This template can be wrapped around any of the above functions to restrict
+// the directive to being used only at the top level (as opposed to within a
+// <VirtualHost> directive).
+template <const char*(*setter)(cmd_parms*, void*, const char*)>
+const char* GlobalOnly(cmd_parms* cmd, void* dir, const char* arg) {
+  const char* error = ap_check_cmd_context(cmd, GLOBAL_ONLY);
+  return error != NULL ? error : (*setter)(cmd, dir, arg);
+}
+
 }  // namespace
 
 // The reinterpret_cast is there because Apache's AP_INIT_TAKE1 macro needs to
@@ -110,12 +119,13 @@ const command_rec kSpdyConfigCommands[] = {
       "Maxiumum number of simultaneous SPDY streams per connection"),
   SPDY_CONFIG_COMMAND(
       "SpdyMaxThreadsPerProcess",
-      SetPositiveInt<&SpdyServerConfig::set_max_threads_per_process>,
+      GlobalOnly<SetPositiveInt<
+        &SpdyServerConfig::set_max_threads_per_process> >,
       "Maxiumum number of worker threads to spawn per child process"),
   // Debugging commands, which should not be used in production:
   SPDY_CONFIG_COMMAND(
       "SpdyDebugLoggingVerbosity",
-      SetNonNegativeInt<&SpdyServerConfig::set_vlog_level>,
+      GlobalOnly<SetNonNegativeInt<&SpdyServerConfig::set_vlog_level> >,
       "Set the verbosity of mod_spdy logging"),
   SPDY_CONFIG_COMMAND(
       "SpdyDebugUseSpdyForNonSslConnections",
