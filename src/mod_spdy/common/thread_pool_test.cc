@@ -14,8 +14,11 @@
 
 #include "mod_spdy/common/thread_pool.h"
 
+#include <vector>
+
 #include "base/basictypes.h"
 #include "base/scoped_ptr.h"
+#include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
 #include "mod_spdy/common/executor.h"
@@ -28,6 +31,28 @@
 // because you're running under Valgrind.
 
 namespace {
+
+// A Notification allows one thread to Wait() until another thread calls Set().
+class Notification {
+ public:
+  Notification() : condvar_(&lock_), flag_(false) {}
+  ~Notification() {}
+  void Set() {
+    base::AutoLock autolock(lock_);
+    flag_ = true;
+    condvar_.Broadcast();
+  }
+  void Wait() {
+    base::AutoLock autolock(lock_);
+    while (!flag_) {
+      condvar_.Wait();
+    }
+  }
+ private:
+  base::Lock lock_;
+  base::ConditionVariable condvar_;
+  bool flag_;
+};
 
 // When run, a TestFunction waits for `wait` millis, then sets `*result` to
 // RAN.  When cancelled, it sets *result to CANCELLED.
@@ -145,6 +170,86 @@ TEST(ThreadPoolTest, MultipleExecutors) {
   EXPECT_EQ(TestFunction::CANCELLED, e2r2);
   EXPECT_EQ(TestFunction::RAN, e1r3);
   EXPECT_EQ(TestFunction::CANCELLED, e2r3);
+}
+
+// When run, a WaitFunction blocks until the notification is set.
+class WaitFunction : public net_instaweb::Function {
+ public:
+  WaitFunction(Notification* notification) : notification_(notification) {}
+  virtual ~WaitFunction() {}
+ protected:
+  // net_instaweb::Function methods:
+  virtual void Run() {
+    notification_->Wait();
+  }
+  virtual void Cancel() {}
+ private:
+  Notification* const notification_;
+  DISALLOW_COPY_AND_ASSIGN(WaitFunction);
+};
+
+// When run, an IdFunction pushes its ID onto the vector.
+class IdFunction : public net_instaweb::Function {
+ public:
+  IdFunction(int id, base::Lock* lock, base::ConditionVariable* condvar,
+             std::vector<int>* output)
+      : id_(id), lock_(lock), condvar_(condvar), output_(output) {}
+  virtual ~IdFunction() {}
+ protected:
+  // net_instaweb::Function methods:
+  virtual void Run() {
+    base::AutoLock autolock(*lock_);
+    output_->push_back(id_);
+    condvar_->Broadcast();
+  }
+  virtual void Cancel() {}
+ private:
+  const int id_;
+  base::Lock* const lock_;
+  base::ConditionVariable* const condvar_;
+  std::vector<int>* const output_;
+  DISALLOW_COPY_AND_ASSIGN(IdFunction);
+};
+
+// Test that if many tasks of the same priority are added, they are run in the
+// order they were added.
+TEST(ThreadPoolTest, SamePriorityTasksAreFIFO) {
+  // Create a thread pool with just one thread, and an executor.
+  mod_spdy::ThreadPool thread_pool(1);
+  ASSERT_TRUE(thread_pool.Start());
+  scoped_ptr<mod_spdy::Executor> executor(thread_pool.NewExecutor());
+
+  // First, make sure no other tasks will get started until we set the
+  // notification.
+  Notification start;
+  executor->AddTask(new WaitFunction(&start), 0);
+
+  // Add many tasks to the executor, of varying priorities.
+  const int num_tasks_each_priority = 1000;
+  const int total_num_tasks = 3 * num_tasks_each_priority;
+  base::Lock lock;
+  base::ConditionVariable condvar(&lock);
+  std::vector<int> ids;  // protected by lock
+  for (int id = 0; id < num_tasks_each_priority; ++id) {
+    executor->AddTask(new IdFunction(id, &lock, &condvar, &ids), 1);
+    executor->AddTask(new IdFunction(id + num_tasks_each_priority,
+                                     &lock, &condvar, &ids), 2);
+    executor->AddTask(new IdFunction(id + 2 * num_tasks_each_priority,
+                                     &lock, &condvar, &ids), 3);
+  }
+
+  // Start us off, then wait for all tasks to finish.
+  start.Set();
+  base::AutoLock autolock(lock);
+  while (ids.size() < total_num_tasks) {
+    condvar.Wait();
+  }
+
+  // Check that the tasks were executed in order by the one worker thread.
+  for (int index = 0; index < total_num_tasks; ++index) {
+    ASSERT_EQ(index, ids[index])
+        << "Task " << ids[index] << " finished in position " << index;
+  }
 }
 
 }  // namespace
