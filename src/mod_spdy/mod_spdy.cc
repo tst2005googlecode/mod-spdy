@@ -26,11 +26,10 @@
 #include "apr_optional.h"
 #include "apr_optional_hooks.h"
 #include "apr_tables.h"
-#include "apr_thread_pool.h"
 
+#include "base/scoped_ptr.h"
 #include "mod_spdy/apache/apache_spdy_session_io.h"
 #include "mod_spdy/apache/apache_spdy_stream_task_factory.h"
-#include "mod_spdy/apache/apr_thread_pool_executor.h"
 #include "mod_spdy/apache/config_commands.h"
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/filters/http_to_spdy_filter.h"
@@ -38,9 +37,11 @@
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/connection_context.h"
+#include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session.h"
+#include "mod_spdy/common/thread_pool.h"
 
 extern "C" {
   // Declaring modified mod_ssl's optional hooks here (so that we don't need to
@@ -85,9 +86,9 @@ int (*gIsUsingSslForConnection)(conn_rec*) = NULL;
 // that in a non-threaded MPM (e.g. Prefork), this thread pool will be used by
 // just one SPDY connection at a time, but in a threaded MPM (e.g. Worker) it
 // will shared by several SPDY connections at once.  That's okay though,
-// because apr_thread_pool_t objects are thread-safe.  Users just have to make
-// sure that they configure SpdyMaxThreadsPerProcess depending on the MPM.
-apr_thread_pool* gPerProcessThreadPool = NULL;
+// because ThreadPool objects are thread-safe.  Users just have to make sure
+// that they configure SpdyMaxThreadsPerProcess depending on the MPM.
+mod_spdy::ThreadPool* gPerProcessThreadPool = NULL;
 
 // Optional function provided by mod_spdy.  Return zero if the connection is
 // not using SPDY, otherwise return the SPDY version number in use.  Note that
@@ -273,30 +274,14 @@ void ChildInit(apr_pool_t* pool, server_rec* server_list) {
   }
 
   // Create the per-process thread pool.
-  const int max_threads = top_level_config->max_threads_per_process();
-  const apr_status_t status = apr_thread_pool_create(
-      &gPerProcessThreadPool, max_threads, max_threads, pool);
-  if (status != APR_SUCCESS) {
-    LOG(DFATAL) << "Could not create mod_spdy thread pool (status="
-                << status << "); mod_spdy will not function.";
+  scoped_ptr<mod_spdy::ThreadPool> thread_pool(
+      new mod_spdy::ThreadPool(top_level_config->max_threads_per_process()));
+  if (thread_pool->Start()) {
+    gPerProcessThreadPool = thread_pool.release();
+    mod_spdy::PoolRegisterDelete(pool, gPerProcessThreadPool);
   } else {
-    // TODO(mdsteele): This is very strange.  If you _don't_ have this next
-    // line (and we wouldn't expect to need it, having allocated the thread
-    // pool in a memory pool), then Apache spits out a double-free error upon
-    // exiting.  If you _do_ have this line, which instructs the memory pool to
-    // destroy the thread pool during cleanup (shouldn't it be doing that
-    // anyway?), then you _don't_ get a double-free error -- although Valgrind
-    // will report that you may be leaking memory (not great, but probably okay
-    // given that we're exiting anyway).  I don't know why this is.  Maybe
-    // apr_thread_pool_t is buggy?  It seems possible, given that I can't seem
-    // to find any project that actually uses them, so maybe they're not
-    // well-tested.  Or maybe I'm just doing something wrong; but we should
-    // probably find a replacement thread pool implementation.  Until then,
-    // we'll keep this line around so that Apache doesn't spit stack traces at
-    // us every time we exit.
-    apr_pool_pre_cleanup_register(
-        pool, gPerProcessThreadPool,
-        reinterpret_cast<apr_status_t(*)(void*)>(apr_thread_pool_destroy));
+    LOG(DFATAL) << "Could not create mod_spdy thread pool; "
+                << "mod_spdy will not function.";
   }
 }
 
@@ -511,9 +496,10 @@ int ProcessConnection(conn_rec* connection) {
   // process this as a SPDY master connection.
   mod_spdy::ApacheSpdySessionIO session_io(connection);
   mod_spdy::ApacheSpdyStreamTaskFactory task_factory(connection);
-  mod_spdy::AprThreadPoolExecutor executor(gPerProcessThreadPool);
+  scoped_ptr<mod_spdy::Executor> executor(
+      gPerProcessThreadPool->NewExecutor());
   mod_spdy::SpdySession spdy_session(
-      config, &session_io, &task_factory, &executor);
+      config, &session_io, &task_factory, executor.get());
   // This call will block until the session has closed down.
   spdy_session.Run();
 

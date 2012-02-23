@@ -33,13 +33,15 @@ class Executor {
 
   // Add a new task to be run; the executor takes ownership of the task.  The
   // priority argument hints at how important this task is to get done, but the
-  // executor is free to ignore it.
+  // executor is free to ignore it.  If Stop has already been called, the
+  // executor may immediately cancel the task rather than running it.
   virtual void AddTask(net_instaweb::Function* task,
                        spdy::SpdyPriority priority) = 0;
 
   // Stop the executor.  Cancel all tasks that were pushed onto this executor
   // but that have not yet begun to run.  Tasks that were already running will
-  // continue to run, and this function should block until they have completed.
+  // continue to run, and this function must block until they have completed.
+  // It must be safe to call this method more than once.
   virtual void Stop() = 0;
 
  private:

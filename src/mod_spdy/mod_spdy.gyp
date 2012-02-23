@@ -47,6 +47,7 @@
         'common/spdy_stream.cc',
         'common/spdy_stream_task_factory.cc',
         'common/spdy_to_http_converter.cc',
+        'common/thread_pool.cc',
       ],
     },
     {
@@ -122,6 +123,7 @@
         'common/spdy_frame_queue_test.cc',
         'common/spdy_session_test.cc',
         'common/spdy_to_http_converter_test.cc',
+        'common/thread_pool_test.cc',
       ],
     },
     {
