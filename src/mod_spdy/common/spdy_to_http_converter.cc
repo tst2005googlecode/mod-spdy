@@ -18,24 +18,14 @@
 #include "base/string_number_conversions.h"  // for Int64ToString
 #include "base/string_piece.h"
 #include "mod_spdy/common/http_request_visitor_interface.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_frame_builder.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
-namespace {
+namespace mod_spdy {
 
-// Header names:
-const char* const kConnection = "connection";
-const char* const kContentLength = "content-length";
-const char* const kHost = "host";
-const char* const kKeepAlive = "keep-alive";
-const char* const kMethod = "method";
-const char* const kPath = "url";  // Chromium uses "url" instead of "path".
-const char* const kScheme = "scheme";
-const char* const kTransferEncoding = "transfer-encoding";
-const char* const kVersion = "version";
-// Header values:
-const char* const kChunked = "chunked";
+namespace {
 
 // Functions to test for FLAG_FIN.  Using these functions instead of testing
 // flags() directly helps guard against mixing up & with && or mixing up
@@ -47,49 +37,16 @@ bool HasDataFlagFinSet(const spdy::SpdyDataFrame& frame) {
   return bool(frame.flags() & spdy::DATA_FLAG_FIN);
 }
 
-// TODO(mdsteele): In more recent versions of net/spdy/, this is a static
-//   method on SpdyFramer.  We should upgrade and use that instead of
-//   duplicating it here.
-bool ParseHeaderBlockInBuffer(const char* header_data,
-                              size_t header_length,
-                              spdy::SpdyHeaderBlock* block) {
-  // Code from spdy_framer.cc:
-  spdy::SpdyFrameBuilder builder(header_data, header_length);
-  void* iter = NULL;
-  uint16 num_headers;
-  if (builder.ReadUInt16(&iter, &num_headers)) {
-    int index;
-    for (index = 0; index < num_headers; ++index) {
-      std::string name;
-      std::string value;
-      if (!builder.ReadString(&iter, &name))
-        break;
-      if (!builder.ReadString(&iter, &value))
-        break;
-      if (!name.size() || !value.size())
-        return false;
-      if (block->find(name) == block->end()) {
-        (*block)[name] = value;
-      } else {
-        return false;
-      }
-    }
-    return index == num_headers &&
-        iter == header_data + header_length;
-  }
-  return false;
-}
-
 // Generate an HTTP request line from the given SPDY header block by calling
 // the OnStatusLine() method of the given visitor, and return true.  If there's
 // an error, this will return false without calling any methods on the visitor.
 bool GenerateRequestLine(const spdy::SpdyHeaderBlock& block,
-                         mod_spdy::HttpRequestVisitorInterface* visitor) {
-  spdy::SpdyHeaderBlock::const_iterator method = block.find(kMethod);
-  spdy::SpdyHeaderBlock::const_iterator scheme = block.find(kScheme);
-  spdy::SpdyHeaderBlock::const_iterator host = block.find(kHost);
-  spdy::SpdyHeaderBlock::const_iterator path = block.find(kPath);
-  spdy::SpdyHeaderBlock::const_iterator version = block.find(kVersion);
+                         HttpRequestVisitorInterface* visitor) {
+  spdy::SpdyHeaderBlock::const_iterator method = block.find(spdy::kMethod);
+  spdy::SpdyHeaderBlock::const_iterator scheme = block.find(spdy::kScheme);
+  spdy::SpdyHeaderBlock::const_iterator host = block.find(http::kHost);
+  spdy::SpdyHeaderBlock::const_iterator path = block.find(spdy::kUrl);
+  spdy::SpdyHeaderBlock::const_iterator version = block.find(spdy::kVersion);
 
   if (method == block.end() ||
       scheme == block.end() ||
@@ -106,11 +63,11 @@ bool GenerateRequestLine(const spdy::SpdyHeaderBlock& block,
 // Convert the given SPDY header into HTTP header(s) by splitting on NUL bytes
 // calling the specified method (either OnLeadingHeader or OnTrailingHeader) of
 // the given visitor.
-template <void(mod_spdy::HttpRequestVisitorInterface::*OnHeader)(
+template <void(HttpRequestVisitorInterface::*OnHeader)(
     const base::StringPiece& key, const base::StringPiece& value)>
 void InsertHeader(const base::StringPiece key,
                   const base::StringPiece value,
-                  mod_spdy::HttpRequestVisitorInterface* visitor) {
+                  HttpRequestVisitorInterface* visitor) {
   // Split header values on null characters, emitting a separate
   // header key-value pair for each substring. Logic from
   // net/spdy/spdy_session.cc
@@ -127,8 +84,6 @@ void InsertHeader(const base::StringPiece key,
 }
 
 }  // namespace
-
-namespace mod_spdy {
 
 SpdyToHttpConverter::SpdyToHttpConverter(HttpRequestVisitorInterface* visitor)
     : visitor_(visitor),
@@ -242,7 +197,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
   if (state_ == RECEIVED_SYN_STREAM) {
     state_ = RECEIVED_DATA;
     if (use_chunking_) {
-      visitor_->OnLeadingHeader(kTransferEncoding, kChunked);
+      visitor_->OnLeadingHeader(http::kTransferEncoding, http::kChunked);
     }
     visitor_->OnLeadingHeadersComplete();
   }
@@ -278,25 +233,26 @@ void SpdyToHttpConverter::GenerateLeadingHeaders(
     const base::StringPiece value = it->second;
 
     // Skip SPDY-specific (i.e. non-HTTP) headers.
-    if (key == kMethod || key == kScheme || key == kPath || key == kVersion) {
+    if (key == spdy::kMethod || key == spdy::kScheme || key == spdy::kUrl ||
+        key == spdy::kVersion) {
       continue;
     }
 
     // Skip headers that are ignored by SPDY.
-    if (key == kConnection || key == kKeepAlive) {
+    if (key == http::kConnection || key == http::kKeepAlive) {
       continue;
     }
 
     // If the client sent a Content-Length header, take note, so that we'll
     // know not to used chunked encoding.
-    if (key == kContentLength) {
+    if (key == http::kContentLength) {
       use_chunking_ = false;
     }
 
     // The client shouldn't be sending us a Transfer-Encoding header; it's
     // pretty pointless over SPDY.  If they do send one, just ignore it; we may
     // be overriding it later anyway.
-    if (key == kTransferEncoding) {
+    if (key == http::kTransferEncoding) {
       LOG(WARNING) << "Client sent \"transfer-encoding: " << value
                    << "\" header over SPDY.  Why would they do that?";
       continue;

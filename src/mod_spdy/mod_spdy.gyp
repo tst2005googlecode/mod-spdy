@@ -37,6 +37,7 @@
         'common/http_response_parser.cc',
         'common/http_response_visitor_interface.cc',
         'common/http_string_builder.cc',
+        'common/protocol_util.cc',
         'common/queued_worker_pool_executor.cc',
         'common/spdy_frame_priority_queue.cc',
         'common/spdy_frame_queue.cc',

@@ -21,6 +21,7 @@
 
 #include "base/string_piece.h"
 #include "mod_spdy/apache/pool_util.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/version.h"
@@ -29,39 +30,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
-
-// TODO(mdsteele): In more recent versions of net/spdy/, this is a static
-//   method on SpdyFramer.  We should upgrade and use that instead of
-//   duplicating it here.
-bool ParseHeaderBlockInBuffer(const char* header_data,
-                              size_t header_length,
-                              spdy::SpdyHeaderBlock* block) {
-  // Code from spdy_framer.cc:
-  spdy::SpdyFrameBuilder builder(header_data, header_length);
-  void* iter = NULL;
-  uint16 num_headers;
-  if (builder.ReadUInt16(&iter, &num_headers)) {
-    int index;
-    for (index = 0; index < num_headers; ++index) {
-      std::string name;
-      std::string value;
-      if (!builder.ReadString(&iter, &name))
-        break;
-      if (!builder.ReadString(&iter, &value))
-        break;
-      if (!name.size() || !value.size())
-        return false;
-      if (block->find(name) == block->end()) {
-        (*block)[name] = value;
-      } else {
-        return false;
-      }
-    }
-    return index == num_headers &&
-        iter == header_data + header_length;
-  }
-  return false;
-}
 
 class HttpToSpdyFilterTest : public testing::Test {
  public:
@@ -170,16 +138,17 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
     ASSERT_EQ(spdy::CONTROL_FLAG_NONE, syn_reply_frame.flags());
 
     spdy::SpdyHeaderBlock block;
-    ASSERT_TRUE(ParseHeaderBlockInBuffer(syn_reply_frame.header_block(),
-                                         syn_reply_frame.header_block_len(),
-                                         &block));
+    ASSERT_TRUE(mod_spdy::ParseHeaderBlockInBuffer(
+        syn_reply_frame.header_block(),
+        syn_reply_frame.header_block_len(),
+        &block));
     EXPECT_EQ(5, block.size());
-    EXPECT_EQ("text/html", block["content-type"]);
-    EXPECT_EQ("www.example.com", block["host"]);
-    EXPECT_EQ("200", block["status"]);
-    EXPECT_EQ("HTTP/1.1", block["version"]);
+    EXPECT_EQ("text/html", block[mod_spdy::http::kContentType]);
+    EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
+    EXPECT_EQ("200", block[spdy::kStatus]);
+    EXPECT_EQ("HTTP/1.1", block[spdy::kVersion]);
     EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
-              block["x-mod-spdy"]);
+              block[mod_spdy::http::kXModSpdy]);
     delete frame;
   }
   ASSERT_FALSE(output_queue_.Pop(&frame));
@@ -339,16 +308,17 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
     ASSERT_EQ(spdy::CONTROL_FLAG_UNIDIRECTIONAL, syn_stream_frame.flags());
 
     spdy::SpdyHeaderBlock block;
-    ASSERT_TRUE(ParseHeaderBlockInBuffer(syn_stream_frame.header_block(),
-                                         syn_stream_frame.header_block_len(),
-                                         &block));
+    ASSERT_TRUE(mod_spdy::ParseHeaderBlockInBuffer(
+        syn_stream_frame.header_block(),
+        syn_stream_frame.header_block_len(),
+        &block));
     EXPECT_EQ(5, block.size());
-    EXPECT_EQ("text/css", block["content-type"]);
-    EXPECT_EQ("www.example.com", block["host"]);
-    EXPECT_EQ("200", block["status"]);
-    EXPECT_EQ("HTTP/1.1", block["version"]);
+    EXPECT_EQ("text/css", block[mod_spdy::http::kContentType]);
+    EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
+    EXPECT_EQ("200", block[spdy::kStatus]);
+    EXPECT_EQ("HTTP/1.1", block[spdy::kVersion]);
     EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
-              block["x-mod-spdy"]);
+              block[mod_spdy::http::kXModSpdy]);
     delete frame;
   }
   ASSERT_FALSE(output_queue_.Pop(&frame));

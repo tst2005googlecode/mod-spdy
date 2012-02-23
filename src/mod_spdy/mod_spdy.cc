@@ -38,6 +38,7 @@
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/connection_context.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session.h"
 
@@ -122,7 +123,7 @@ apr_status_t AntiChunkingFilter(ap_filter_t* filter,
                 << " in request " << request->the_request;
   }
   const char* transfer_encoding =
-      apr_table_get(request->headers_out, "Transfer-Encoding");
+      apr_table_get(request->headers_out, mod_spdy::http::kTransferEncoding);
   if (transfer_encoding != NULL) {
     LOG(DFATAL) << "transfer_encoding == \"" << transfer_encoding << "\""
                 << " in request " << request->the_request;
@@ -133,7 +134,8 @@ apr_status_t AntiChunkingFilter(ap_filter_t* filter,
   // this header in our http-to-spdy filter.  It's a gross hack, but it seems
   // to work, and is much simpler than allowing the data to be chunked and then
   // having to de-chunk it ourselves.
-  apr_table_setn(request->headers_out, "Transfer-Encoding", "chunked");
+  apr_table_setn(request->headers_out, mod_spdy::http::kTransferEncoding,
+                 mod_spdy::http::kChunked);
 
   // This filter only needs to run once, so now that it has run, remove it.
   ap_remove_output_filter(filter);
@@ -156,14 +158,14 @@ apr_status_t HttpToSpdyFilter(ap_filter_t* filter,
                 << " in request " << request->the_request;
   }
   const char* transfer_encoding =
-      apr_table_get(filter->r->headers_out, "Transfer-Encoding");
+      apr_table_get(filter->r->headers_out, mod_spdy::http::kTransferEncoding);
   if (transfer_encoding != NULL && strcmp(transfer_encoding, "chunked")) {
     LOG(DFATAL) << "transfer_encoding == \"" << transfer_encoding << "\""
                 << " in request " << request->the_request;
   }
   // Remove the transfer-encoding header so that it does not appear in our SPDY
   // headers.
-  apr_table_unset(request->headers_out, "Transfer-Encoding");
+  apr_table_unset(request->headers_out, mod_spdy::http::kTransferEncoding);
 
   // Okay, now that that's done, let's focus on translating HTTP to SPDY.
   mod_spdy::HttpToSpdyFilter* http_to_spdy_filter =

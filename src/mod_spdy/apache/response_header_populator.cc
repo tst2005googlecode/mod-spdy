@@ -17,6 +17,8 @@
 #include <string>
 
 #include "base/string_number_conversions.h"  // for IntToString
+#include "mod_spdy/common/protocol_util.h"
+#include "net/spdy/spdy_protocol.h"
 
 namespace {
 
@@ -50,12 +52,12 @@ void ResponseHeaderPopulator::Populate(spdy::SpdyHeaderBlock* headers) const {
 
   // Now add the SPDY-specific required headers.
   HeaderPopulatorInterface::MergeInHeader(
-      "status", base::IntToString(request_->status), headers);
+      spdy::kStatus, base::IntToString(request_->status), headers);
   HeaderPopulatorInterface::MergeInHeader(
-      "version", request_->protocol, headers);
+      spdy::kVersion, request_->protocol, headers);
   // Finally remove SPDY-ignored headers.
-  headers->erase("connection");
-  headers->erase("keep-alive");
+  headers->erase(http::kConnection);
+  headers->erase(http::kKeepAlive);
 }
 
 }  // namespace mod_spdy

@@ -20,6 +20,7 @@
 #include "base/string_number_conversions.h"
 #include "base/string_piece.h"
 #include "mod_spdy/common/http_response_visitor_interface.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "net/instaweb/util/public/string_util.h"
 
 namespace {
@@ -328,12 +329,12 @@ bool HttpResponseParser::ParseLeadingHeader(const base::StringPiece& text) {
 
   // We need to check the Content-Length and Transfer-Encoding headers to know
   // if we're using chunking, and if not, how long the body is.
-  if (net_instaweb::StringCaseEqual(key, "transfer-encoding")) {
-    if (value == "chunked") {
+  if (net_instaweb::StringCaseEqual(key, http::kTransferEncoding)) {
+    if (value == http::kChunked) {
       body_type_ = CHUNKED_BODY;
     }
   } else if (body_type_ != CHUNKED_BODY &&
-             net_instaweb::StringCaseEqual(key, "content-length")) {
+             net_instaweb::StringCaseEqual(key, http::kContentLength)) {
     base::StringToInt(value.data(), value.data() + value.size(),
                       &remaining_bytes_);
     if (remaining_bytes_ > 0) {
