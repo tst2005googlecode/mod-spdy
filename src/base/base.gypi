@@ -155,6 +155,14 @@
             '-Wno-write-strings',
             '-Wno-error',
           ],
+          'cflags!': [
+            # We turn this flag on in common.gypi (search for "Page Speed"),
+            # but it causes problems compiling the base code on 32-bit systems,
+            # so turn it off for the base code.  (The issue is that it enables
+            # certain stricter error checks, and there's an implicit narrowing
+            # conversion in time_posix.cc that it doesn't like.)
+            '-std=gnu++0x',
+          ],
           'link_settings': {
             'libraries': [
               # We need rt for clock_gettime().
