@@ -97,7 +97,7 @@ function uncompress_file {
 }
 
 OPENSSL_SRC_TGZ_URL="http://www.openssl.org/source/openssl-1.0.1-beta2.tar.gz"
-APACHE_HTTPD_SRC_TGZ_URL="http://www.apache.org/dist/httpd/httpd-2.2.21.tar.gz"
+APACHE_HTTPD_SRC_TGZ_URL="http://archive.apache.org/dist/httpd/httpd-2.2.21.tar.gz"
 APACHE_HTTPD_MODSSL_NPN_PATCH_URL="https://issues.apache.org/bugzilla/attachment.cgi?id=27969&action=diff&context=patch&collapsed=&headers=1&format=raw"
 
 OPENSSL_SRC_TGZ=$(basename $OPENSSL_SRC_TGZ_URL)
