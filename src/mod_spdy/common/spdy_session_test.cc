@@ -21,12 +21,16 @@
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session_io.h"
 #include "mod_spdy/common/spdy_stream_task_factory.h"
+#include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using mod_spdy::FlagFinIs;
+using mod_spdy::IsControlFrameOfType;
+using mod_spdy::IsDataFrame;
 using testing::_;
 using testing::AllOf;
 using testing::Eq;
@@ -37,44 +41,6 @@ using testing::Return;
 using testing::WithArg;
 
 namespace {
-
-// Define a gMock matcher that checks that a const spdy::SpdyFrame& is a
-// control frame with the specified type.
-MATCHER_P(IsControlFrameOfType, type, "") {
-  if (!arg.is_control_frame()) {
-    *result_listener << "is data frame for stream " <<
-        static_cast<const spdy::SpdyDataFrame*>(&arg)->stream_id();
-    return false;
-  }
-  const spdy::SpdyControlFrame* ctrl_frame =
-      static_cast<const spdy::SpdyControlFrame*>(&arg);
-  if (ctrl_frame->type() != type) {
-    *result_listener << "is control frame of type " << ctrl_frame->type();
-    return false;
-  }
-  return true;
-}
-
-// Define a gMock matcher that checks that a const spdy::SpdyFrame& is a
-// data frame with the specified stream ID and FLAG_FIN value.
-MATCHER_P2(IsDataFrame, stream_id, fin, "") {
-  if (arg.is_control_frame()) {
-    *result_listener << "is control frame of type " <<
-        static_cast<const spdy::SpdyControlFrame*>(&arg)->type();
-    return false;
-  }
-  const spdy::SpdyDataFrame* data_frame =
-      static_cast<const spdy::SpdyDataFrame*>(&arg);
-  if (data_frame->stream_id() != stream_id) {
-    *result_listener << "is data frame for stream " << data_frame->stream_id();
-    return false;
-  }
-  if (bool(data_frame->flags() & spdy::DATA_FLAG_FIN) != bool(fin)) {
-    *result_listener << "is data frame with FLAG_FIN=" << !fin;
-    return false;
-  }
-  return true;
-}
 
 class MockSpdySessionIO : public mod_spdy::SpdySessionIO {
  public:
@@ -294,9 +260,11 @@ TEST_F(SpdySessionTest, SingleStream) {
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
       .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
   EXPECT_CALL(session_io_, SendFrameRaw(
-      IsControlFrameOfType(spdy::SYN_REPLY)));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsDataFrame(stream_id, false)));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsDataFrame(stream_id, true)));
+      AllOf(IsControlFrameOfType(spdy::SYN_REPLY), FlagFinIs(false))));
+  EXPECT_CALL(session_io_, SendFrameRaw(
+      AllOf(IsDataFrame(), FlagFinIs(false))));
+  EXPECT_CALL(session_io_, SendFrameRaw(
+      AllOf(IsDataFrame(), FlagFinIs(true))));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
 

@@ -105,10 +105,31 @@
       }]],
     },
     {
+      'target_name': 'spdy_common_testing',
+      'type': '<(library)',
+      'dependencies': [
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/net/net.gyp:spdy',
+        '<(DEPTH)/testing/gmock.gyp:gmock',
+      ],
+      'include_dirs': [
+        '<(DEPTH)',
+      ],
+      'export_dependent_settings': [
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/net/net.gyp:spdy',
+        '<(DEPTH)/testing/gmock.gyp:gmock',
+      ],
+      'sources': [
+        'common/testing/spdy_frame_matchers.cc',
+      ],
+    },
+    {
       'target_name': 'spdy_common_test',
       'type': 'executable',
       'dependencies': [
         'spdy_common',
+        'spdy_common_testing',
         '<(DEPTH)/testing/gmock.gyp:gmock',
         '<(DEPTH)/testing/gtest.gyp:gtest',
         '<(DEPTH)/testing/gtest.gyp:gtest_main',
@@ -131,6 +152,7 @@
       'type': 'executable',
       'dependencies': [
         'spdy_apache',
+        'spdy_common_testing',
         '<(DEPTH)/build/build_util.gyp:mod_spdy_version_header',
         '<(DEPTH)/testing/gtest.gyp:gtest',
         '<(DEPTH)/third_party/apache/apr/apr.gyp:apr',

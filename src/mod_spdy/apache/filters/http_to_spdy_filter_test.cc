@@ -24,10 +24,16 @@
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
+#include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "mod_spdy/common/version.h"
 #include "net/spdy/spdy_frame_builder.h"
 #include "net/spdy/spdy_protocol.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using mod_spdy::IsControlFrameOfType;
+using mod_spdy::IsDataFrame;
+using testing::Pointee;
 
 namespace {
 
@@ -128,10 +134,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // from request->headers_out rather than the data we put in):
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_TRUE(frame != NULL);
-    ASSERT_TRUE(frame->is_control_frame());
-    ASSERT_EQ(spdy::SYN_REPLY,
-              static_cast<spdy::SpdyControlFrame*>(frame)->type());
+    ASSERT_THAT(frame, Pointee(IsControlFrameOfType(spdy::SYN_REPLY)));
     const spdy::SpdySynReplyControlFrame& syn_reply_frame =
         *static_cast<spdy::SpdySynReplyControlFrame*>(frame);
     ASSERT_EQ(stream_id, syn_reply_frame.stream_id());
@@ -169,7 +172,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // Expect to get a single data frame out, containing kBodyData1:
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_FALSE(frame->is_control_frame());
+    ASSERT_THAT(frame, Pointee(IsDataFrame()));
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
@@ -200,7 +203,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // start with kBodyData2:
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_FALSE(frame->is_control_frame());
+    ASSERT_THAT(frame, Pointee(IsDataFrame()));
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
@@ -212,7 +215,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   }
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_FALSE(frame->is_control_frame());
+    ASSERT_THAT(frame, Pointee(IsDataFrame()));
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
@@ -238,7 +241,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // having FLAG_FIN set.
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_FALSE(frame->is_control_frame());
+    ASSERT_THAT(frame, Pointee(IsDataFrame()));
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
@@ -250,7 +253,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   }
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_FALSE(frame->is_control_frame());
+    ASSERT_THAT(frame, Pointee(IsDataFrame()));
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
@@ -297,9 +300,7 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
   // set:
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_TRUE(frame->is_control_frame());
-    ASSERT_EQ(spdy::SYN_STREAM,
-              static_cast<spdy::SpdyControlFrame*>(frame)->type());
+    ASSERT_THAT(frame, Pointee(IsControlFrameOfType(spdy::SYN_STREAM)));
     const spdy::SpdySynStreamControlFrame& syn_stream_frame =
         *static_cast<spdy::SpdySynStreamControlFrame*>(frame);
     ASSERT_EQ(stream_id, syn_stream_frame.stream_id());
@@ -332,7 +333,7 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
   // We should get a single data frame, with FLAG_FIN set.
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_FALSE(frame->is_control_frame());
+    ASSERT_THAT(frame, Pointee(IsDataFrame()));
     const spdy::SpdyDataFrame& data_frame =
         *static_cast<spdy::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
