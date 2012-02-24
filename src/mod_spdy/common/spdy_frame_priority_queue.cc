@@ -24,6 +24,7 @@
 namespace {
 
 bool TryPopFrom(std::list<spdy::SpdyFrame*>* queue, spdy::SpdyFrame** frame) {
+  DCHECK(frame);
   if (queue->empty()) {
     return false;
   }
@@ -49,6 +50,7 @@ SpdyFramePriorityQueue::~SpdyFramePriorityQueue() {
 void SpdyFramePriorityQueue::Insert(spdy::SpdyPriority priority,
                                     spdy::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
+  DCHECK(frame);
   switch (priority) {
     case 0:
       p0_queue_.push_back(frame);
@@ -71,6 +73,7 @@ void SpdyFramePriorityQueue::Insert(spdy::SpdyPriority priority,
 
 void SpdyFramePriorityQueue::InsertFront(spdy::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
+  DCHECK(frame);
   // To ensure that this frame is at the very front of the queue, we push it at
   // the front of the highest-priority internal queue.
   p0_queue_.push_front(frame);
@@ -79,6 +82,7 @@ void SpdyFramePriorityQueue::InsertFront(spdy::SpdyFrame* frame) {
 
 bool SpdyFramePriorityQueue::Pop(spdy::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
+  DCHECK(frame);
   return (TryPopFrom(&p0_queue_, frame) ||
           TryPopFrom(&p1_queue_, frame) ||
           TryPopFrom(&p2_queue_, frame) ||
@@ -88,6 +92,7 @@ bool SpdyFramePriorityQueue::Pop(spdy::SpdyFrame** frame) {
 bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
                                          spdy::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
+  DCHECK(frame);
 
   const base::TimeDelta zero = base::TimeDelta();
   base::TimeDelta time_remaining = max_time;

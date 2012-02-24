@@ -46,6 +46,8 @@ void SpdyFrameQueue::Abort() {
 
 void SpdyFrameQueue::Insert(spdy::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
+  DCHECK(frame);
+
   if (is_aborted_) {
     DCHECK(queue_.empty());
     delete frame;
@@ -59,6 +61,7 @@ void SpdyFrameQueue::Insert(spdy::SpdyFrame* frame) {
 
 bool SpdyFrameQueue::Pop(bool block, spdy::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
+  DCHECK(frame);
 
   if (block) {
     // Block until the queue is nonempty or we abort.

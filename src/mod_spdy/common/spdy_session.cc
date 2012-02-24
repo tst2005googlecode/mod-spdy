@@ -240,6 +240,15 @@ void SpdySession::HandleSynStream(
     return;
   }
 
+  // If decompression failed, the session is unrecoverable.
+  if (decompressed_frame == NULL) {
+    LOG(WARNING) << "Client sent SYN_STREAM with a corrupted header block.  "
+                 << "Sending GOAWAY.";
+    SendGoAwayFrame();
+    StopSession();
+    return;
+  }
+
   const spdy::SpdyStreamId stream_id = frame.stream_id();
 
   // Client stream IDs must be odd-numbered.
@@ -375,6 +384,15 @@ void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
   // maintain this session's header compression context.
   scoped_ptr<spdy::SpdyFrame> decompressed_frame(
       framer_.DecompressFrame(frame));
+
+  // If decompression failed, the session is unrecoverable.
+  if (decompressed_frame == NULL) {
+    LOG(WARNING) << "Client sent HEADERS with a corrupted header block.  "
+                 << "Sending GOAWAY.";
+    SendGoAwayFrame();
+    StopSession();
+    return;
+  }
 
   const spdy::SpdyStreamId stream_id = frame.stream_id();
   // Look up the stream to post the data to.  We need to lock when reading the

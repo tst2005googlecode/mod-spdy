@@ -223,6 +223,18 @@ class SpdySessionTest : public testing::Test {
         frame->data(), frame->length() + spdy::SpdyFrame::size()));
   }
 
+  // Push an improperly compressed SYN_STREAM frame into the input queue.
+  void PushCorruptedSynStreamFrame(spdy::SpdyStreamId stream_id) {
+    spdy::SpdyHeaderBlock headers;
+    headers["foobar"] = "Foo is to bar as bar is to baz.";
+    scoped_ptr<spdy::SpdyFrame> frame(framer_.CreateSynStream(
+        stream_id, 0, SPDY_PRIORITY_HIGHEST, spdy::CONTROL_FLAG_FIN,
+        false,  // false = no compression
+        &headers));
+    input_queue_.push_back(std::string(
+        frame->data(), frame->length() + spdy::SpdyFrame::size()));
+  }
+
   spdy::SpdyFramer framer_;
   mod_spdy::SpdyServerConfig config_;
   MockSpdySessionIO session_io_;
@@ -296,6 +308,21 @@ TEST_F(SpdySessionTest, SingleStream) {
 // then quit.
 TEST_F(SpdySessionTest, SendGoawayInResponseToGarbage) {
   PushGarbageData();
+
+  testing::InSequence seq;
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::GOAWAY)));
+
+  session_.Run();
+  EXPECT_TRUE(executor_.stopped());
+}
+
+// Test that when the client sends us a SYN_STREAM with a corrupted header
+// block, we send a GOAWAY frame and then quit.
+TEST_F(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
+  PushCorruptedSynStreamFrame(1);
 
   testing::InSequence seq;
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)));
