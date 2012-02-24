@@ -147,11 +147,9 @@ void SpdySession::Run() {
 }
 
 void SpdySession::OnError(spdy::SpdyFramer* framer) {
-  // Log the error, but don't do anything else yet.  If the framer encountered
-  // an error, our SpdySessionIO object should return READ_ERROR to us, at
-  // which point we'll stop the session.
   LOG(ERROR) << "SpdyFramer error: "
              << spdy::SpdyFramer::ErrorCodeToString(framer->error_code());
+  SendGoAwayFrame();
 }
 
 void SpdySession::OnControl(const spdy::SpdyControlFrame* frame) {
@@ -268,6 +266,7 @@ void SpdySession::HandleSynStream(
 #endif
   }
 
+  StreamTaskWrapper* task_wrapper = NULL;
   {
     // Lock the stream map before we start checking its size or adding a new
     // stream to it.  We need to lock when touching the stream map, because one
@@ -286,15 +285,20 @@ void SpdySession::HandleSynStream(
 
     // Initiate a new stream.
     last_client_stream_id_ = std::max(last_client_stream_id_, stream_id);
-    const spdy::SpdyPriority priority = frame.priority();
-    StreamTaskWrapper* task_wrapper =
-        new StreamTaskWrapper(this, stream_id, frame.associated_stream_id(),
-                              priority);
+    task_wrapper = new StreamTaskWrapper(
+        this, stream_id, frame.associated_stream_id(), frame.priority());
     stream_map_[stream_id] = task_wrapper;
     task_wrapper->stream()->PostInputFrame(decompressed_frame.release());
-    VLOG(2) << "Received SYN_STREAM; opening stream " << stream_id;
-    executor_->AddTask(task_wrapper, priority);
   }
+  DCHECK(task_wrapper);
+  // Release the lock before adding the task to the executor.  This is mostly
+  // for the benefit of unit tests, for which calling AddTask will execute the
+  // task immediately (and we don't want to be holding the lock when that
+  // happens).  Note that it's safe for us to pass task_wrapper here without
+  // holding the lock, because the task won't get deleted before it's been
+  // added to the executor.
+  VLOG(2) << "Received SYN_STREAM; opening stream " << stream_id;
+  executor_->AddTask(task_wrapper, frame.priority());
 }
 
 void SpdySession::HandleSynReply(
@@ -415,8 +419,10 @@ bool SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
 }
 
 bool SpdySession::SendGoAwayFrame() {
-  already_sent_goaway_ = true;
-  return SendFrame(spdy::SpdyFramer::CreateGoAway(last_client_stream_id_));
+  if (!already_sent_goaway_) {
+    already_sent_goaway_ = true;
+    return SendFrame(spdy::SpdyFramer::CreateGoAway(last_client_stream_id_));
+  }
 }
 
 bool SpdySession::SendRstStreamFrame(spdy::SpdyStreamId stream_id,

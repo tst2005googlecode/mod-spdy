@@ -28,11 +28,53 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using testing::_;
+using testing::AllOf;
 using testing::Eq;
 using testing::Invoke;
+using testing::NotNull;
+using testing::Property;
 using testing::Return;
+using testing::WithArg;
 
 namespace {
+
+// Define a gMock matcher that checks that a const spdy::SpdyFrame& is a
+// control frame with the specified type.
+MATCHER_P(IsControlFrameOfType, type, "") {
+  if (!arg.is_control_frame()) {
+    *result_listener << "is data frame for stream " <<
+        static_cast<const spdy::SpdyDataFrame*>(&arg)->stream_id();
+    return false;
+  }
+  const spdy::SpdyControlFrame* ctrl_frame =
+      static_cast<const spdy::SpdyControlFrame*>(&arg);
+  if (ctrl_frame->type() != type) {
+    *result_listener << "is control frame of type " << ctrl_frame->type();
+    return false;
+  }
+  return true;
+}
+
+// Define a gMock matcher that checks that a const spdy::SpdyFrame& is a
+// data frame with the specified stream ID and FLAG_FIN value.
+MATCHER_P2(IsDataFrame, stream_id, fin, "") {
+  if (arg.is_control_frame()) {
+    *result_listener << "is control frame of type " <<
+        static_cast<const spdy::SpdyControlFrame*>(&arg)->type();
+    return false;
+  }
+  const spdy::SpdyDataFrame* data_frame =
+      static_cast<const spdy::SpdyDataFrame*>(&arg);
+  if (data_frame->stream_id() != stream_id) {
+    *result_listener << "is data frame for stream " << data_frame->stream_id();
+    return false;
+  }
+  if (bool(data_frame->flags() & spdy::DATA_FLAG_FIN) != bool(fin)) {
+    *result_listener << "is data frame with FLAG_FIN=" << !fin;
+    return false;
+  }
+  return true;
+}
 
 class MockSpdySessionIO : public mod_spdy::SpdySessionIO {
  public:
@@ -46,6 +88,61 @@ class MockSpdyStreamTaskFactory : public mod_spdy::SpdyStreamTaskFactory {
   MOCK_METHOD1(NewStreamTask, net_instaweb::Function*(mod_spdy::SpdyStream*));
 };
 
+class FakeStreamTask : public net_instaweb::Function {
+ public:
+  virtual ~FakeStreamTask() {}
+  static FakeStreamTask* SimpleResponse(mod_spdy::SpdyStream* stream) {
+    return new FakeStreamTask(stream);
+  }
+
+ protected:
+  // net_instaweb::Function methods:
+  virtual void Run();
+  virtual void Cancel() {}
+
+ private:
+  FakeStreamTask(mod_spdy::SpdyStream* stream) : stream_(stream) {}
+
+  mod_spdy::SpdyStream* const stream_;
+  spdy::SpdyFramer framer_;
+
+  DISALLOW_COPY_AND_ASSIGN(FakeStreamTask);
+};
+
+void FakeStreamTask::Run() {
+  if (!stream_->is_server_push()) {
+    spdy::SpdyFrame* frame;
+    ASSERT_TRUE(stream_->GetInputFrame(false, &frame));
+    ASSERT_TRUE(frame != NULL);
+    EXPECT_THAT(*frame, IsControlFrameOfType(spdy::SYN_STREAM));
+  }
+
+  spdy::SpdyHeaderBlock headers;
+  headers["status"] = "200";
+  headers["version"] = "HTTP/1.1";
+  if (stream_->is_server_push()) {
+    stream_->SendOutputFrame(framer_.CreateSynStream(
+        stream_->stream_id(),
+        stream_->associated_stream_id(),
+        stream_->priority(),
+        spdy::CONTROL_FLAG_NONE,
+        false,  // false = don't use compression
+        &headers));
+  } else {
+    stream_->SendOutputFrame(framer_.CreateSynReply(
+        stream_->stream_id(),
+        spdy::CONTROL_FLAG_NONE,
+        false,  // false = don't use compression
+        &headers));
+  }
+
+  stream_->SendOutputFrame(framer_.CreateDataFrame(
+      stream_->stream_id(), "foobar", 6, spdy::DATA_FLAG_NONE));
+  stream_->SendOutputFrame(framer_.CreateDataFrame(
+      stream_->stream_id(), "quux", 4, spdy::DATA_FLAG_FIN));
+}
+
+// An executor that runs all tasks immediately when they are added.
 class InlineExecutor : public mod_spdy::Executor {
  public:
   InlineExecutor() : stopped_(false) {}
@@ -69,7 +166,12 @@ class InlineExecutor : public mod_spdy::Executor {
 class SpdySessionTest : public testing::Test {
  public:
   SpdySessionTest()
-      : session_(&config_, &session_io_, &task_factory_, &executor_) {}
+      : session_(&config_, &session_io_, &task_factory_, &executor_) {
+    ON_CALL(session_io_, IsConnectionAborted()).WillByDefault(Return(false));
+    ON_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
+        .WillByDefault(Invoke(this, &SpdySessionTest::ReadNextInputChunk));
+    ON_CALL(session_io_, SendFrameRaw(_)).WillByDefault(Return(true));
+  }
 
   // Use as gMock action for ProcessAvailableInput:
   //   Invoke(this, &SpdySessionTest::ReadNextInputChunk)
@@ -81,10 +183,17 @@ class SpdySessionTest : public testing::Test {
     const std::string chunk = input_queue_.front();
     input_queue_.pop_front();
     framer->ProcessInput(chunk.data(), chunk.size());
-    return mod_spdy::SpdySessionIO::READ_SUCCESS;
+    return (framer->HasError() ? mod_spdy::SpdySessionIO::READ_ERROR :
+            mod_spdy::SpdySessionIO::READ_SUCCESS);
   }
 
  protected:
+  // Push some random garbage bytes into the input queue.
+  void PushGarbageData() {
+    input_queue_.push_back("\x88\x5f\x92\x02\xf8\x92\x12\xd1"
+                           "\x82\xdc\x1a\x40\xbb\xb2\x9d\x13");
+  }
+
   // Push a PING frame into the input queue.
   void PushPingFrame(unsigned char id) {
     // TODO(mdsteele): Sadly, the version of SpdyFramer we're currently using
@@ -98,6 +207,23 @@ class SpdySessionTest : public testing::Test {
     input_queue_.push_back(std::string(data, arraysize(data)));
   }
 
+  // Push a SYN_STREAM frame into the input queue.
+  void PushSynStreamFrame(spdy::SpdyStreamId stream_id,
+                          spdy::SpdyPriority priority,
+                          bool fin,
+                          const spdy::SpdyHeaderBlock& headers) {
+    scoped_ptr<spdy::SpdyFrame> frame(framer_.CreateSynStream(
+        stream_id,
+        0,  // associated_stream_id
+        priority,
+        (fin ? spdy::CONTROL_FLAG_FIN : spdy::CONTROL_FLAG_NONE),
+        true,  // true = use compression
+        const_cast<spdy::SpdyHeaderBlock*>(&headers)));
+    input_queue_.push_back(std::string(
+        frame->data(), frame->length() + spdy::SpdyFrame::size()));
+  }
+
+  spdy::SpdyFramer framer_;
   mod_spdy::SpdyServerConfig config_;
   MockSpdySessionIO session_io_;
   MockSpdyStreamTaskFactory task_factory_;
@@ -106,15 +232,9 @@ class SpdySessionTest : public testing::Test {
   std::list<std::string> input_queue_;
 };
 
-// Define a gMock matcher that checks that a const spdy::SpdyFrame& is a
-// control frame with the specified type.
-MATCHER_P(IsControlFrameOfType, type, "") {
-  return (arg.is_control_frame() &&
-          static_cast<const spdy::SpdyControlFrame*>(&arg)->type() == type);
-}
-
 // Test that if the connection is already aborted, we stop immediately.
 TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
+  testing::InSequence seq;
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)))
       .WillOnce(Return(false));
   EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
@@ -124,25 +244,67 @@ TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
 }
 
 // Test responding to a PING frame from the client (followed by the connection
-// aborting, so that we can exit the Run loop).
+// closing, so that we can exit the Run loop).
 TEST_F(SpdySessionTest, SinglePing) {
-  testing::InSequence seq;
   PushPingFrame(1);
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)))
-      .WillOnce(Return(true));
-  EXPECT_CALL(session_io_, IsConnectionAborted())
-      .WillOnce(Return(false));
-  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), _))
-      .WillOnce(Invoke(this, &SpdySessionTest::ReadNextInputChunk));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::PING)))
-      .WillOnce(Return(true));
-  EXPECT_CALL(session_io_, IsConnectionAborted())
-      .WillOnce(Return(true));
+
+  testing::InSequence seq;
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::PING)));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
 }
 
-// TODO(mdsteele): Add more tests.
+// Test handling a single stream request.
+TEST_F(SpdySessionTest, SingleStream) {
+  const spdy::SpdyStreamId stream_id = 1;
+  const spdy::SpdyPriority priority = 2;
+  spdy::SpdyHeaderBlock headers;
+  headers["host"] = "www.example.com";
+  headers["method"] = "GET";
+  headers["scheme"] = "https";
+  headers["url"] = "/foo/index.html";
+  headers["version"] = "HTTP/1.1";
+  PushSynStreamFrame(stream_id, priority, true, headers);
+
+  testing::InSequence seq;
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+  EXPECT_CALL(task_factory_, NewStreamTask(
+      AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
+            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0)),
+            Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
+      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
+  EXPECT_CALL(session_io_, SendFrameRaw(
+      IsControlFrameOfType(spdy::SYN_REPLY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsDataFrame(stream_id, false)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsDataFrame(stream_id, true)));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+
+  session_.Run();
+  EXPECT_TRUE(executor_.stopped());
+}
+
+// Test that when the client sends us garbage data, we send a GOAWAY frame and
+// then quit.
+TEST_F(SpdySessionTest, SendGoawayInResponseToGarbage) {
+  PushGarbageData();
+
+  testing::InSequence seq;
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::GOAWAY)));
+
+  session_.Run();
+  EXPECT_TRUE(executor_.stopped());
+}
 
 }  // namespace
