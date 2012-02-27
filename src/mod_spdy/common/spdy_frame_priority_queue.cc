@@ -47,6 +47,12 @@ SpdyFramePriorityQueue::~SpdyFramePriorityQueue() {
   STLDeleteContainerPointers(p3_queue_.begin(), p3_queue_.end());
 }
 
+bool SpdyFramePriorityQueue::IsEmpty() const {
+  base::AutoLock autolock(lock_);
+  return (p0_queue_.empty() && p1_queue_.empty() &&
+          p2_queue_.empty() && p3_queue_.empty());
+}
+
 void SpdyFramePriorityQueue::Insert(spdy::SpdyPriority priority,
                                     spdy::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);

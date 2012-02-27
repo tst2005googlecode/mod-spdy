@@ -38,6 +38,7 @@ spdy::SpdyStreamId LastStreamId(spdy::SpdyFrame* frame) {
 
 void ExpectPop(spdy::SpdyStreamId expected,
                mod_spdy::SpdyFramePriorityQueue* queue) {
+  EXPECT_FALSE(queue->IsEmpty());
   spdy::SpdyFrame* raw_frame = NULL;
   const bool success = queue->Pop(&raw_frame);
   scoped_ptr<spdy::SpdyFrame> scoped_frame(raw_frame);
@@ -47,6 +48,7 @@ void ExpectPop(spdy::SpdyStreamId expected,
 }
 
 void ExpectEmpty(mod_spdy::SpdyFramePriorityQueue* queue) {
+  EXPECT_TRUE(queue->IsEmpty());
   spdy::SpdyFrame* frame = NULL;
   EXPECT_FALSE(queue->Pop(&frame));
   EXPECT_TRUE(frame == NULL);

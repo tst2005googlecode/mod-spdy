@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "base/basictypes.h"
+#include "base/synchronization/lock.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -107,7 +108,7 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
 
   // Convenience methods to send specific types of control frames:
   bool SendGoAwayFrame();
-  bool SendRstStreamFrame(spdy::SpdyStreamId stream_id,
+  void SendRstStreamFrame(spdy::SpdyStreamId stream_id,
                           spdy::SpdyStatusCodes status);
   bool SendSettingsFrame();
 
@@ -125,6 +126,9 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
   // called by the executor).
   void RemoveStreamTask(StreamTaskWrapper* stream_data);
 
+  // Grab the stream_map_lock_ and check if stream_map_ is empty.
+  bool StreamMapIsEmpty();
+
   // These fields are accessed only by the main connection thread, so they need
   // not be protected by a lock:
   const SpdyServerConfig* const config_;
@@ -132,8 +136,9 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
   SpdyStreamTaskFactory* const task_factory_;
   Executor* const executor_;
   spdy::SpdyFramer framer_;
-  bool session_stopped_;
-  bool already_sent_goaway_;
+  bool no_more_reading_;  // don't read any more input from connection
+  bool session_stopped_;  // StopSession() has been called
+  bool already_sent_goaway_;  // GOAWAY frame has been sent
   spdy::SpdyStreamId last_client_stream_id_;
 
   // The stream map must be protected by a lock, because each stream thread

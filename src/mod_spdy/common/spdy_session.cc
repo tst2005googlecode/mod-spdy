@@ -19,6 +19,7 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/scoped_ptr.h"
+#include "base/synchronization/lock.h"
 #include "base/time.h"
 #include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/spdy_server_config.h"
@@ -37,6 +38,7 @@ SpdySession::SpdySession(const SpdyServerConfig* config,
       session_io_(session_io),
       task_factory_(task_factory),
       executor_(executor),
+      no_more_reading_(false),
       session_stopped_(false),
       already_sent_goaway_(false),
       last_client_stream_id_(0) {
@@ -72,20 +74,18 @@ void SpdySession::Run() {
   while (!session_stopped_) {
     if (session_io_->IsConnectionAborted()) {
       LOG(WARNING) << "Master connection was aborted.";
+      StopSession();
       break;
     }
 
     // Step 1: Read input from the client.
-    {
+    if (!no_more_reading_) {
       // Determine whether we should block until more input data is available.
-      // For now, our policy is to block only if there are no currently-active
-      // streams; if we block while there is an active stream, it may produce
-      // output that we will fail to send until we unblock.
-      bool should_block = true;
-      {
-        base::AutoLock autolock(stream_map_lock_);
-        should_block = stream_map_.empty();
-      }
+      // For now, our policy is to block only if there is no pending output and
+      // there are no currently-active streams (which might produce new
+      // output).
+      const bool should_block = StreamMapIsEmpty() && output_queue_.IsEmpty();
+
       // Read available input data.  The SpdySessionIO will grab any
       // available data and push it into the SpdyFramer that we pass to it
       // here; the SpdyFramer, in turn, will call our OnControl and/or
@@ -99,7 +99,7 @@ void SpdySession::Run() {
         output_block_time = kInitOutputBlockTime;
       } else if (status == SpdySessionIO::READ_CONNECTION_CLOSED ||
                  status == SpdySessionIO::READ_ERROR) {
-        break;
+        no_more_reading_ = true;
       } else {
         DCHECK(status == SpdySessionIO::READ_NO_DATA);
       }
@@ -107,12 +107,17 @@ void SpdySession::Run() {
 
     // Step 2: Send output to the client.
     {
-      // Send any pending output, one frame at a time.  We're willing to block
-      // briefly to wait for more frames to send, if only to prevent this loop
-      // from busy-waiting too heavily -- not a great solution, but better than
-      // nothing for now.
+      // If there are no active streams, then no new output can be getting
+      // created right now, so we shouldn't block on output waiting for more.
+      const bool no_active_streams = StreamMapIsEmpty();
+
+      // Send any pending output, one frame at a time.  If there are any active
+      // streams, we're willing to block briefly to wait for more frames to
+      // send, if only to prevent this loop from busy-waiting too heavily --
+      // not a great solution, but better than nothing for now.
       spdy::SpdyFrame* frame = NULL;
-      if (output_queue_.BlockingPop(output_block_time, &frame)) {
+      if (no_active_streams ? output_queue_.Pop(&frame) :
+          output_queue_.BlockingPop(output_block_time, &frame)) {
         do {
           // Each invocation of SendFrame will flush that one frame down the
           // wire.  Might it be better to batch them together?  Actually, maybe
@@ -127,10 +132,16 @@ void SpdySession::Run() {
         // We successfully did some I/O, so reset the output block timeout.
         output_block_time = kInitOutputBlockTime;
       } else {
-        // There were no output frames within the timeout; so do an exponential
-        // backoff by doubling output_block_time.
-        output_block_time = std::min(kMaxOutputBlockTime,
-                                     output_block_time * 2);
+        // The queue is currently empty; if no more streams can be created and
+        // no more remain, we're done.
+        if ((already_sent_goaway_ || no_more_reading_) && no_active_streams) {
+          StopSession();
+        } else {
+          // There were no output frames within the timeout; so do an
+          // exponential backoff by doubling output_block_time.
+          output_block_time = std::min(kMaxOutputBlockTime,
+                                       output_block_time * 2);
+        }
       }
     }
 
@@ -142,8 +153,6 @@ void SpdySession::Run() {
     // nonempty (obviously we would abstract that away in SpdySessionIO),
     // but there's not even a nice way to do that (that I know of).
   }
-
-  StopSession();
 }
 
 void SpdySession::OnError(spdy::SpdyFramer* framer) {
@@ -226,7 +235,7 @@ void SpdySession::OnStreamFrameData(spdy::SpdyStreamId stream_id,
 }
 
 void SpdySession::HandleSynStream(
-    const spdy::SpdySynStreamControlFrame& frame){
+    const spdy::SpdySynStreamControlFrame& frame) {
   // Start by decompressing the frame.  Even if we choose to ignore this frame,
   // we must still do the work of decompressing it so that we correctly
   // maintain this session's header compression context.
@@ -245,7 +254,15 @@ void SpdySession::HandleSynStream(
     LOG(WARNING) << "Client sent SYN_STREAM with a corrupted header block.  "
                  << "Sending GOAWAY.";
     SendGoAwayFrame();
-    StopSession();
+    return;
+  }
+
+  // If we see invalid flags, reject the frame.
+  if (0 != (frame.flags() & ~(spdy::CONTROL_FLAG_FIN |
+                              spdy::CONTROL_FLAG_UNIDIRECTIONAL))) {
+    LOG(WARNING) << "Client sent SYN_STREAM with invalid flags ("
+                 << frame.flags() << ").  Sending GOAWAY.";
+    SendGoAwayFrame();
     return;
   }
 
@@ -254,10 +271,8 @@ void SpdySession::HandleSynStream(
   // Client stream IDs must be odd-numbered.
   if (stream_id % 2 == 0) {
     LOG(WARNING) << "Client sent SYN_STREAM for even stream ID (" << stream_id
-                 << ").  Aborting session.";
-    SendRstStreamFrame(stream_id, spdy::PROTOCOL_ERROR);
+                 << ").  Sending GOAWAY.";
     SendGoAwayFrame();
-    StopSession();
     return;
   }
 
@@ -281,9 +296,21 @@ void SpdySession::HandleSynStream(
     // stream to it.  We need to lock when touching the stream map, because one
     // of the stream threads could call RemoveStreamTask() at any time.
     base::AutoLock autolock(stream_map_lock_);
+
+#if 0
+    // TODO(mdsteele): re-enable this code block when
+    // http://code.google.com/p/chromium/issues/detail?id=111708 is
+    // fixed.
+
     // We already checked that stream_id > last_client_stream_id_, so there
     // definitely shouldn't already be a stream with this ID in the map.
     DCHECK(stream_map_.count(stream_id) == 0);
+#else
+    if (stream_map_.count(stream_id) != 0) {
+      SendGoAwayFrame();
+      return;
+    }
+#endif
 
     // Limit the number of simultaneous open streams; refuse the stream if
     // there are too many currently active streams.
@@ -317,6 +344,16 @@ void SpdySession::HandleSynReply(
 
 void SpdySession::HandleRstStream(
     const spdy::SpdyRstStreamControlFrame& frame) {
+  // RST_STREAM does not define any flags (SPDY draft 2 section 2.7.3).  If we
+  // see invalid flags, tell the client to go away (but don't return from the
+  // method; we'll still go ahead and abort the stream that the RST_STREAM
+  // frame is asking us to terminate).
+  if (0 != frame.flags()) {
+    LOG(WARNING) << "Client sent RST_STREAM with invalid flags ("
+                 << frame.flags() << ").  Sending GOAWAY.";
+    SendGoAwayFrame();
+  }
+
   const spdy::SpdyStreamId stream_id = frame.stream_id();
   switch (frame.status()) {
     // These are totally benign reasons to abort a stream, so just abort the
@@ -330,9 +367,9 @@ void SpdySession::HandleRstStream(
     // so just log an error and abort the session.
     case spdy::PROTOCOL_ERROR:
       LOG(WARNING) << "Client sent RST_STREAM with PROTOCOL_ERROR for stream "
-                   << stream_id << ".  Aborting session.";
+                   << stream_id << ".  Aborting stream and sending GOAWAY.";
+      AbortStreamSilently(stream_id);
       SendGoAwayFrame();
-      StopSession();
       break;
     // For all other errors, abort the stream, but log a warning first.
     // TODO(mdsteele): Should we have special behavior for any other kinds of
@@ -390,7 +427,6 @@ void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
     LOG(WARNING) << "Client sent HEADERS with a corrupted header block.  "
                  << "Sending GOAWAY.";
     SendGoAwayFrame();
-    StopSession();
     return;
   }
 
@@ -443,9 +479,10 @@ bool SpdySession::SendGoAwayFrame() {
   }
 }
 
-bool SpdySession::SendRstStreamFrame(spdy::SpdyStreamId stream_id,
+void SpdySession::SendRstStreamFrame(spdy::SpdyStreamId stream_id,
                                      spdy::SpdyStatusCodes status) {
-  return SendFrame(spdy::SpdyFramer::CreateRstStream(stream_id, status));
+  output_queue_.InsertFront(
+      spdy::SpdyFramer::CreateRstStream(stream_id, status));
 }
 
 bool SpdySession::SendSettingsFrame() {
@@ -514,6 +551,11 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   DCHECK(stream_map_.count(stream_id) == 1);
   DCHECK(task_wrapper == stream_map_[stream_id]);
   stream_map_.erase(stream_id);
+}
+
+bool SpdySession::StreamMapIsEmpty() {
+  base::AutoLock autolock(stream_map_lock_);
+  return stream_map_.empty();
 }
 
 // This constructor is always called by the main connection thread, so we're

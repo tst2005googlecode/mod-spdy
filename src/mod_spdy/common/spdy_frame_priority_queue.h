@@ -37,6 +37,11 @@ class SpdyFramePriorityQueue {
   SpdyFramePriorityQueue();
   ~SpdyFramePriorityQueue();
 
+  // Return true if the queue is currently empty.  (Of course, there's no
+  // guarantee that another thread won't change that as soon as this method
+  // returns.)
+  bool IsEmpty() const;
+
   // Insert a frame into the queue at the specified priority.  The queue takes
   // ownership of the frame, and will delete it if the queue is deleted before
   // the frame is removed from the queue by the Pop method.
@@ -63,7 +68,7 @@ class SpdyFramePriorityQueue {
   bool BlockingPop(const base::TimeDelta& max_time, spdy::SpdyFrame** frame);
 
  private:
-  base::Lock lock_;
+  mutable base::Lock lock_;
   base::ConditionVariable condvar_;
   std::list<spdy::SpdyFrame*> p0_queue_;
   std::list<spdy::SpdyFrame*> p1_queue_;
