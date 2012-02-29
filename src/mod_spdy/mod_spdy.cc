@@ -63,6 +63,8 @@ namespace {
 // structural changes to the code.
 // TODO(mdsteele): Pretty soon we will probably need to support SPDY v3.
 const int kSpdyVersionNumber = 2;
+const char* const kSpdyVersionNumberString = "2";
+const char* const kSpdyVersionEnvironmentVariable = "SPDY_VERSION";
 const char* const kSpdyProtocolName = "spdy/2";
 const char* const kHttpProtocolName = "http/1.1";
 
@@ -641,6 +643,12 @@ int InsertProtocolFilters(request_rec* request) {
       request,                    // request object
       connection);                // connection object
 
+  // For the benefit of CGI scripts, which have no way of calling
+  // spdy_get_version(), set an environment variable indicating that this
+  // request is over SPDY (and what SPDY version is being used), allowing them
+  // to optimize the response for SPDY.
+  apr_table_setn(request->subprocess_env, kSpdyVersionEnvironmentVariable,
+                 kSpdyVersionNumberString);
   return OK;
 }
 
