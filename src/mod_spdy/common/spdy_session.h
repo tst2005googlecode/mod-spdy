@@ -103,17 +103,21 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
   void HandleHeaders(const spdy::SpdyHeadersControlFrame& frame);
 
   // Send a single SPDY frame to the client, compressing it first if necessary.
-  // This method takes ownership of the passed frame and will delete it.
-  bool SendFrame(const spdy::SpdyFrame* frame);
+  // Stop the session if the connection turns out to be closed.  This method
+  // takes ownership of the passed frame and will delete it.
+  void SendFrame(const spdy::SpdyFrame* frame);
+  // Send the frame as-is (without taking ownership).  Stop the session if the
+  // connection turns out to be closed.
+  void SendFrameRaw(const spdy::SpdyFrame& frame);
 
   // Convenience methods to send specific types of control frames:
-  bool SendGoAwayFrame();
+  void SendGoAwayFrame();
   void SendRstStreamFrame(spdy::SpdyStreamId stream_id,
                           spdy::SpdyStatusCodes status);
-  bool SendSettingsFrame();
+  void SendSettingsFrame();
 
-  // Close down the whole session, post-haste.  Block until all stream
-  // threads have shut down.
+  // Close down the whole session, post-haste.  Block until all stream threads
+  // have shut down.
   void StopSession();
   // Abort the stream without sending anything to the client.
   void AbortStreamSilently(spdy::SpdyStreamId stream_id);

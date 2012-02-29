@@ -140,7 +140,8 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
   return pushed_any_data ? READ_SUCCESS : READ_NO_DATA;
 }
 
-bool ApacheSpdySessionIO::SendFrameRaw(const spdy::SpdyFrame& frame) {
+SpdySessionIO::WriteStatus ApacheSpdySessionIO::SendFrameRaw(
+    const spdy::SpdyFrame& frame) {
   // Make sure the output brigade we're using is empty.
   if (!APR_BRIGADE_EMPTY(output_brigade_)) {
     LOG(DFATAL) << "output_brigade_ should be empty";
@@ -163,7 +164,25 @@ bool ApacheSpdySessionIO::SendFrameRaw(const spdy::SpdyFrame& frame) {
       ap_pass_brigade(connection_->output_filters, output_brigade_);
   apr_brigade_cleanup(output_brigade_);
   DCHECK(APR_BRIGADE_EMPTY(output_brigade_));
-  return (status == APR_SUCCESS);
+
+  // If we sent the data successfully, great; otherwise, consider the
+  // connection closed.
+  if (status == APR_SUCCESS) {
+    return WRITE_SUCCESS;
+  } else {
+    // ECONNABORTED and EPIPE (broken pipe) are two common symptoms of the
+    // connection having been closed; those are no cause for concern.  For any
+    // other non-success status, log an error (for now).
+    if (APR_STATUS_IS_ECONNABORTED(status)) {
+      VLOG(2) << "ap_pass_brigade returned ECONNABORTED";
+    } else if (APR_STATUS_IS_EPIPE(status)) {
+      VLOG(2) << "ap_pass_brigade returned EPIPE";
+    } else {
+      LOG(ERROR) << "ap_pass_brigade failed with status " << status << ": "
+                 << AprStatusString(status);
+    }
+    return WRITE_CONNECTION_CLOSED;
+  }
 }
 
 }  // namespace mod_spdy

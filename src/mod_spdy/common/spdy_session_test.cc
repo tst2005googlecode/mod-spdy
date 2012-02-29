@@ -56,7 +56,7 @@ class MockSpdySessionIO : public mod_spdy::SpdySessionIO {
  public:
   MOCK_METHOD0(IsConnectionAborted, bool());
   MOCK_METHOD2(ProcessAvailableInput, ReadStatus(bool, spdy::SpdyFramer*));
-  MOCK_METHOD1(SendFrameRaw, bool(const spdy::SpdyFrame&));
+  MOCK_METHOD1(SendFrameRaw, WriteStatus(const spdy::SpdyFrame&));
 };
 
 class MockSpdyStreamTaskFactory : public mod_spdy::SpdyStreamTaskFactory {
@@ -171,7 +171,8 @@ class SpdySessionTest : public testing::Test {
     ON_CALL(session_io_, IsConnectionAborted()).WillByDefault(Return(false));
     ON_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
         .WillByDefault(Invoke(this, &SpdySessionTest::ReadNextInputChunk));
-    ON_CALL(session_io_, SendFrameRaw(_)).WillByDefault(Return(true));
+    ON_CALL(session_io_, SendFrameRaw(_))
+        .WillByDefault(Return(mod_spdy::SpdySessionIO::WRITE_SUCCESS));
   }
 
   // Use as gMock action for ProcessAvailableInput:
@@ -236,11 +237,20 @@ class SpdySessionTest : public testing::Test {
   std::list<std::string> input_queue_;
 };
 
-// Test that if the connection is already aborted, we stop immediately.
-TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
+// Test that if the connection is already closed, we stop immediately.
+TEST_F(SpdySessionTest, ConnectionAlreadyClosed) {
   testing::InSequence seq;
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)))
-      .WillOnce(Return(false));
+      .WillOnce(Return(mod_spdy::SpdySessionIO::WRITE_CONNECTION_CLOSED));
+
+  session_.Run();
+  EXPECT_TRUE(executor_.stopped());
+}
+
+// Test that when the connection is aborted, we stop.
+TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
+  testing::InSequence seq;
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
 
   session_.Run();
@@ -288,6 +298,32 @@ TEST_F(SpdySessionTest, SingleStream) {
       AllOf(IsDataFrame(), FlagFinIs(true))));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+
+  session_.Run();
+  EXPECT_TRUE(executor_.stopped());
+}
+
+// Test that if SendFrameRaw fails, we immediately stop trying to send data and
+// shut down the session.
+TEST_F(SpdySessionTest, ShutDownSessionIfSendFrameRawFails) {
+  executor_.set_run_on_add(true);
+  PushSynStreamFrame(1, 2, spdy::CONTROL_FLAG_FIN);
+
+  testing::InSequence seq;
+  // We start out the same way as in the SingleStream test above.
+  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(spdy::SETTINGS)));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, _));
+  EXPECT_CALL(task_factory_, NewStreamTask(_))
+      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
+  EXPECT_CALL(session_io_, SendFrameRaw(
+      AllOf(IsControlFrameOfType(spdy::SYN_REPLY), FlagFinIs(false))));
+  // At this point, the connection is closed by the client.
+  EXPECT_CALL(session_io_, SendFrameRaw(
+      AllOf(IsDataFrame(), FlagFinIs(false))))
+      .WillOnce(Return(mod_spdy::SpdySessionIO::WRITE_CONNECTION_CLOSED));
+  // Even though we have another frame to send at this point (already in the
+  // output queue), we immediately stop sending data and exit the session.
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());

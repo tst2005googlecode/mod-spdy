@@ -44,6 +44,12 @@ class SpdySessionIO {
     READ_ERROR  // an unrecoverable error (e.g. client sent malformed data)
   };
 
+  // Status to describe whether writing succeeded.
+  enum WriteStatus {
+    WRITE_SUCCESS,  // we successfully wrote the frame out to the network
+    WRITE_CONNECTION_CLOSED,  // the connection has been closed
+  };
+
   SpdySessionIO();
   virtual ~SpdySessionIO();
 
@@ -65,7 +71,7 @@ class SpdySessionIO {
   //   wire, but we probably don't need/want to flush every single frame
   //   individually in places where we send multiple frames at once.  We'll
   //   probably want to adjust this API a bit.
-  virtual bool SendFrameRaw(const spdy::SpdyFrame& frame) = 0;
+  virtual WriteStatus SendFrameRaw(const spdy::SpdyFrame& frame) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SpdySessionIO);

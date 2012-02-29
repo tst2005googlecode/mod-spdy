@@ -101,7 +101,7 @@ void SpdySession::Run() {
                  status == SpdySessionIO::READ_ERROR) {
         no_more_reading_ = true;
       } else {
-        DCHECK(status == SpdySessionIO::READ_NO_DATA);
+        DCHECK_EQ(SpdySessionIO::READ_NO_DATA, status);
       }
     }
 
@@ -124,10 +124,8 @@ void SpdySession::Run() {
           // not -- we already try to make sure that each data frame is
           // nicely-sized (~4k), so flushing them one at a time might be
           // reasonable.  But we may want to revisit this.
-          if (!SendFrame(frame)) {
-            LOG(DFATAL) << "Failed to send SPDY frame.";
-          }
-        } while (output_queue_.Pop(&frame));
+          SendFrame(frame);
+        } while (!session_stopped_ && output_queue_.Pop(&frame));
 
         // We successfully did some I/O, so reset the output block timeout.
         output_block_time = kInitOutputBlockTime;
@@ -304,7 +302,7 @@ void SpdySession::HandleSynStream(
 
     // We already checked that stream_id > last_client_stream_id_, so there
     // definitely shouldn't already be a stream with this ID in the map.
-    DCHECK(stream_map_.count(stream_id) == 0);
+    DCHECK_EQ(0, stream_map_.count(stream_id));
 #else
     if (stream_map_.count(stream_id) != 0) {
       SendGoAwayFrame();
@@ -403,9 +401,7 @@ void SpdySession::HandlePing(const spdy::SpdyControlFrame& frame) {
 
   // Any odd-numbered PING frame we receive was initiated by the client, and
   // should thus be echoed back, as per the SPDY spec.
-  if (!session_io_->SendFrameRaw(frame)) {
-    LOG(ERROR) << "Failed to send PING reply.";
-  }
+  SendFrameRaw(frame);
 }
 
 void SpdySession::HandleGoAway(const spdy::SpdyGoAwayControlFrame& frame) {
@@ -453,10 +449,14 @@ void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
 }
 
 // Compress (if necessary), send, and then delete the given frame object.
-bool SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
+void SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
   scoped_ptr<const spdy::SpdyFrame> compressed_frame(frame);
   DCHECK(compressed_frame != NULL);
   if (framer_.IsCompressible(*frame)) {
+    // IsCompressible will return true for SYN_STREAM, SYN_REPLY, and HEADERS
+    // frames, but _not_ for our DATA frames.  DATA frame compression is not
+    // part of the SPDY v2 spec (and may be getting removed from the v3 spec).
+    DCHECK(frame->is_control_frame());
     // First compress the original frame into a new frame object...
     const spdy::SpdyFrame* compressed = framer_.CompressFrame(*frame);
     // ...then delete the original frame object and replace it with the
@@ -466,16 +466,28 @@ bool SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
 
   if (compressed_frame == NULL) {
     LOG(DFATAL) << "frame compression failed";
-    return false;
+    StopSession();
+    return;
   }
 
-  return session_io_->SendFrameRaw(*compressed_frame);
+  SendFrameRaw(*compressed_frame);
 }
 
-bool SpdySession::SendGoAwayFrame() {
+void SpdySession::SendFrameRaw(const spdy::SpdyFrame& frame) {
+  const SpdySessionIO::WriteStatus status = session_io_->SendFrameRaw(frame);
+  if (status == SpdySessionIO::WRITE_CONNECTION_CLOSED) {
+    // If the connection was closed and we can't write anything to the client
+    // anymore, then there's little point in continuing with the session.
+    StopSession();
+  } else {
+    DCHECK_EQ(SpdySessionIO::WRITE_SUCCESS, status);
+  }
+}
+
+void SpdySession::SendGoAwayFrame() {
   if (!already_sent_goaway_) {
     already_sent_goaway_ = true;
-    return SendFrame(spdy::SpdyFramer::CreateGoAway(last_client_stream_id_));
+    SendFrame(spdy::SpdyFramer::CreateGoAway(last_client_stream_id_));
   }
 }
 
@@ -485,7 +497,7 @@ void SpdySession::SendRstStreamFrame(spdy::SpdyStreamId stream_id,
       spdy::SpdyFramer::CreateRstStream(stream_id, status));
 }
 
-bool SpdySession::SendSettingsFrame() {
+void SpdySession::SendSettingsFrame() {
   // For now, we only tell the client about our MAX_CONCURRENT_STREAMS limit.
   // In the future maybe we can do fancier things with the other settings.
   spdy::SpdySettings settings;
@@ -495,7 +507,7 @@ bool SpdySession::SendSettingsFrame() {
   settings.push_back(std::make_pair(
       flags_and_id,
       static_cast<uint32>(config_->max_streams_per_connection())));
-  return SendFrame(spdy::SpdyFramer::CreateSettings(settings));
+  SendFrame(spdy::SpdyFramer::CreateSettings(settings));
 }
 
 
@@ -548,8 +560,8 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   base::AutoLock autolock(stream_map_lock_);
   const spdy::SpdyStreamId stream_id = task_wrapper->stream()->stream_id();
   VLOG(2) << "Closing stream " << stream_id;
-  DCHECK(stream_map_.count(stream_id) == 1);
-  DCHECK(task_wrapper == stream_map_[stream_id]);
+  DCHECK_EQ(1, stream_map_.count(stream_id));
+  DCHECK_EQ(task_wrapper, stream_map_[stream_id]);
   stream_map_.erase(stream_id);
 }
 

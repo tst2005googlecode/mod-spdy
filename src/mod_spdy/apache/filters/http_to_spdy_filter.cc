@@ -309,11 +309,9 @@ void HttpToSpdyFilter::SendHeaders(const HeaderPopulatorInterface& populator,
 }
 
 void HttpToSpdyFilter::SendData(const char* data, size_t size, bool flag_fin) {
-  // Don't compress the data frame here; it will be compressed later by the
-  // master connection.
-  // TODO(mdsteele): Actually, maybe each stream could compress its own data
-  //   frames, since each SPDY stream has its own data compression context.  We
-  //   just need the master connection to do the header compression.
+  // TODO(mdsteele): Once we support SPDY v3 (and if the DATA frame
+  //   comprsession feature hasn't been removed), we may want to consider doing
+  //   that compression here rather than in the master connection.
   const spdy::SpdyDataFlags flags =
       flag_fin ? spdy::DATA_FLAG_FIN : spdy::DATA_FLAG_NONE;
   stream_->SendOutputFrame(framer_.CreateDataFrame(
