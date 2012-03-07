@@ -23,5 +23,6 @@
         '../mod_spdy/mod_spdy.gyp:*',
         '../net/net.gyp:*',
         '../third_party/mod_diagnostics/mod_diagnostics.gyp:*',
+        'install.gyp:*',
       ],} ]
 }

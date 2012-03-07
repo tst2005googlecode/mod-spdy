@@ -1,0 +1,15 @@
+#!/bin/sh
+
+case "$1" in
+    remove)
+        test -e /etc/apache2/mods-enabled/spdy.load && a2dismod spdy
+    ;;
+    upgrade|deconfigure|failed-upgrade)
+    ;;
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0
