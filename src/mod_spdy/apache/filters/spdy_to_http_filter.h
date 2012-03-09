@@ -68,7 +68,7 @@ class SpdyToHttpFilter {
   std::string data_buffer_;
   HttpStringBuilder visitor_;
   SpdyToHttpConverter converter_;
-  int next_read_start_;
+  size_t next_read_start_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyToHttpFilter);
 };

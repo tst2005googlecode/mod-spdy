@@ -72,6 +72,11 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
                                     ap_input_mode_t mode,
                                     apr_read_type_e block,
                                     apr_off_t readbytes) {
+  // Turn readbytes into a size_t to avoid the need for static_casts below.  To
+  // avoid any surprises (in cases where apr_off_t is signed), clamp it to a
+  // non-negative value first.
+  const size_t max_bytes = std::max(static_cast<apr_off_t>(0), readbytes);
+
   if (filter->next != NULL) {
     LOG(WARNING) << "SpdyToHttpFilter is not the last filter in the chain: "
                  << filter->next->frec->name;
@@ -104,7 +109,7 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   RETURN_IF_STREAM_ABORT(filter, brigade);
 
   // Keep track of how much data, if any, we should place into the brigade.
-  int bytes_read = 0;
+  size_t bytes_read = 0;
 
   // For AP_MODE_READBYTES and AP_MODE_SPECULATIVE, we try to read the quantity
   // of bytes we are asked for.  For AP_MODE_EXHAUSTIVE, we read as much as
@@ -112,7 +117,7 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   if (mode == AP_MODE_READBYTES || mode == AP_MODE_SPECULATIVE ||
       mode == AP_MODE_EXHAUSTIVE) {
     // Try to get as much data as we were asked for.
-    while (readbytes > data_buffer_.size() || mode == AP_MODE_EXHAUSTIVE) {
+    while (max_bytes > data_buffer_.size() || mode == AP_MODE_EXHAUSTIVE) {
       const bool got_frame = GetNextFrame(block);
       RETURN_IF_STREAM_ABORT(filter, brigade);
       if (!got_frame) {
@@ -120,12 +125,11 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
       }
     }
 
-    // Put the data we read into a transient bucket (but no more than they
-    // asked for).  We use a transient bucket, as opposed to a heap bucket, to
-    // avoid an extra string copy.
-    const int buffer_size = static_cast<int>(data_buffer_.size());
-    bytes_read = (mode == AP_MODE_EXHAUSTIVE ? buffer_size :
-                  std::min(static_cast<int>(readbytes), buffer_size));
+    // Return however much data we read, but no more than they asked for.
+    bytes_read = data_buffer_.size();
+    if (mode != AP_MODE_EXHAUSTIVE && max_bytes < bytes_read) {
+      bytes_read = max_bytes;
+    }
   }
   // For AP_MODE_GETLINE, try to return a full text line of data.
   else if (mode == AP_MODE_GETLINE) {
@@ -169,7 +173,9 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   // Keep track of whether we were able to put any buckets into the brigade.
   bool success = false;
 
-  // If we managed to read any data, put it into the brigade.
+  // If we managed to read any data, put it into the brigade.  We use a
+  // transient bucket (as opposed to a heap bucket) to avoid an extra string
+  // copy.
   if (bytes_read > 0) {
     APR_BRIGADE_INSERT_TAIL(brigade, apr_bucket_transient_create(
         data_buffer_.data(), bytes_read, brigade->bucket_alloc));
