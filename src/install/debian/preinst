@@ -1,0 +1,20 @@
+#!/bin/sh
+
+case "$1" in
+    install)
+        # When we first install mod_spdy, back up ssl.load (as we will be
+        # replacing it).
+        test -f /etc/apache2/mods-available/ssl.load && \
+          test ! -e /etc/apache2/mods-available/ssl.load.orig && \
+          cp /etc/apache2/mods-available/ssl.load \
+             /etc/apache2/mods-available/ssl.load.orig
+    ;;
+    upgrade|abort-upgrade)
+    ;;
+    *)
+        echo "preinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0

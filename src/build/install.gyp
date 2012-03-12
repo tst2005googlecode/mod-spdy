@@ -27,6 +27,7 @@
           '<(install_path)/common/BRANDING',
           '<(install_path)/common/spdy.load.template',
           '<(install_path)/common/spdy.conf.template',
+          '<(install_path)/common/ssl.load.template',
         ],
         'packaging_files_deb': [
           '<(install_path)/debian/build.sh',
@@ -35,6 +36,7 @@
           '<(install_path)/debian/control.template',
           '<(install_path)/debian/postinst',
           '<(install_path)/debian/postrm',
+          '<(install_path)/debian/preinst',
           '<(install_path)/debian/prerm',
         ],
         'packaging_files_rpm': [
@@ -85,6 +87,12 @@
               'destination': '<(PRODUCT_DIR)/install/common/',
               'files': [
                 '<@(packaging_files_common)',
+              ]
+            },
+            {
+              'destination': '<(PRODUCT_DIR)/',
+              'files': [
+                '<(DEPTH)/mod_ssl.so',
               ]
             },
           ],

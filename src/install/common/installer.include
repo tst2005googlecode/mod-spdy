@@ -112,4 +112,5 @@ stage_install_common() {
 
   # app and resources
   install -m 644 -s "${BUILDDIR}/libmod_spdy.so" "${STAGEDIR}${APACHE_MODULEDIR}/mod_spdy.so"
+  install -m 644 -s "${BUILDDIR}/mod_ssl.so" "${STAGEDIR}${APACHE_MODULEDIR}/mod_ssl_with_npn.so"
 }

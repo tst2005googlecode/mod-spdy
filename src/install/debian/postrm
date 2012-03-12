@@ -6,6 +6,14 @@
 
 action="$1"
 
+# If there's a backup of ssl.load, restore it (but first make sure that the
+# path we're moving to is either a regular file or doesn't exist).
+test -f /etc/apache2/mods-available/ssl.load.orig && \
+  test \( -f /etc/apache2/mods-available/ssl.load -o \
+         ! -e /etc/apache2/mods-available/ssl.load \) && \
+  mv /etc/apache2/mods-available/ssl.load.orig \
+     /etc/apache2/mods-available/ssl.load
+
 # Only do complete clean-up on purge.
 if [ "$action" != "purge" ] ; then
   exit 0
