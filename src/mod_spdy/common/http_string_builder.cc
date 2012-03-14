@@ -25,7 +25,6 @@ namespace {
 void OnHeader(const base::StringPiece& key,
               const base::StringPiece& value,
               std::string* output) {
-  output->reserve(output->size() + key.size() + value.size() + 4);
   key.AppendToString(output);
   output->append(": ");
   value.AppendToString(output);
@@ -48,8 +47,6 @@ void HttpStringBuilder::OnRequestLine(const base::StringPiece& method,
                                       const base::StringPiece& version) {
   DCHECK(state_ == REQUEST_LINE);
   state_ = LEADING_HEADERS;
-  string_->reserve(string_->size() + method.size() + path.size() +
-                   version.size() + 4);
   method.AppendToString(string_);
   string_->push_back(' ');
   path.AppendToString(string_);
@@ -81,7 +78,6 @@ void HttpStringBuilder::OnDataChunk(const base::StringPiece& data) {
   state_ = DATA_CHUNKS;
   // Encode the data as an HTTP data chunk.  See RFC 2616 section 3.6.1 for
   // details.
-  string_->reserve(string_->size() + data.size() + 8);
   base::StringAppendF(string_, "%X\r\n", data.size());
   data.AppendToString(string_);
   string_->append("\r\n");
