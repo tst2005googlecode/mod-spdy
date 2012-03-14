@@ -15,6 +15,7 @@
 #include "mod_spdy/common/thread_pool.h"
 
 #include <map>
+#include <set>
 #include <vector>
 
 #include "base/basictypes.h"
@@ -22,9 +23,17 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
+#include "base/time.h"
 #include "mod_spdy/common/executor.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_protocol.h"
+
+namespace {
+
+// Shut down a worker thread after it has been idle for this many seconds:
+const int64 kDefaultMaxWorkerIdleSeconds = 60;
+
+}  // namespace
 
 namespace mod_spdy {
 
@@ -63,6 +72,7 @@ void ThreadPool::ThreadPoolExecutor::AddTask(net_instaweb::Function* task,
     if (!stopped_) {
       master_->task_queue_.insert(std::make_pair(priority, Task(task, this)));
       master_->worker_condvar_.Signal();
+      master_->StartNewWorkerIfNeeded();
       return;
     }
   }
@@ -136,6 +146,9 @@ class ThreadPool::WorkerThread : public base::PlatformThread::Delegate {
   virtual void ThreadMain();
 
  private:
+  // Return true if the worker should delete itself before terminating.
+  bool ThreadMainImpl();
+
   ThreadPool* const master_;
   base::PlatformThreadHandle thread_;
 
@@ -145,19 +158,64 @@ class ThreadPool::WorkerThread : public base::PlatformThread::Delegate {
 // This is the code executed by the thread; when this method returns, the
 // thread will terminate.
 void ThreadPool::WorkerThread::ThreadMain() {
+  const bool delete_ourselves = ThreadMainImpl();
+  if (delete_ourselves) {
+    // We are safe to delete ourselves here because:
+    //   1) If ThreadMainImpl() returns true, the worker has already been
+    //      removed from the master, so there is no one else pointing to us.
+    //   2) The thread will terminate as soon as we return from this method, so
+    //      obviously we won't be touching our instance fields ever again.
+    //   3) The thread won't be touching us or our instance fields either.  It
+    //      doesn't know about fields defined in this class, of course, and our
+    //      superclass has no instance fields.
+    //   4) Note that PlatformThreadHandle is just an integer (thread ID).
+    //      It's not some object that the thread needs, or any such thing.
+    delete this;
+  }
+}
+
+bool ThreadPool::WorkerThread::ThreadMainImpl() {
   // We start by grabbing the master lock, but we release it below whenever we
   // are 1) waiting for a new task or 2) executing a task.  So in fact most of
   // the time we are not holding the lock.
   base::AutoLock autolock(master_->lock_);
   while (true) {
-    // Wait until there's a task available (or we're shutting down).
-    while (!master_->shutting_down_ && master_->task_queue_.empty()) {
-      master_->worker_condvar_.Wait();
+    // Wait until there's a task available (or we're shutting down), but don't
+    // stay idle for more than kMaxWorkerIdleSeconds seconds.
+    base::TimeDelta time_remaining = master_->max_thread_idle_time_;
+    while (!master_->shutting_down_ && master_->task_queue_.empty() &&
+           time_remaining.InSecondsF() > 0.0) {
+      // Note that TimedWait can wake up spuriously before the time runs out,
+      // so we need to measure how long we actually waited for.
+      const base::Time start = base::Time::Now();
+      master_->worker_condvar_.TimedWait(time_remaining);
+      const base::Time end = base::Time::Now();
+      // Note that the system clock can go backwards if it is reset, so make
+      // sure we never _increase_ time_remaining.
+      if (end > start) {
+        time_remaining -= end - start;
+      }
     }
 
-    // If we're shutting down, exit the thread.
+    // If we're shutting down, exit the thread.  The master will delete us.
     if (master_->shutting_down_) {
-      return;
+      return false;  // false = the worker should not delete itself
+    }
+
+    // If we ran out of time without getting a task, maybe we should shut this
+    // thread down.
+    if (master_->task_queue_.empty()) {
+      DCHECK_LE(time_remaining.InSecondsF(), 0.0);
+      DCHECK_GE(master_->workers_.size(), master_->min_threads_);
+      // Don't shut down the thread if we're already at the minimum number of
+      // threads; just go back to the top of the while (true) loop.
+      if (master_->workers_.size() <= master_->min_threads_) {
+        continue;
+      }
+      // Remove this thread from the pool and exit.
+      DCHECK_EQ(1, master_->workers_.count(this));
+      master_->workers_.erase(this);
+      return true;  // true = the worker should delete itself
     }
 
     // Otherwise, there must be at least one task available now, so pop the
@@ -179,10 +237,14 @@ void ThreadPool::WorkerThread::ThreadMain() {
     // here rather than one AutoLock for the above code and another for the
     // below code, so that we don't have to release and reacquire the lock at
     // the edge of the while-loop.
+    ++(master_->num_busy_workers_);
+    DCHECK_LE(master_->num_busy_workers_, master_->workers_.size());
     {
       base::AutoUnlock autounlock(master_->lock_);
       task.function->CallRun();
     }
+    --(master_->num_busy_workers_);
+    DCHECK_GE(master_->num_busy_workers_, 0);
 
     // We've completed the task and reaquired the lock, so decrement the count
     // of active tasks for this owner.
@@ -200,12 +262,32 @@ void ThreadPool::WorkerThread::ThreadMain() {
   }
 }
 
-ThreadPool::ThreadPool(int max_threads)
-    : max_threads_(max_threads),
+ThreadPool::ThreadPool(int min_threads, int max_threads)
+    : min_threads_(min_threads),
+      max_threads_(max_threads),
+      max_thread_idle_time_(
+          base::TimeDelta::FromSeconds(kDefaultMaxWorkerIdleSeconds)),
       worker_condvar_(&lock_),
-      shutting_down_(false) {}
+      num_busy_workers_(0),
+      shutting_down_(false) {
+  DCHECK_GE(max_thread_idle_time_.InSecondsF(), 0.0);
+  DCHECK_LE(min_threads_, max_threads_);
+}
+
+ThreadPool::ThreadPool(int min_threads, int max_threads,
+                       base::TimeDelta max_thread_idle_time)
+    : min_threads_(min_threads),
+      max_threads_(max_threads),
+      max_thread_idle_time_(max_thread_idle_time),
+      worker_condvar_(&lock_),
+      num_busy_workers_(0),
+      shutting_down_(false) {
+  DCHECK_GE(max_thread_idle_time_.InSecondsF(), 0.0);
+  DCHECK_LE(min_threads_, max_threads_);
+}
 
 ThreadPool::~ThreadPool() {
+  std::vector<WorkerThread*> workers;
   {
     base::AutoLock autolock(lock_);
     // If we're doing things right, all the Executors should have been
@@ -213,14 +295,19 @@ ThreadPool::~ThreadPool() {
     // pending or active tasks.
     DCHECK(task_queue_.empty());
     DCHECK(active_task_counts_.empty());
+    // Copy over the list of workers to shut down (so that we don't touch
+    // workers_ after releasing the lock and while the worker threads are
+    // still shutting down).
+    workers.assign(workers_.begin(), workers_.end());
+    workers_.clear();
     // Wake up all the worker threads and tell them to shut down.
     shutting_down_ = true;
     worker_condvar_.Broadcast();
   }
 
   // Stop all the worker threads and delete the WorkerThread objects.
-  for (std::vector<WorkerThread*>::const_iterator iter = workers_.begin();
-       iter != workers_.end(); ++iter) {
+  for (std::vector<WorkerThread*>::const_iterator iter = workers.begin();
+       iter != workers.end(); ++iter) {
     WorkerThread* worker = *iter;
     worker->Join();
     delete worker;
@@ -228,24 +315,61 @@ ThreadPool::~ThreadPool() {
 }
 
 bool ThreadPool::Start() {
-  // Start up max_threads_ workers; if any of the worker threads fail to start,
+  base::AutoLock autolock(lock_);
+  DCHECK(task_queue_.empty());
+  DCHECK(workers_.empty());
+  // Start up min_threads_ workers; if any of the worker threads fail to start,
   // then this method fails and the ThreadPool should be deleted.
-  for (int i = 0; i < max_threads_; ++i) {
+  for (int i = 0; i < min_threads_; ++i) {
     scoped_ptr<WorkerThread> worker(new WorkerThread(this));
     if (!worker->Start()) {
       return false;
     }
-    workers_.push_back(worker.release());
+    workers_.insert(worker.release());
   }
-  // TODO(mdsteele): Consider switching to a scheme where we don't start all
-  //   threads right away; instead we create new threads as necessary, and shut
-  //   some of them down again if things quiet down for long enough.
-  DCHECK(workers_.size() == max_threads_);
+  DCHECK_EQ(min_threads_, workers_.size());
   return true;
 }
 
 Executor* ThreadPool::NewExecutor() {
   return new ThreadPoolExecutor(this);
+}
+
+int ThreadPool::GetNumWorkersForTest() {
+  base::AutoLock autolock(lock_);
+  return workers_.size();
+}
+
+int ThreadPool::GetNumIdleWorkersForTest() {
+  base::AutoLock autolock(lock_);
+  DCHECK_GE(num_busy_workers_, 0);
+  DCHECK_LE(num_busy_workers_, workers_.size());
+  return workers_.size() - num_busy_workers_;
+}
+
+// This method is called each time we add a new task to the thread pool.
+void ThreadPool::StartNewWorkerIfNeeded() {
+  lock_.AssertAcquired();
+  DCHECK_GE(num_busy_workers_, 0);
+  DCHECK_LE(num_busy_workers_, workers_.size());
+  DCHECK_GE(workers_.size(), min_threads_);
+  DCHECK_LE(workers_.size(), max_threads_);
+
+  // We create a new worker to handle the task _unless_ either 1) we're already
+  // at the maximum number of threads, or 2) there are already enough idle
+  // workers sitting around to take on this task (and all other pending tasks
+  // that the idle workers haven't yet had a chance to pick up).
+  if (workers_.size() >= max_threads_ ||
+      task_queue_.size() <= workers_.size() - num_busy_workers_) {
+    return;
+  }
+
+  scoped_ptr<WorkerThread> worker(new WorkerThread(this));
+  if (worker->Start()) {
+    workers_.insert(worker.release());
+  } else {
+    LOG(ERROR) << "Failed to start new worker thread.";
+  }
 }
 
 }  // namespace mod_spdy

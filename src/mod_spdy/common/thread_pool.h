@@ -16,11 +16,12 @@
 #define MOD_SPDY_COMMON_THREAD_POOL_H_
 
 #include <map>
-#include <vector>
+#include <set>
 
 #include "base/basictypes.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "base/time.h"
 #include "net/spdy/spdy_protocol.h"  // for spdy::SpdyPriority
 
 namespace net_instaweb { class Function; }
@@ -36,8 +37,16 @@ class Executor;
 // priorities when deciding which tasks to execute first.
 class ThreadPool {
  public:
-  // Create a new thread pool that uses at most max_threads threads at a time.
-  explicit ThreadPool(int max_threads);
+  // Create a new thread pool that uses at least min_threads threads, and at
+  // most max_threads threads, at a time.  min_threads must be no greater than
+  // max_threads.
+  ThreadPool(int min_threads, int max_threads);
+
+  // As above, but specify the amount of time after which to kill idle threads,
+  // rather than using the default value (this is primarily for testing).
+  // max_thread_idle_time must be non-negative.
+  ThreadPool(int min_threads, int max_threads,
+             base::TimeDelta max_thread_idle_time);
 
   // The destructor will block until all threads in the pool have shut down.
   // The ThreadPool must not be destroyed until all Executor objects returned
@@ -53,6 +62,13 @@ class ThreadPool {
   // The caller gains ownership of the returned Executor, and the ThreadPool
   // must outlive the returned Executor.
   Executor* NewExecutor();
+
+  // Return the current total number of worker threads.  This is provided for
+  // testing purposes only.
+  int GetNumWorkersForTest();
+  // Return the number of worker threads currently idle.  This is provided for
+  // testing purposes only.
+  int GetNumIdleWorkersForTest();
 
  private:
   class ThreadPoolExecutor;
@@ -70,7 +86,14 @@ class ThreadPool {
   typedef std::multimap<spdy::SpdyPriority, Task> TaskQueue;
   typedef std::map<const ThreadPoolExecutor*, int> OwnerMap;
 
+  // Start a new worker thread if 1) the task queue is larger than the number
+  // of currently idle workers, and 2) we have fewer than the maximum number of
+  // workers.  Otherwise, do nothing.  Must be holding lock_ when calling this.
+  void StartNewWorkerIfNeeded();
+
+  const int min_threads_;
   const int max_threads_;
+  const base::TimeDelta max_thread_idle_time_;
   // This single master lock protects all of the below fields, as well as any
   // mutable data and condition variables in the worker threads and executors.
   // Having just one lock makes everything much easier to understand.
@@ -80,7 +103,9 @@ class ThreadPool {
   base::ConditionVariable worker_condvar_;
   // The list of running worker threads.  We keep this around so that we can
   // join the threads on shutdown.
-  std::vector<WorkerThread*> workers_;
+  std::set<WorkerThread*> workers_;
+  // How many workers do we have that are actually executing tasks?
+  int num_busy_workers_;
   // We set this to true to tell the worker threads to terminate.
   bool shutting_down_;
   // The priority queue of pending tasks.  Invariant: all Function objects in

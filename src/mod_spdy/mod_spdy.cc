@@ -17,6 +17,8 @@
 
 #include "mod_spdy/mod_spdy.h"
 
+#include <algorithm>  // for std::min
+
 #include "httpd.h"
 #include "http_connection.h"
 #include "http_config.h"
@@ -276,8 +278,11 @@ void ChildInit(apr_pool_t* pool, server_rec* server_list) {
   }
 
   // Create the per-process thread pool.
+  const int max_threads = top_level_config->max_threads_per_process();
+  const int min_threads =
+      std::min(max_threads, top_level_config->min_threads_per_process());
   scoped_ptr<mod_spdy::ThreadPool> thread_pool(
-      new mod_spdy::ThreadPool(top_level_config->max_threads_per_process()));
+      new mod_spdy::ThreadPool(min_threads, max_threads));
   if (thread_pool->Start()) {
     gPerProcessThreadPool = thread_pool.release();
     mod_spdy::PoolRegisterDelete(pool, gPerProcessThreadPool);

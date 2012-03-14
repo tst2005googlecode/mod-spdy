@@ -118,6 +118,11 @@ const command_rec kSpdyConfigCommands[] = {
       SetPositiveInt<&SpdyServerConfig::set_max_streams_per_connection>,
       "Maxiumum number of simultaneous SPDY streams per connection"),
   SPDY_CONFIG_COMMAND(
+      "SpdyMinThreadsPerProcess",
+      GlobalOnly<SetPositiveInt<
+        &SpdyServerConfig::set_min_threads_per_process> >,
+      "Miniumum number of worker threads to spawn per child process"),
+  SPDY_CONFIG_COMMAND(
       "SpdyMaxThreadsPerProcess",
       GlobalOnly<SetPositiveInt<
         &SpdyServerConfig::set_max_threads_per_process> >,

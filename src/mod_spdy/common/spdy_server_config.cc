@@ -18,7 +18,8 @@ namespace {
 
 const bool kDefaultSpdyEnabled = false;
 const int kDefaultMaxStreamsPerConnection = 100;
-const int kDefaultMaxThreadsPerProcess = 5;
+const int kDefaultMinThreadsPerProcess = 2;
+const int kDefaultMaxThreadsPerProcess = 10;
 const bool kDefaultUseEvenWithoutSsl = false;
 const int kDefaultVlogLevel = 0;
 
@@ -29,6 +30,7 @@ namespace mod_spdy {
 SpdyServerConfig::SpdyServerConfig()
     : spdy_enabled_(kDefaultSpdyEnabled),
       max_streams_per_connection_(kDefaultMaxStreamsPerConnection),
+      min_threads_per_process_(kDefaultMinThreadsPerProcess),
       max_threads_per_process_(kDefaultMaxThreadsPerProcess),
       use_even_without_ssl_(kDefaultUseEvenWithoutSsl),
       vlog_level_(kDefaultVlogLevel) {}
@@ -40,6 +42,8 @@ void SpdyServerConfig::MergeFrom(const SpdyServerConfig& a,
   spdy_enabled_.MergeFrom(a.spdy_enabled_, b.spdy_enabled_);
   max_streams_per_connection_.MergeFrom(a.max_streams_per_connection_,
                                         b.max_streams_per_connection_);
+  min_threads_per_process_.MergeFrom(a.min_threads_per_process_,
+                                     b.min_threads_per_process_);
   max_threads_per_process_.MergeFrom(a.max_threads_per_process_,
                                      b.max_threads_per_process_);
   use_even_without_ssl_.MergeFrom(a.use_even_without_ssl_,

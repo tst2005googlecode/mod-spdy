@@ -21,6 +21,7 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
+#include "base/time.h"
 #include "mod_spdy/common/executor.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_protocol.h"
@@ -36,7 +37,7 @@ namespace {
 class Notification {
  public:
   Notification() : condvar_(&lock_), flag_(false) {}
-  ~Notification() {}
+  ~Notification() { Set(); }
   void Set() {
     base::AutoLock autolock(lock_);
     flag_ = true;
@@ -84,7 +85,7 @@ class TestFunction : public net_instaweb::Function {
 // when pulling tasks from the queue.
 TEST(ThreadPoolTest, ConcurrencyAndPrioritization) {
   // Create a thread pool with 2 threads, and an executor.
-  mod_spdy::ThreadPool thread_pool(2);
+  mod_spdy::ThreadPool thread_pool(2, 2);
   ASSERT_TRUE(thread_pool.Start());
   scoped_ptr<mod_spdy::Executor> executor(thread_pool.NewExecutor());
 
@@ -131,7 +132,7 @@ TEST(ThreadPoolTest, ConcurrencyAndPrioritization) {
 // from the same ThreadPool.
 TEST(ThreadPoolTest, MultipleExecutors) {
   // Create a thread pool with 3 threads, and two executors.
-  mod_spdy::ThreadPool thread_pool(3);
+  mod_spdy::ThreadPool thread_pool(3, 3);
   ASSERT_TRUE(thread_pool.Start());
   scoped_ptr<mod_spdy::Executor> executor1(thread_pool.NewExecutor());
   scoped_ptr<mod_spdy::Executor> executor2(thread_pool.NewExecutor());
@@ -215,7 +216,7 @@ class IdFunction : public net_instaweb::Function {
 // order they were added.
 TEST(ThreadPoolTest, SamePriorityTasksAreFIFO) {
   // Create a thread pool with just one thread, and an executor.
-  mod_spdy::ThreadPool thread_pool(1);
+  mod_spdy::ThreadPool thread_pool(1, 1);
   ASSERT_TRUE(thread_pool.Start());
   scoped_ptr<mod_spdy::Executor> executor(thread_pool.NewExecutor());
 
@@ -250,6 +251,84 @@ TEST(ThreadPoolTest, SamePriorityTasksAreFIFO) {
     ASSERT_EQ(index, ids[index])
         << "Task " << ids[index] << " finished in position " << index;
   }
+}
+
+// Add a test failure if the thread pool does not stabilize to the expected
+// total/idle number of worker threads withing the given timeout.
+void ExpectWorkersWithinTimeout(int expected_num_workers,
+                                int expected_num_idle_workers,
+                                mod_spdy::ThreadPool* thread_pool,
+                                int timeout_millis) {
+  int millis_remaining = timeout_millis;
+  while (true) {
+    const int actual_num_workers = thread_pool->GetNumWorkersForTest();
+    const int actual_num_idle_workers = thread_pool->GetNumIdleWorkersForTest();
+    if (actual_num_workers == expected_num_workers &&
+        actual_num_idle_workers == expected_num_idle_workers) {
+      return;
+    }
+    if (millis_remaining <= 0) {
+      ADD_FAILURE() << "Timed out; expected " << expected_num_workers
+                    << " worker(s) with " << expected_num_idle_workers
+                    <<" idle; still at " << actual_num_workers
+                    << " worker(s) with " << actual_num_idle_workers
+                    << " idle after " << timeout_millis << "ms";
+      return;
+    }
+    base::PlatformThread::Sleep(10);
+    millis_remaining -= 10;
+  }
+}
+
+// Test that we spawn new threads as needed, and allow them to die off after
+// being idle for a while.
+TEST(ThreadPoolTest, CreateAndRetireWorkers) {
+  // Create a thread pool with min_threads < max_threads, and give it a short
+  // max_thread_idle_time.
+  const int idle_time_millis = 100;
+  mod_spdy::ThreadPool thread_pool(
+      2, 4, base::TimeDelta::FromMilliseconds(idle_time_millis));
+  ASSERT_TRUE(thread_pool.Start());
+  // As soon as we start the thread pool, there should be the minimum number of
+  // workers (two), both counted as idle.
+  EXPECT_EQ(2, thread_pool.GetNumWorkersForTest());
+  EXPECT_EQ(2, thread_pool.GetNumIdleWorkersForTest());
+
+  scoped_ptr<mod_spdy::Executor> executor(thread_pool.NewExecutor());
+
+  // Start up three tasks.  That should push us up to three workers
+  // immediately.  If we make sure to give those threads a chance to run, they
+  // should soon pick up the tasks and all be busy.
+  Notification done1;
+  executor->AddTask(new WaitFunction(&done1), 0);
+  executor->AddTask(new WaitFunction(&done1), 1);
+  executor->AddTask(new WaitFunction(&done1), 2);
+  EXPECT_EQ(3, thread_pool.GetNumWorkersForTest());
+  ExpectWorkersWithinTimeout(3, 0, &thread_pool, 100);
+
+  // Add three more tasks.  We should now be at the maximum number of workers,
+  // and that fourth worker should be busy soon.
+  Notification done2;
+  executor->AddTask(new WaitFunction(&done2), 1);
+  executor->AddTask(new WaitFunction(&done2), 2);
+  executor->AddTask(new WaitFunction(&done2), 3);
+  EXPECT_EQ(4, thread_pool.GetNumWorkersForTest());
+  ExpectWorkersWithinTimeout(4, 0, &thread_pool, 100);
+
+  // Allow the first group of tasks to finish.  There are now only three tasks
+  // running, so one of our four threads should go idle.  If we wait for a
+  // while after that, that thread should shut down.
+  done1.Set();
+  ExpectWorkersWithinTimeout(4, 1, &thread_pool, idle_time_millis / 2);
+  ExpectWorkersWithinTimeout(3, 0, &thread_pool, 2 * idle_time_millis);
+
+  // Allow the second group of tasks to finish.  There are no tasks left, so
+  // all three threads should go idle.  If we wait for a while after that,
+  // exactly one of the three should shut down, bringing us back down to the
+  // minimum number of threads.
+  done2.Set();
+  ExpectWorkersWithinTimeout(3, 3, &thread_pool, idle_time_millis / 2);
+  ExpectWorkersWithinTimeout(2, 2, &thread_pool, 2 * idle_time_millis);
 }
 
 }  // namespace

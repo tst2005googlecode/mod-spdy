@@ -34,6 +34,11 @@ class SpdyServerConfig {
     return max_streams_per_connection_.get();
   }
 
+  // Return the minimum number of worker threads to spawn per child process.
+  int min_threads_per_process() const {
+    return min_threads_per_process_.get();
+  }
+
   // Return the maximum number of worker threads to spawn per child process.
   int max_threads_per_process() const {
     return max_threads_per_process_.get();
@@ -52,6 +57,9 @@ class SpdyServerConfig {
   void set_spdy_enabled(bool b) { spdy_enabled_.set(b); }
   void set_max_streams_per_connection(int n) {
     max_streams_per_connection_.set(n);
+  }
+  void set_min_threads_per_process(int n) {
+    min_threads_per_process_.set(n);
   }
   void set_max_threads_per_process(int n) {
     max_threads_per_process_.set(n);
@@ -86,6 +94,7 @@ class SpdyServerConfig {
   // Configuration fields:
   Option<bool> spdy_enabled_;
   Option<int> max_streams_per_connection_;
+  Option<int> min_threads_per_process_;
   Option<int> max_threads_per_process_;
   Option<bool> use_even_without_ssl_;
   Option<int> vlog_level_;
