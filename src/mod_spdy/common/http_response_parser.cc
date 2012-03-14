@@ -335,10 +335,13 @@ bool HttpResponseParser::ParseLeadingHeader(const base::StringPiece& text) {
     }
   } else if (body_type_ != CHUNKED_BODY &&
              net_instaweb::StringCaseEqual(key, http::kContentLength)) {
-    base::StringToInt(value.data(), value.data() + value.size(),
-                      &remaining_bytes_);
-    if (remaining_bytes_ > 0) {
+    int int_value = 0;
+    if (base::StringToInt(value.data(), value.data() + value.size(),
+                          &int_value) && int_value > 0) {
+      remaining_bytes_ = static_cast<size_t>(int_value);
       body_type_ = UNCHUNKED_BODY;
+    } else {
+      VLOG(1) << "Bad content-length: " << value;
     }
   }
 
@@ -353,11 +356,13 @@ bool HttpResponseParser::ParseChunkStart(const base::StringPiece& text) {
   // rest.
   const size_t length =
       NposToEnd(text, text.find_first_not_of("0123456789abcdefABCDEF"));
-  if (!base::HexStringToInt(text.data(), text.data() + length,
-                            &remaining_bytes_)) {
+  int int_value = 0;
+  if (!base::HexStringToInt(text.data(), text.data() + length, &int_value) ||
+      int_value < 0) {
     VLOG(1) << "Bad chunk line: " << text;
     return false;
   }
+  remaining_bytes_ = static_cast<size_t>(int_value);
   return true;
 }
 

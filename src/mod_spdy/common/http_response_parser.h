@@ -73,7 +73,7 @@ class HttpResponseParser {
   HttpResponseVisitorInterface* const visitor_;
   ParserState state_;
   BodyType body_type_;
-  int remaining_bytes_;
+  size_t remaining_bytes_;
   std::string buffer_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpResponseParser);

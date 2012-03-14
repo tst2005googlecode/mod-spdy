@@ -67,6 +67,7 @@
       'targets': [
         {
           'target_name': 'linux_installer_configs',
+          'suppress_wildcard': 1,
           'type': 'none',
           # Add these files to the build output so the build archives will be
           # "hermetic" for packaging.
