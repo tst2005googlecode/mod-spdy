@@ -105,6 +105,7 @@ APACHE_HTTPD_SRC_TGZ=$(basename $APACHE_HTTPD_SRC_TGZ_URL)
 APACHE_HTTPD_MODSSL_NPN_PATCH="mod_ssl_npn.patch"
 
 OPENSSL_SRC_ROOT=${OPENSSL_SRC_TGZ%.tar.gz}
+OPENSSL_INST_ROOT=${OPENSSL_SRC_ROOT}_install
 APACHE_HTTPD_SRC_ROOT=${APACHE_HTTPD_SRC_TGZ%.tar.gz}
 
 OPENSSL_BUILDLOG=$(mktemp -p /tmp openssl_buildlog.XXXXXXXXXX)
@@ -141,7 +142,7 @@ echo ""
 if [ ! -f "$PROGRESS_DIR/openssl_configured" ]; then
   pushd $OPENSSL_SRC_ROOT >/dev/null
   echo -n "Configuring OpenSSL ... "
-  ./config no-shared -fPIC >> $OPENSSL_BUILDLOG
+  ./config no-shared -fPIC --openssldir=$BUILDROOT/$OPENSSL_INST_ROOT >> $OPENSSL_BUILDLOG
   if [ $? -ne 0 ]; then
     echo "Failed. Build log at $OPENSSL_BUILDLOG."
     do_cleanup
@@ -156,7 +157,7 @@ fi
 if [ ! -f "$PROGRESS_DIR/openssl_built" ]; then
   pushd $OPENSSL_SRC_ROOT >/dev/null
   echo -n "Building OpenSSL (this may take a while) ... "
-  make INSTALL_PREFIX=$(pwd) install >> $OPENSSL_BUILDLOG 2>&1
+  make install >> $OPENSSL_BUILDLOG 2>&1
   if [ $? -ne 0 ]; then
     echo "Failed. Build log at $OPENSSL_BUILDLOG."
     do_cleanup
@@ -175,7 +176,7 @@ echo ""
 if [ ! -f "$PROGRESS_DIR/modssl_configured" ]; then
   pushd $APACHE_HTTPD_SRC_ROOT >/dev/null
   echo -n "Configuring Apache mod_ssl ... "
-  ./configure --enable-ssl=shared --with-ssl=$BUILDROOT/$OPENSSL_SRC_ROOT/usr/local/ssl >> $APACHE_HTTPD_BUILDLOG
+  ./configure --enable-ssl=shared --with-ssl=$BUILDROOT/$OPENSSL_INST_ROOT >> $APACHE_HTTPD_BUILDLOG
   if [ $? -ne 0 ]; then
     echo "Failed. Build log at $APACHE_HTTPD_BUILDLOG."
     do_cleanup
