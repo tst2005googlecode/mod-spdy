@@ -71,7 +71,7 @@ fi
 function download_file {
   if [ ! -f "$PROGRESS_DIR/$2.downloaded" ]; then
     echo "Downloading $1"
-    curl -# "$1" -o $2 || do_cleanup
+    curl -f -# "$1" -o $2 || do_cleanup
     if [[ $(md5sum $2 | cut -d\  -f1) != $3 ]]; then
       echo "md5sum mismatch for $2"
       do_cleanup
@@ -94,7 +94,7 @@ function uncompress_file {
 }
 
 OPENSSL_SRC_TGZ_URL="http://www.openssl.org/source/openssl-1.0.1.tar.gz"
-APACHE_HTTPD_SRC_TGZ_URL="http://archive.apache.org/dist/httpd/httpd-2.2.21.tar.gz"
+APACHE_HTTPD_SRC_TGZ_URL="http://archive.apache.org/dist/httpd/httpd-2.2.22.tar.gz"
 APACHE_HTTPD_MODSSL_NPN_PATCH_URL="https://issues.apache.org/bugzilla/attachment.cgi?id=27969&action=diff&context=patch&collapsed=&headers=1&format=raw"
 
 OPENSSL_SRC_TGZ=$(basename $OPENSSL_SRC_TGZ_URL)
@@ -111,7 +111,7 @@ APACHE_HTTPD_BUILDLOG=$(mktemp -p /tmp httpd_buildlog.XXXXXXXXXX)
 pushd $BUILDROOT >/dev/null
 
 download_file $OPENSSL_SRC_TGZ_URL $OPENSSL_SRC_TGZ 134f168bc2a8333f19f81d684841710b
-download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ b24ca6db942a4f8e57c357e5e3058d31
+download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ d77fa5af23df96a8af68ea8114fa6ce1
 download_file $APACHE_HTTPD_MODSSL_NPN_PATCH_URL $APACHE_HTTPD_MODSSL_NPN_PATCH cfd98e0b0b13f86825df7610b2437e5a
 
 echo ""
