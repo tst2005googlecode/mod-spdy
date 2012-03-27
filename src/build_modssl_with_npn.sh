@@ -95,7 +95,7 @@ function uncompress_file {
 
 OPENSSL_SRC_TGZ_URL="http://www.openssl.org/source/openssl-1.0.1.tar.gz"
 APACHE_HTTPD_SRC_TGZ_URL="http://archive.apache.org/dist/httpd/httpd-2.2.22.tar.gz"
-APACHE_HTTPD_MODSSL_NPN_PATCH_URL="https://issues.apache.org/bugzilla/attachment.cgi?id=27969&action=diff&context=patch&collapsed=&headers=1&format=raw"
+APACHE_HTTPD_MODSSL_NPN_PATCH_PATH="$(dirname $0)/scripts/mod_ssl_with_npn.patch"
 
 OPENSSL_SRC_TGZ=$(basename $OPENSSL_SRC_TGZ_URL)
 APACHE_HTTPD_SRC_TGZ=$(basename $APACHE_HTTPD_SRC_TGZ_URL)
@@ -108,11 +108,12 @@ APACHE_HTTPD_SRC_ROOT=${APACHE_HTTPD_SRC_TGZ%.tar.gz}
 OPENSSL_BUILDLOG=$(mktemp -p /tmp openssl_buildlog.XXXXXXXXXX)
 APACHE_HTTPD_BUILDLOG=$(mktemp -p /tmp httpd_buildlog.XXXXXXXXXX)
 
+cp $APACHE_HTTPD_MODSSL_NPN_PATCH_PATH $BUILDROOT/$APACHE_HTTPD_MODSSL_NPN_PATCH
+
 pushd $BUILDROOT >/dev/null
 
 download_file $OPENSSL_SRC_TGZ_URL $OPENSSL_SRC_TGZ 134f168bc2a8333f19f81d684841710b
 download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ d77fa5af23df96a8af68ea8114fa6ce1
-download_file $APACHE_HTTPD_MODSSL_NPN_PATCH_URL $APACHE_HTTPD_MODSSL_NPN_PATCH cfd98e0b0b13f86825df7610b2437e5a
 
 echo ""
 
