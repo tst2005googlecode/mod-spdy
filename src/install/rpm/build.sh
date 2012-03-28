@@ -40,6 +40,14 @@ stage_install_rpm() {
   cat "${BUILDDIR}/install/common/spdy.conf" >> \
     "${STAGEDIR}${APACHE_CONFDIR}/spdy.conf"
   chmod 644 "${STAGEDIR}${APACHE_CONFDIR}/spdy.conf"
+
+  # Our conf file for loading mod_ssl_with_npn.so must come alphabetically
+  # before the built-in ssl.conf file, so we can't call it "ssl_with_npn.conf".
+  # Since all it will do is load the module (not configure it),
+  # "load_ssl_with_npn.conf" seems like an appropriate name.
+  process_template "${BUILDDIR}/install/common/ssl.load.template" \
+    "${STAGEDIR}${APACHE_CONFDIR}/load_ssl_with_npn.conf"
+  chmod 644 "${STAGEDIR}${APACHE_CONFDIR}/load_ssl_with_npn.conf"
 }
 
 # Actually generate the package file.
@@ -67,7 +75,8 @@ do_package() {
     local PKG_ARCH=""
   fi
 
-  DEPENDS="httpd >= 2.2, \
+  DEPENDS="httpd >= 2.2.4, \
+  mod_ssl >= 2.2, \
   libstdc++ >= 4.1.2, \
   at"
   gen_spec

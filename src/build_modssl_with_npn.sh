@@ -3,16 +3,13 @@
 # This script builds mod_ssl.so for Apache 2.2.x, with SSL NPN
 # support.
 #
-# Since NPN is still very new, it is included only in the most recent
-# beta of OpenSSL (1.0.1 beta2).
-#
-# Likewise, NPN is not yet supported in Apache HTTPD mod_ssl. A patch
-# has been submitted to Apache to enable NPN in mod_ssl:
+# NPN is not yet supported in Apache HTTPD mod_ssl. A patch has been
+# submitted to Apache to enable NPN in mod_ssl:
 # https://issues.apache.org/bugzilla/show_bug.cgi?id=52210
 #
-# Thus, we download the most recent 1.0.1b2 release of OpenSSL and the
-# most recent release of Apache 2.2, and apply a patch to enable NPN
-# support in Apache mod_ssl.
+# Thus, we download the 1.0.1 release of OpenSSL and the most recent
+# release of Apache 2.2, and apply a patch to enable NPN support in
+# Apache mod_ssl.
 #
 # We currently statically link OpenSSL with mod_ssl, which results in
 # a large (several megabyte) mod_ssl.so. If you prefer, you can
@@ -74,7 +71,7 @@ fi
 function download_file {
   if [ ! -f "$PROGRESS_DIR/$2.downloaded" ]; then
     echo "Downloading $1"
-    curl -# "$1" -o $2 || do_cleanup
+    curl -f -# "$1" -o $2 || do_cleanup
     if [[ $(md5sum $2 | cut -d\  -f1) != $3 ]]; then
       echo "md5sum mismatch for $2"
       do_cleanup
@@ -96,25 +93,27 @@ function uncompress_file {
   fi
 }
 
-OPENSSL_SRC_TGZ_URL="http://www.openssl.org/source/openssl-1.0.1-beta2.tar.gz"
-APACHE_HTTPD_SRC_TGZ_URL="http://archive.apache.org/dist/httpd/httpd-2.2.21.tar.gz"
-APACHE_HTTPD_MODSSL_NPN_PATCH_URL="https://issues.apache.org/bugzilla/attachment.cgi?id=27969&action=diff&context=patch&collapsed=&headers=1&format=raw"
+OPENSSL_SRC_TGZ_URL="http://www.openssl.org/source/openssl-1.0.1.tar.gz"
+APACHE_HTTPD_SRC_TGZ_URL="http://archive.apache.org/dist/httpd/httpd-2.2.22.tar.gz"
+APACHE_HTTPD_MODSSL_NPN_PATCH_PATH="$(dirname $0)/scripts/mod_ssl_with_npn.patch"
 
 OPENSSL_SRC_TGZ=$(basename $OPENSSL_SRC_TGZ_URL)
 APACHE_HTTPD_SRC_TGZ=$(basename $APACHE_HTTPD_SRC_TGZ_URL)
 APACHE_HTTPD_MODSSL_NPN_PATCH="mod_ssl_npn.patch"
 
 OPENSSL_SRC_ROOT=${OPENSSL_SRC_TGZ%.tar.gz}
+OPENSSL_INST_ROOT=${OPENSSL_SRC_ROOT}_install
 APACHE_HTTPD_SRC_ROOT=${APACHE_HTTPD_SRC_TGZ%.tar.gz}
 
 OPENSSL_BUILDLOG=$(mktemp -p /tmp openssl_buildlog.XXXXXXXXXX)
 APACHE_HTTPD_BUILDLOG=$(mktemp -p /tmp httpd_buildlog.XXXXXXXXXX)
 
+cp $APACHE_HTTPD_MODSSL_NPN_PATCH_PATH $BUILDROOT/$APACHE_HTTPD_MODSSL_NPN_PATCH
+
 pushd $BUILDROOT >/dev/null
 
-download_file $OPENSSL_SRC_TGZ_URL $OPENSSL_SRC_TGZ ef66ad92539014e1a8fe33bdd8159bad
-download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ b24ca6db942a4f8e57c357e5e3058d31
-download_file $APACHE_HTTPD_MODSSL_NPN_PATCH_URL $APACHE_HTTPD_MODSSL_NPN_PATCH cfd98e0b0b13f86825df7610b2437e5a
+download_file $OPENSSL_SRC_TGZ_URL $OPENSSL_SRC_TGZ 134f168bc2a8333f19f81d684841710b
+download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ d77fa5af23df96a8af68ea8114fa6ce1
 
 echo ""
 
@@ -141,7 +140,7 @@ echo ""
 if [ ! -f "$PROGRESS_DIR/openssl_configured" ]; then
   pushd $OPENSSL_SRC_ROOT >/dev/null
   echo -n "Configuring OpenSSL ... "
-  ./config no-shared -fPIC >> $OPENSSL_BUILDLOG
+  ./config no-shared -fPIC --openssldir=$BUILDROOT/$OPENSSL_INST_ROOT >> $OPENSSL_BUILDLOG
   if [ $? -ne 0 ]; then
     echo "Failed. Build log at $OPENSSL_BUILDLOG."
     do_cleanup
@@ -156,7 +155,7 @@ fi
 if [ ! -f "$PROGRESS_DIR/openssl_built" ]; then
   pushd $OPENSSL_SRC_ROOT >/dev/null
   echo -n "Building OpenSSL (this may take a while) ... "
-  make INSTALL_PREFIX=$(pwd) install >> $OPENSSL_BUILDLOG 2>&1
+  make install >> $OPENSSL_BUILDLOG 2>&1
   if [ $? -ne 0 ]; then
     echo "Failed. Build log at $OPENSSL_BUILDLOG."
     do_cleanup
@@ -175,7 +174,20 @@ echo ""
 if [ ! -f "$PROGRESS_DIR/modssl_configured" ]; then
   pushd $APACHE_HTTPD_SRC_ROOT >/dev/null
   echo -n "Configuring Apache mod_ssl ... "
-  ./configure --enable-ssl=shared --with-ssl=$BUILDROOT/$OPENSSL_SRC_ROOT/usr/local/ssl >> $APACHE_HTTPD_BUILDLOG
+
+  # OpenSSL, as of version 1.0.1, changed its pkg-config file to list
+  # its dependent libraries in Libs.private. Prior to this, dependent
+  # libraries were listed in Libs. This change in 1.0.1 is the right
+  # thing for OpenSSL, but it breaks the Apache 2.2.x configure when
+  # linking statically against OpenSSL, since it assumes that all
+  # dependent libs are provided in the pkg config Libs directive. We
+  # run a search-replace on the configure script to tell it to include
+  # not only libraries in Libs, but also those in Libs.private:
+  mv configure configure.bak
+  sed 's/--libs-only-l openssl/--libs-only-l --static openssl/' configure.bak > configure
+  chmod --reference=configure.bak configure
+
+  ./configure --enable-ssl=shared --with-ssl=$BUILDROOT/$OPENSSL_INST_ROOT >> $APACHE_HTTPD_BUILDLOG
   if [ $? -ne 0 ]; then
     echo "Failed. Build log at $APACHE_HTTPD_BUILDLOG."
     do_cleanup

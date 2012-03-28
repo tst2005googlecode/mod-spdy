@@ -66,13 +66,19 @@ rm -rf "$RPM_BUILD_ROOT"
 %files
 %defattr(-,root,root)
 @@APACHE_MODULEDIR@@/mod_spdy.so
+@@APACHE_MODULEDIR@@/mod_ssl_with_npn.so
 %config(noreplace) @@APACHE_CONFDIR@@/spdy.conf
+%config @@APACHE_CONFDIR@@/load_ssl_with_npn.conf
 /etc/cron.daily/mod-spdy
 
 #------------------------------------------------------------------------------
 #   Pre install script
 #------------------------------------------------------------------------------
 %pre
+
+# Turn off loading of the normal mod_ssl.so:
+sed --in-place 's/^\(LoadModule.*\)$/#\1  # See load_ssl_with_npn.conf/' \
+    @@APACHE_CONFDIR@@/ssl.conf
 
 exit 0
 
@@ -157,6 +163,12 @@ fi
 #  remove_yast
 #  ;;
 #esac
+
+if [ "$mode" == "uninstall" ]; then
+  # Re-enable loading of the normal mod_ssl.so:
+  sed --in-place 's/^#\(LoadModule.*\)# See load_ssl_with_npn.conf$/\1/' \
+      @@APACHE_CONFDIR@@/ssl.conf
+fi
 
 exit 0
 
