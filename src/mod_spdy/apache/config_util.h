@@ -39,12 +39,14 @@ SpdyServerConfig* GetServerConfig(cmd_parms* command);
 // Allocate a new ConnectionContext object for a master connection in the given
 // connection's pool, attach it to the connection's config vector, and return
 // it.
-ConnectionContext* CreateMasterConnectionContext(conn_rec* connection);
+ConnectionContext* CreateMasterConnectionContext(conn_rec* connection,
+                                                 bool using_ssl);
 
 // Allocate a new ConnectionContext object for a slave connection in the given
 // connection's pool, attach it to the connection's config vector, and return
 // it.
 ConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
+                                                bool using_ssl,
                                                 SpdyStream* stream);
 
 // Get the connection object that was attached to this connection by

@@ -69,13 +69,16 @@ SpdyServerConfig* GetServerConfig(cmd_parms* command) {
   return GetServerConfigInternal(command->server);
 }
 
-ConnectionContext* CreateMasterConnectionContext(conn_rec* connection) {
-  return SetConnContextInternal(connection, new ConnectionContext());
+ConnectionContext* CreateMasterConnectionContext(conn_rec* connection,
+                                                 bool using_ssl) {
+  return SetConnContextInternal(connection, new ConnectionContext(using_ssl));
 }
 
 ConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
+                                                bool using_ssl,
                                                 SpdyStream* stream) {
-  return SetConnContextInternal(connection, new ConnectionContext(stream));
+  return SetConnContextInternal(connection,
+                                new ConnectionContext(using_ssl, stream));
 }
 
 ConnectionContext* GetConnectionContext(conn_rec* connection) {

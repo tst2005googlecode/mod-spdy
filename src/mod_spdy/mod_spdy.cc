@@ -352,8 +352,9 @@ int PreConnection(conn_rec* connection, void* csd) {
     // Check if this connection is over SSL; if not, we can't do NPN, so we
     // definitely won't be using SPDY (unless we're configured to assume SPDY
     // for non-SSL connections).
-    if (gIsUsingSslForConnection == NULL ||  // mod_ssl is not even loaded
-        gIsUsingSslForConnection(connection) == 0) {
+    const bool using_ssl = (gIsUsingSslForConnection != NULL &&
+                            gIsUsingSslForConnection(connection) != 0);
+    if (!using_ssl) {
       // This is not an SSL connection, so we can't talk SPDY on it _unless_ we
       // have opted to assume SPDY over non-SSL connections (presumably for
       // debugging purposes; this would normally break browsers).
@@ -367,7 +368,7 @@ int PreConnection(conn_rec* connection, void* csd) {
     // Okay, we've got a real connection over SSL, so we'll be negotiating with
     // the client to see if we can use SPDY for this connection.  Create our
     // connection context object to keep track of the negotiation.
-    context = mod_spdy::CreateMasterConnectionContext(connection);
+    context = mod_spdy::CreateMasterConnectionContext(connection, using_ssl);
     // If we're assuming SPDY, we don't even need to do the negotiation.
     if (assume_spdy) {
       context->set_assume_spdy(true);
@@ -648,12 +649,6 @@ int InsertProtocolFilters(request_rec* request) {
       request,                    // request object
       connection);                // connection object
 
-  // For the benefit of CGI scripts, which have no way of calling
-  // spdy_get_version(), set an environment variable indicating that this
-  // request is over SPDY (and what SPDY version is being used), allowing them
-  // to optimize the response for SPDY.
-  apr_table_setn(request->subprocess_env, kSpdyVersionEnvironmentVariable,
-                 kSpdyVersionNumberString);
   return OK;
 }
 
@@ -685,6 +680,42 @@ void InsertContentFilters(request_rec* request) {
       NULL,                       // context (any void* we want)
       request,                    // request object
       connection);                // connection object
+}
+
+int SetUpSubprocessEnv(request_rec* request) {
+  conn_rec* connection = request->connection;
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
+
+  // If mod_spdy is disabled on this server, then don't do anything.
+  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    return DECLINED;
+  }
+
+  // Don't do anything unless this is a slave connection.
+  const mod_spdy::ConnectionContext* context =
+      mod_spdy::GetConnectionContext(connection);
+  if (context == NULL || !context->is_slave()) {
+    return DECLINED;
+  }
+
+  // For the benefit of CGI scripts, which have no way of calling
+  // spdy_get_version(), set an environment variable indicating that this
+  // request is over SPDY (and what SPDY version is being used), allowing them
+  // to optimize the response for SPDY.
+  // See http://code.google.com/p/mod-spdy/issues/detail?id=27 for details.
+  apr_table_setn(request->subprocess_env, kSpdyVersionEnvironmentVariable,
+                 kSpdyVersionNumberString);
+
+  // Normally, mod_ssl sets the HTTPS environment variable to "on" for requests
+  // served over SSL.  We turn mod_ssl off for our slave connections, but those
+  // requests _are_ (usually) being served over SSL (via the master
+  // connection), so we set the variable ourselves if we are in fact using SSL.
+  // See http://code.google.com/p/mod-spdy/issues/detail?id=32 for details.
+  if (context->is_using_ssl()) {
+    apr_table_setn(request->subprocess_env, "HTTPS", "on");
+  }
+
+  return OK;
 }
 
 // Called when the module is loaded to register all of our hook functions.
@@ -782,6 +813,12 @@ void RegisterHooks(apr_pool_t* pool) {
       InsertContentFilters, NULL, NULL, APR_HOOK_MIDDLE);
   ap_hook_insert_error_filter(
       InsertContentFilters, NULL, NULL, APR_HOOK_MIDDLE);
+
+  // For the benefit of e.g. PHP/CGI scripts, we need to set various subprocess
+  // environment variables for each request served via SPDY.  Register a hook
+  // to do so; we use the fixup hook for this because that's the same hook that
+  // mod_ssl uses for setting its subprocess environment variables.
+  ap_hook_fixups(SetUpSubprocessEnv, NULL, NULL, APR_HOOK_MIDDLE);
 
   // Register a hook with mod_ssl to be called when deciding what protocols to
   // advertise during Next Protocol Negotiatiation (NPN); we'll use this

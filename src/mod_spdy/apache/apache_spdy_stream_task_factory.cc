@@ -45,7 +45,7 @@ namespace {
 class ApacheStreamTask : public net_instaweb::Function {
  public:
   // The task does not take ownership of the arguments.
-  ApacheStreamTask(const conn_rec* master_connection, SpdyStream* stream);
+  ApacheStreamTask(conn_rec* master_connection, SpdyStream* stream);
   virtual ~ApacheStreamTask() {}
 
  protected:
@@ -55,6 +55,7 @@ class ApacheStreamTask : public net_instaweb::Function {
 
  private:
   SpdyStream* const stream_;
+  const bool using_ssl_;
   LocalPool local_;
   conn_rec* const slave_connection_;  // allocated in local_.pool()
   apr_socket_t* slave_socket_;
@@ -62,9 +63,10 @@ class ApacheStreamTask : public net_instaweb::Function {
   DISALLOW_COPY_AND_ASSIGN(ApacheStreamTask);
 };
 
-ApacheStreamTask::ApacheStreamTask(const conn_rec* master_connection,
+ApacheStreamTask::ApacheStreamTask(conn_rec* master_connection,
                                    SpdyStream* stream)
     : stream_(stream),
+      using_ssl_(GetConnectionContext(master_connection)->is_using_ssl()),
       slave_connection_((conn_rec*)apr_pcalloc(local_.pool(),
                                                sizeof(conn_rec))),
       slave_socket_(NULL) {
@@ -142,7 +144,7 @@ void ApacheStreamTask::Run() {
     // this, and act accordingly, when they are called for the slave
     // connection.
     ConnectionContext* context = CreateSlaveConnectionContext(
-        slave_connection_, stream_);
+        slave_connection_, using_ssl_, stream_);
 
     // Normally, the core pre-connection hook sets the core module's connection
     // context to the socket passed to ap_process_connection; certain other
