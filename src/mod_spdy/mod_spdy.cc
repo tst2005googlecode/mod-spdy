@@ -226,15 +226,9 @@ int PostConfig(apr_pool_t* pconf, apr_pool_t* plog, apr_pool_t* ptemp,
   // Log a message indicating whether mod_spdy is enabled or not.  It's all too
   // easy to install mod_spdy and forget to turn it on, so this may be helpful
   // for debugging server behavior.
-  if (any_enabled) {
-    // TODO(mdsteele): Once mod_spdy is more stable, change this message and
-    //   downgrade from WARNING to INFO.
-    LOG(WARNING) << "mod_spdy is installed, and enabled on one or more "
-                 << "virtual hosts.  Please note that mod_spdy is still "
-                 << "beta, and may have stability issues.";
-  } else {
+  if (!any_enabled) {
     LOG(WARNING) << "mod_spdy is installed, but has not been enabled in the "
-                 << "Apache config; SPDY will not be used by this server.  "
+                 << "Apache config. SPDY will not be used by this server.  "
                  << "See http://code.google.com/p/mod-spdy/wiki/ConfigOptions "
                  << "for how to enable.";
   }
@@ -485,10 +479,13 @@ int ProcessConnection(conn_rec* connection) {
     // mod_ssl that doesn't support NPN, in which case we should probably warn
     // the user that mod_spdy isn't going to work.
     if (context->npn_state() == mod_spdy::ConnectionContext::NOT_DONE_YET) {
-      LOG(WARNING) <<
-          ("NPN didn't happen during SSL handshake.  Probably you're using an "
-           "unpatched mod_ssl that doesn't support NPN.  Without NPN support, "
-           "the server cannot ever use SPDY.");
+      LOG(WARNING)
+          << "NPN didn't happen during SSL handshake.  You're probably using "
+          << "a version of mod_ssl that doesn't support NPN. Without NPN "
+          << "support, the server cannot use SPDY. See "
+          << "http://code.google.com/p/mod-spdy/wiki/GettingStarted for more "
+          << "information on installing a version of mod_spdy with NPN "
+          << "support.";
     }
   }
 
