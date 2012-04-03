@@ -6,13 +6,23 @@
 
 action="$1"
 
-# If there's a backup of ssl.load, restore it (but first make sure that the
-# path we're moving to is either a regular file or doesn't exist).
-test -f /etc/apache2/mods-available/ssl.load.orig && \
-  test \( -f /etc/apache2/mods-available/ssl.load -o \
-         ! -e /etc/apache2/mods-available/ssl.load \) && \
-  mv /etc/apache2/mods-available/ssl.load.orig \
-     /etc/apache2/mods-available/ssl.load
+# Undo the changes to ssl.load we made in the preinst script.
+if [ -f "@@APACHE_CONFDIR@@/ssl.load" ]; then
+  # Don't do anything if we don't see the magic "MOD_SPDY" marker.  If it's not
+  # there, maybe the user already manually reverted ssl.load.
+  if grep -q 'MOD_SPDY' @@APACHE_CONFDIR@@/ssl.load; then
+    # First, we uncomment any line that starts with "#ORIG# " (we use that
+    # particular prefix, to reduce the chances that we break the file if the
+    # user has added their own comments to the file for some reason), up until
+    # we see the "MOD_SPDY" marker.  Second, we delete the line containing the
+    # "MOD_SPDY" marker and all lines thereafter, thus removing the stuff we
+    # appended to the file in the preinst script.
+    sed --in-place \
+      -e '1,/MOD_SPDY/ s/^#ORIG# \(.*\)$/\1/' \
+      -e '/MOD_SPDY/,$ d' \
+      @@APACHE_CONFDIR@@/ssl.load
+  fi
+fi
 
 # Only do complete clean-up on purge.
 if [ "$action" != "purge" ] ; then

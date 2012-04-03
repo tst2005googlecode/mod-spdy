@@ -28,12 +28,18 @@ class SpdyStream;
 class ConnectionContext {
  public:
   // Create a context object for a non-slave connection.
-  ConnectionContext();
+  explicit ConnectionContext(bool using_ssl);
   // Create a context object for a slave connection.  The context object does
   // _not_ take ownership of the stream object.
-  explicit ConnectionContext(SpdyStream* slave_stream);
+  ConnectionContext(bool using_ssl, SpdyStream* slave_stream);
 
   ~ConnectionContext();
+
+  // Return true if the connection to the user is over SSL.  This is almost
+  // always true, but may be false if we've been set to use SPDY for non-SSL
+  // connections (for debugging).  Note that for a slave connection, this
+  // refers to whether the master network connection is using SSL.
+  bool is_using_ssl() const { return using_ssl_; }
 
   // Return true if we are using SPDY for this connection, which is the case if
   // either 1) SPDY was chosen by NPN, or 2) we are assuming SPDY regardless of
@@ -76,6 +82,7 @@ class ConnectionContext {
   void set_assume_spdy(bool assume);
 
  private:
+  const bool using_ssl_;
   NpnState npn_state_;
   bool assume_spdy_;
   SpdyStream* const slave_stream_;

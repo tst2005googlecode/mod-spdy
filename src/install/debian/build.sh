@@ -74,9 +74,6 @@ stage_install_debian() {
   process_template "${BUILDDIR}/install/common/spdy.conf.template" \
     "${STAGEDIR}${APACHE_CONFDIR}/spdy.conf"
   chmod 644 "${STAGEDIR}${APACHE_CONFDIR}/spdy.conf"
-  process_template "${BUILDDIR}/install/common/ssl.load.template" \
-    "${STAGEDIR}${APACHE_CONFDIR}/ssl.load"
-  chmod 644 "${STAGEDIR}${APACHE_CONFDIR}/ssl.load"
 }
 
 # Build the deb file within a fakeroot.
@@ -226,7 +223,7 @@ cd "${OUTPUTDIR}"
 
 COMMON_DEPS="apache2.2-common"
 COMMON_PREDEPS="dpkg (>= 1.14.0)"
-REPLACES="apache2.2-common"
+REPLACES=""
 
 APACHE_MODULEDIR="/usr/lib/apache2/modules"
 APACHE_CONFDIR="/etc/apache2/mods-available"

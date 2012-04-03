@@ -18,13 +18,15 @@
 
 namespace mod_spdy {
 
-ConnectionContext::ConnectionContext()
-    : npn_state_(NOT_DONE_YET),
+ConnectionContext::ConnectionContext(bool using_ssl)
+    : using_ssl_(using_ssl),
+      npn_state_(NOT_DONE_YET),
       assume_spdy_(false),
       slave_stream_(NULL) {}
 
-ConnectionContext::ConnectionContext(SpdyStream* slave_stream)
-    : npn_state_(USING_SPDY),
+ConnectionContext::ConnectionContext(bool using_ssl, SpdyStream* slave_stream)
+    : using_ssl_(using_ssl),
+      npn_state_(USING_SPDY),
       assume_spdy_(false),
       slave_stream_(slave_stream) {}
 
