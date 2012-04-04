@@ -160,6 +160,11 @@ if [ ! -f "$PROGRESS_DIR/openssl_built" ]; then
     echo "Failed. Build log at $OPENSSL_BUILDLOG."
     do_cleanup
   fi
+  # A hacky fix that helps things build on CentOS:
+  if grep -q CentOS /etc/issue; then
+    sed --in-place 's/^Libs\.private: -ldl$/& -lcrypto/' \
+      $BUILDROOT/$OPENSSL_INST_ROOT/lib/pkgconfig/openssl.pc
+  fi
   echo "done"
   popd >/dev/null  # $OPENSSL_SRC_ROOT
   touch "$PROGRESS_DIR/openssl_built"
