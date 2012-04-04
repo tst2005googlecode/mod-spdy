@@ -1,18 +1,19 @@
 #!/bin/sh
 
-case "$1" in
-    install)
-        # When we first install mod_spdy, modify ssl.load.
-        if [ -f "@@APACHE_CONFDIR@@/ssl.load" ]; then
-          if ! grep -q 'MOD_SPDY' @@APACHE_CONFDIR@@/ssl.load; then
-            # First, comment out all lines in the file, using a special prefix.
-            # We will look for that prefix later when we uninstall.
-            sed --in-place 's/^.*$/#ORIG# &/' @@APACHE_CONFDIR@@/ssl.load
-            # Next, append a new LoadModule line to the file, with some
-            # explanitory comments.  The first line we append contains the
-            # magic marker "MOD_SPDY", which we look for in the postrm script
-            # so that we can remove the below text when we uninstall.
-            cat >> @@APACHE_CONFDIR@@/ssl.load <<EOF
+# When we install mod_spdy, modify ssl.load.  Note that if we upgrade mod-spdy,
+# the old package's postrm will first get called, which will undo changes to
+# ssl.load, and then we'll redo them here.  This is good, in case we ever need
+# to change the way we modify ssl.load.
+if [ -f "@@APACHE_CONFDIR@@/ssl.load" ]; then
+  if ! grep -q 'MOD_SPDY' @@APACHE_CONFDIR@@/ssl.load; then
+    # First, comment out all lines in the file, using a special prefix.  We
+    # will look for that prefix later when we uninstall.
+    sed --in-place 's/^.*$/#ORIG# &/' @@APACHE_CONFDIR@@/ssl.load
+    # Next, append a new LoadModule line to the file, with some explanitory
+    # comments.  The first line we append contains the magic marker "MOD_SPDY",
+    # which we look for in the postrm script so that we can remove the below
+    # text when we uninstall.
+    cat >> @@APACHE_CONFDIR@@/ssl.load <<EOF
 ########## MOD_SPDY CHANGES BELOW ##########
 # If mod_spdy is uninstalled, this file will be restored to its original form
 # by deleting everything below here and uncommenting everything above.
@@ -25,15 +26,7 @@ case "$1" in
 
 LoadModule ssl_module @@APACHE_MODULEDIR@@/mod_ssl_with_npn.so
 EOF
-          fi
-        fi
-    ;;
-    upgrade|abort-upgrade)
-    ;;
-    *)
-        echo "preinst called with unknown argument \`$1'" >&2
-        exit 1
-    ;;
-esac
+  fi
+fi
 
 exit 0
