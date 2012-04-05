@@ -76,14 +76,7 @@ rm -rf "$RPM_BUILD_ROOT"
 #------------------------------------------------------------------------------
 %pre
 
-# Turn off loading of the normal mod_ssl.so:
-sed --in-place 's/^\(LoadModule.*\)$/#\1  # See load_ssl_with_npn.conf/' \
-    @@APACHE_CONFDIR@@/ssl.conf
-
 exit 0
-
-
-
 
 #------------------------------------------------------------------------------
 #   Post install script
@@ -131,6 +124,11 @@ service atd start
 echo "sh /etc/cron.daily/@@PACKAGE@@" | at now + 2 minute
 fi
 
+# Turn off loading of the normal mod_ssl.so:
+sed --in-place \
+  's/^ *LoadModule \+ssl_module .*$/#& # See load_ssl_with_npn.conf/' \
+  @@APACHE_CONFDIR@@/ssl.conf
+
 exit 0
 
 
@@ -166,8 +164,9 @@ fi
 
 if [ "$mode" == "uninstall" ]; then
   # Re-enable loading of the normal mod_ssl.so:
-  sed --in-place 's/^#\(LoadModule.*\)# See load_ssl_with_npn.conf$/\1/' \
-      @@APACHE_CONFDIR@@/ssl.conf
+  sed --in-place \
+    's/^#\( *LoadModule.*[^ ]\) *# See load_ssl_with_npn.conf$/\1/' \
+    @@APACHE_CONFDIR@@/ssl.conf
 fi
 
 exit 0
