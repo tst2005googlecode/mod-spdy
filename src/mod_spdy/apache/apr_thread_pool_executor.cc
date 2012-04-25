@@ -20,7 +20,7 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/stl_util-inl.h"
+#include "base/stl_util.h"
 #include "base/synchronization/lock.h"
 #include "mod_spdy/apache/pool_util.h"  // for AprStatusString
 #include "net/instaweb/util/public/function.h"
@@ -30,7 +30,7 @@ namespace {
 
 // Given a SpdyPriority value, pick an appropriate priority value to pass into
 // apr_thread_pool_push().
-apr_byte_t SpdyPriorityToAprPriority(spdy::SpdyPriority priority) {
+apr_byte_t SpdyPriorityToAprPriority(net::SpdyPriority priority) {
   COMPILE_ASSERT(SPDY_PRIORITY_HIGHEST == 0, zero_is_highest_priority);
   COMPILE_ASSERT(SPDY_PRIORITY_LOWEST == 3, three_is_lowest_priority);
   switch (priority) {
@@ -62,7 +62,7 @@ AprThreadPoolExecutor::~AprThreadPoolExecutor() {
 }
 
 void AprThreadPoolExecutor::AddTask(net_instaweb::Function* task,
-                                    spdy::SpdyPriority priority) {
+                                    net::SpdyPriority priority) {
   base::AutoLock autolock(lock_);
 
   // If we have stopped this executor, then cancel the task immediately and

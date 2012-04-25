@@ -59,6 +59,8 @@
 
 namespace {
 
+const int kSpdyVersion = 2;
+
 const char* kModSpdyVersion = MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
 
 // This is the number of bytes we want to send per data frame.  We never send
@@ -74,6 +76,7 @@ namespace mod_spdy {
 
 HttpToSpdyFilter::HttpToSpdyFilter(SpdyStream* stream)
     : stream_(stream),
+      framer_(kSpdyVersion),
       headers_have_been_sent_(false),
       end_of_stream_reached_(false) {
   DCHECK(stream_ != NULL);
@@ -284,11 +287,11 @@ void HttpToSpdyFilter::Send(ap_filter_t* filter, bool flush) {
 
 void HttpToSpdyFilter::SendHeaders(const HeaderPopulatorInterface& populator,
                                    bool flag_fin) {
-  spdy::SpdyHeaderBlock headers;
+  net::SpdyHeaderBlock headers;
   populator.Populate(&headers);
   headers[http::kXModSpdy] = kModSpdyVersion;
-  const spdy::SpdyControlFlags flags =
-      flag_fin ? spdy::CONTROL_FLAG_FIN : spdy::CONTROL_FLAG_NONE;
+  const net::SpdyControlFlags flags =
+      flag_fin ? net::CONTROL_FLAG_FIN : net::CONTROL_FLAG_NONE;
   // Don't compress the headers in the frame here; it will be compressed later
   // by the master connection (which maintains the shared header compression
   // state for all streams).
@@ -296,8 +299,9 @@ void HttpToSpdyFilter::SendHeaders(const HeaderPopulatorInterface& populator,
     stream_->SendOutputFrame(framer_.CreateSynStream(
         stream_->stream_id(), stream_->associated_stream_id(),
         stream_->priority(),
-        static_cast<spdy::SpdyControlFlags>(
-            flags | spdy::CONTROL_FLAG_UNIDIRECTIONAL),
+        0,  // 0 = no credential slot
+        static_cast<net::SpdyControlFlags>(
+            flags | net::CONTROL_FLAG_UNIDIRECTIONAL),
         false,  // false = don't use compression
         &headers));
   } else {
@@ -312,8 +316,8 @@ void HttpToSpdyFilter::SendData(const char* data, size_t size, bool flag_fin) {
   // TODO(mdsteele): Once we support SPDY v3 (and if the DATA frame
   //   comprsession feature hasn't been removed), we may want to consider doing
   //   that compression here rather than in the master connection.
-  const spdy::SpdyDataFlags flags =
-      flag_fin ? spdy::DATA_FLAG_FIN : spdy::DATA_FLAG_NONE;
+  const net::SpdyDataFlags flags =
+      flag_fin ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
   stream_->SendOutputFrame(framer_.CreateDataFrame(
       stream_->stream_id(), data, size, flags));
 }

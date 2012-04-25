@@ -21,7 +21,8 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "mod_spdy/apache/pool_util.h"  // for AprStatusString
-#include "net/spdy/spdy_framer.h"
+#include "mod_spdy/common/protocol_util.h"  // for FrameData
+#include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
@@ -49,7 +50,7 @@ bool ApacheSpdySessionIO::IsConnectionAborted() {
 }
 
 SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
-    bool block, spdy::SpdyFramer* framer) {
+    bool block, net::BufferedSpdyFramer* framer) {
   const apr_read_type_e read_type = block ? APR_BLOCK_READ : APR_NONBLOCK_READ;
 
   // Make sure the input brigade we're using is empty.
@@ -141,7 +142,7 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
 }
 
 SpdySessionIO::WriteStatus ApacheSpdySessionIO::SendFrameRaw(
-    const spdy::SpdyFrame& frame) {
+    const net::SpdyFrame& frame) {
   // Make sure the output brigade we're using is empty.
   if (!APR_BRIGADE_EMPTY(output_brigade_)) {
     LOG(DFATAL) << "output_brigade_ should be empty";
@@ -149,10 +150,9 @@ SpdySessionIO::WriteStatus ApacheSpdySessionIO::SendFrameRaw(
   }
 
   // Put the frame data into the output brigade.
-  const char* data = frame.data();
-  const apr_size_t size = spdy::SpdyFrame::size() + frame.length();
+  const base::StringPiece data = FrameData(frame);
   APR_BRIGADE_INSERT_TAIL(output_brigade_, apr_bucket_transient_create(
-      data, size, output_brigade_->bucket_alloc));
+      data.data(), data.size(), output_brigade_->bucket_alloc));
 
   // Append a flush bucket to the end of the brigade, to make sure that this
   // frame makes it all the way out to the client.

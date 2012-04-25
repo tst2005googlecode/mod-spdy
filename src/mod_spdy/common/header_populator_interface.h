@@ -19,10 +19,7 @@
 #include <string>
 
 #include "base/basictypes.h"
-
-namespace spdy {
-typedef std::map<std::string, std::string> SpdyHeaderBlock;
-}  // namespace spdy
+#include "net/spdy/spdy_framer.h"  // for SpdyHeaderBlock typedef
 
 namespace mod_spdy {
 
@@ -33,12 +30,12 @@ class HeaderPopulatorInterface {
   virtual ~HeaderPopulatorInterface() {}
 
   // Given an empty header table, populate it.
-  virtual void Populate(spdy::SpdyHeaderBlock* headers) const = 0;
+  virtual void Populate(net::SpdyHeaderBlock* headers) const = 0;
 
   // Add a header to a header table, merging if necessary.
   static void MergeInHeader(const std::string& key,
                             const std::string& value,
-                            spdy::SpdyHeaderBlock* headers);
+                            net::SpdyHeaderBlock* headers);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(HeaderPopulatorInterface);

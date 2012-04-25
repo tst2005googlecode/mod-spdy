@@ -19,9 +19,9 @@
 
 namespace mod_spdy {
 
-SpdyStream::SpdyStream(spdy::SpdyStreamId stream_id,
-                       spdy::SpdyStreamId associated_stream_id,
-                       spdy::SpdyPriority priority,
+SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
+                       net::SpdyStreamId associated_stream_id,
+                       net::SpdyPriority priority,
                        SpdyFramePriorityQueue* output_queue)
     : stream_id_(stream_id),
       associated_stream_id_(associated_stream_id),
@@ -44,15 +44,15 @@ void SpdyStream::Abort() {
   input_queue_.Abort();
 }
 
-void SpdyStream::PostInputFrame(spdy::SpdyFrame* frame) {
+void SpdyStream::PostInputFrame(net::SpdyFrame* frame) {
   input_queue_.Insert(frame);
 }
 
-bool SpdyStream::GetInputFrame(bool block, spdy::SpdyFrame** frame) {
+bool SpdyStream::GetInputFrame(bool block, net::SpdyFrame** frame) {
   return input_queue_.Pop(block, frame);
 }
 
-void SpdyStream::SendOutputFrame(spdy::SpdyFrame* frame) {
+void SpdyStream::SendOutputFrame(net::SpdyFrame* frame) {
   output_queue_->Insert(priority_, frame);
 }
 

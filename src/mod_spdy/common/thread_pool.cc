@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "base/basictypes.h"
-#include "base/scoped_ptr.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
@@ -49,7 +49,7 @@ class ThreadPool::ThreadPoolExecutor : public Executor {
 
   // Executor methods:
   virtual void AddTask(net_instaweb::Function* task,
-                       spdy::SpdyPriority priority);
+                       net::SpdyPriority priority);
   virtual void Stop();
 
  private:
@@ -64,7 +64,7 @@ class ThreadPool::ThreadPoolExecutor : public Executor {
 // Add a task to the executor; if the executor has already been stopped, just
 // cancel the task immediately.
 void ThreadPool::ThreadPoolExecutor::AddTask(net_instaweb::Function* task,
-                                             spdy::SpdyPriority priority) {
+                                             net::SpdyPriority priority) {
   {
     base::AutoLock autolock(master_->lock_);
     // If the executor hasn't been stopped, add the task to the queue and

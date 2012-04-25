@@ -20,60 +20,68 @@
 
 namespace {
 
+const int kSpdyVersion = 2;
+
+net::SpdyStreamId GetPingId(net::SpdyFrame* frame) {
+  if (!frame->is_control_frame() ||
+      static_cast<net::SpdyControlFrame*>(frame)->type() != net::PING) {
+    ADD_FAILURE() << "Frame is not a PING frame.";
+    return 0;
+  }
+  return static_cast<net::SpdyPingControlFrame*>(frame)->unique_id();
+}
+
+void ExpectPop(net::SpdyStreamId expected, mod_spdy::SpdyFrameQueue* queue) {
+  net::SpdyFrame* raw_frame = NULL;
+  const bool success = queue->Pop(false, &raw_frame);
+  scoped_ptr<net::SpdyFrame> scoped_frame(raw_frame);
+  EXPECT_TRUE(success);
+  ASSERT_TRUE(scoped_frame != NULL);
+  ASSERT_EQ(expected, GetPingId(scoped_frame.get()));
+}
+
+void ExpectEmpty(mod_spdy::SpdyFrameQueue* queue) {
+  net::SpdyFrame* frame = NULL;
+  EXPECT_FALSE(queue->Pop(false, &frame));
+  EXPECT_TRUE(frame == NULL);
+}
+
 TEST(SpdyFrameQueueTest, Simple) {
+  net::SpdyFramer framer(kSpdyVersion);
   mod_spdy::SpdyFrameQueue queue;
-  spdy::SpdyFrame* frame;
-  ASSERT_FALSE(queue.Pop(false, &frame));
+  ExpectEmpty(&queue);
 
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(4));
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(1));
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(3));
+  queue.Insert(framer.CreatePingFrame(4));
+  queue.Insert(framer.CreatePingFrame(1));
+  queue.Insert(framer.CreatePingFrame(3));
 
-  ASSERT_TRUE(queue.Pop(false, &frame));
-  ASSERT_EQ(4, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
-            last_accepted_stream_id());
-  delete frame;
-  ASSERT_TRUE(queue.Pop(false, &frame));
-  ASSERT_EQ(1, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
-            last_accepted_stream_id());
-  delete frame;
+  ExpectPop(4, &queue);
+  ExpectPop(1, &queue);
 
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(2));
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(5));
+  queue.Insert(framer.CreatePingFrame(2));
+  queue.Insert(framer.CreatePingFrame(5));
 
-  ASSERT_TRUE(queue.Pop(false, &frame));
-  ASSERT_EQ(3, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
-            last_accepted_stream_id());
-  delete frame;
-  ASSERT_TRUE(queue.Pop(false, &frame));
-  ASSERT_EQ(2, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
-            last_accepted_stream_id());
-  delete frame;
-  ASSERT_TRUE(queue.Pop(false, &frame));
-  ASSERT_EQ(5, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
-            last_accepted_stream_id());
-  delete frame;
-  ASSERT_FALSE(queue.Pop(false, &frame));
+  ExpectPop(3, &queue);
+  ExpectPop(2, &queue);
+  ExpectPop(5, &queue);
+  ExpectEmpty(&queue);
 }
 
 TEST(SpdyFrameQueueTest, AbortEmptiesQueue) {
+  net::SpdyFramer framer(kSpdyVersion);
   mod_spdy::SpdyFrameQueue queue;
-  spdy::SpdyFrame* frame;
   ASSERT_FALSE(queue.is_aborted());
-  ASSERT_FALSE(queue.Pop(false, &frame));
+  ExpectEmpty(&queue);
 
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(4));
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(1));
-  queue.Insert(spdy::SpdyFramer::CreateGoAway(3));
+  queue.Insert(framer.CreatePingFrame(4));
+  queue.Insert(framer.CreatePingFrame(1));
+  queue.Insert(framer.CreatePingFrame(3));
 
-  ASSERT_TRUE(queue.Pop(false, &frame));
-  ASSERT_EQ(4, static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
-            last_accepted_stream_id());
-  delete frame;
+  ExpectPop(4, &queue);
 
   queue.Abort();
 
-  ASSERT_FALSE(queue.Pop(false, &frame));
+  ExpectEmpty(&queue);
   ASSERT_TRUE(queue.is_aborted());
 }
 

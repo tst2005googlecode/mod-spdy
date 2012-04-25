@@ -23,6 +23,7 @@
 #include "base/basictypes.h"
 #include "mod_spdy/common/http_string_builder.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
+#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
@@ -57,14 +58,15 @@ class SpdyToHttpFilter {
 
   // Pass the given frame to the SpdyToHttpConverter, and deal with the return
   // code appropriately.
-  bool DecodeSynStreamFrame(const spdy::SpdySynStreamControlFrame& frame);
-  bool DecodeHeadersFrame(const spdy::SpdyHeadersControlFrame& frame);
-  bool DecodeDataFrame(const spdy::SpdyDataFrame& frame);
+  bool DecodeSynStreamFrame(const net::SpdySynStreamControlFrame& frame);
+  bool DecodeHeadersFrame(const net::SpdyHeadersControlFrame& frame);
+  bool DecodeDataFrame(const net::SpdyDataFrame& frame);
 
   // Send a RST_STREAM frame and abort the stream.
-  void AbortStream(spdy::SpdyStatusCodes status);
+  void AbortStream(net::SpdyStatusCodes status);
 
   SpdyStream* const stream_;
+  net::SpdyFramer framer_;
   std::string data_buffer_;
   HttpStringBuilder visitor_;
   SpdyToHttpConverter converter_;

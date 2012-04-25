@@ -19,9 +19,9 @@
 #include "base/logging.h"
 #include "base/string_number_conversions.h"
 #include "base/string_piece.h"
+#include "base/string_util.h"
 #include "mod_spdy/common/http_response_visitor_interface.h"
 #include "mod_spdy/common/protocol_util.h"
-#include "net/instaweb/util/public/string_util.h"
 
 namespace {
 
@@ -329,15 +329,15 @@ bool HttpResponseParser::ParseLeadingHeader(const base::StringPiece& text) {
 
   // We need to check the Content-Length and Transfer-Encoding headers to know
   // if we're using chunking, and if not, how long the body is.
-  if (net_instaweb::StringCaseEqual(key, http::kTransferEncoding)) {
+  if (LowerCaseEqualsASCII(key.begin(), key.end(), http::kTransferEncoding)) {
     if (value == http::kChunked) {
       body_type_ = CHUNKED_BODY;
     }
   } else if (body_type_ != CHUNKED_BODY &&
-             net_instaweb::StringCaseEqual(key, http::kContentLength)) {
+             LowerCaseEqualsASCII(key.begin(), key.end(),
+                                  http::kContentLength)) {
     int int_value = 0;
-    if (base::StringToInt(value.data(), value.data() + value.size(),
-                          &int_value) && int_value > 0) {
+    if (base::StringToInt(value, &int_value) && int_value > 0) {
       remaining_bytes_ = static_cast<size_t>(int_value);
       body_type_ = UNCHUNKED_BODY;
     } else {
@@ -357,7 +357,7 @@ bool HttpResponseParser::ParseChunkStart(const base::StringPiece& text) {
   const size_t length =
       NposToEnd(text, text.find_first_not_of("0123456789abcdefABCDEF"));
   int int_value = 0;
-  if (!base::HexStringToInt(text.data(), text.data() + length, &int_value) ||
+  if (!base::HexStringToInt(text.substr(0, length), &int_value) ||
       int_value < 0) {
     VLOG(1) << "Bad chunk line: " << text;
     return false;

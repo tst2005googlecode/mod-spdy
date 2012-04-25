@@ -26,48 +26,50 @@
 
 namespace {
 
-spdy::SpdyStreamId LastStreamId(spdy::SpdyFrame* frame) {
+const int kSpdyVersion = 2;
+
+net::SpdyStreamId GetPingId(net::SpdyFrame* frame) {
   if (!frame->is_control_frame() ||
-      static_cast<spdy::SpdyControlFrame*>(frame)->type() != spdy::GOAWAY) {
-    ADD_FAILURE() << "Frame is not a GOAWAY frame.";
+      static_cast<net::SpdyControlFrame*>(frame)->type() != net::PING) {
+    ADD_FAILURE() << "Frame is not a PING frame.";
     return 0;
   }
-  return static_cast<spdy::SpdyGoAwayControlFrame*>(frame)->
-      last_accepted_stream_id();
+  return static_cast<net::SpdyPingControlFrame*>(frame)->unique_id();
 }
 
-void ExpectPop(spdy::SpdyStreamId expected,
+void ExpectPop(net::SpdyStreamId expected,
                mod_spdy::SpdyFramePriorityQueue* queue) {
   EXPECT_FALSE(queue->IsEmpty());
-  spdy::SpdyFrame* raw_frame = NULL;
+  net::SpdyFrame* raw_frame = NULL;
   const bool success = queue->Pop(&raw_frame);
-  scoped_ptr<spdy::SpdyFrame> scoped_frame(raw_frame);
+  scoped_ptr<net::SpdyFrame> scoped_frame(raw_frame);
   EXPECT_TRUE(success);
   ASSERT_TRUE(scoped_frame != NULL);
-  ASSERT_EQ(expected, LastStreamId(scoped_frame.get()));
+  ASSERT_EQ(expected, GetPingId(scoped_frame.get()));
 }
 
 void ExpectEmpty(mod_spdy::SpdyFramePriorityQueue* queue) {
   EXPECT_TRUE(queue->IsEmpty());
-  spdy::SpdyFrame* frame = NULL;
+  net::SpdyFrame* frame = NULL;
   EXPECT_FALSE(queue->Pop(&frame));
   EXPECT_TRUE(frame == NULL);
 }
 
 TEST(SpdyFramePriorityQueueTest, Simple) {
+  net::SpdyFramer framer(kSpdyVersion);
   mod_spdy::SpdyFramePriorityQueue queue;
   ExpectEmpty(&queue);
 
-  queue.Insert(SPDY_PRIORITY_LOWEST, spdy::SpdyFramer::CreateGoAway(4));
-  queue.Insert(SPDY_PRIORITY_HIGHEST, spdy::SpdyFramer::CreateGoAway(1));
-  queue.Insert(SPDY_PRIORITY_LOWEST, spdy::SpdyFramer::CreateGoAway(3));
+  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(4));
+  queue.Insert(SPDY_PRIORITY_HIGHEST, framer.CreatePingFrame(1));
+  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(3));
 
   ExpectPop(1, &queue);
   ExpectPop(4, &queue);
 
-  queue.Insert(SPDY_PRIORITY_MIDLOW, spdy::SpdyFramer::CreateGoAway(2));
-  queue.Insert(SPDY_PRIORITY_MIDHIGH, spdy::SpdyFramer::CreateGoAway(6));
-  queue.Insert(SPDY_PRIORITY_MIDHIGH, spdy::SpdyFramer::CreateGoAway(5));
+  queue.Insert(SPDY_PRIORITY_MIDLOW, framer.CreatePingFrame(2));
+  queue.Insert(SPDY_PRIORITY_MIDHIGH, framer.CreatePingFrame(6));
+  queue.Insert(SPDY_PRIORITY_MIDHIGH, framer.CreatePingFrame(5));
 
   ExpectPop(6, &queue);
   ExpectPop(5, &queue);
@@ -77,21 +79,22 @@ TEST(SpdyFramePriorityQueueTest, Simple) {
 }
 
 TEST(SpdyFramePriorityQueueTest, InsertFront) {
+  net::SpdyFramer framer(kSpdyVersion);
   mod_spdy::SpdyFramePriorityQueue queue;
   ExpectEmpty(&queue);
 
-  queue.Insert(SPDY_PRIORITY_LOWEST, spdy::SpdyFramer::CreateGoAway(4));
-  queue.InsertFront(spdy::SpdyFramer::CreateGoAway(2));
-  queue.InsertFront(spdy::SpdyFramer::CreateGoAway(6));
-  queue.Insert(SPDY_PRIORITY_HIGHEST, spdy::SpdyFramer::CreateGoAway(1));
-  queue.Insert(SPDY_PRIORITY_LOWEST, spdy::SpdyFramer::CreateGoAway(3));
+  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(4));
+  queue.InsertFront(framer.CreatePingFrame(2));
+  queue.InsertFront(framer.CreatePingFrame(6));
+  queue.Insert(SPDY_PRIORITY_HIGHEST, framer.CreatePingFrame(1));
+  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(3));
 
   ExpectPop(6, &queue);
   ExpectPop(2, &queue);
   ExpectPop(1, &queue);
   ExpectPop(4, &queue);
 
-  queue.InsertFront(spdy::SpdyFramer::CreateGoAway(5));
+  queue.InsertFront(framer.CreatePingFrame(5));
 
   ExpectPop(5, &queue);
   ExpectPop(3, &queue);
@@ -100,7 +103,7 @@ TEST(SpdyFramePriorityQueueTest, InsertFront) {
 
 TEST(SpdyFramePriorityQueueTest, BlockingPop) {
   mod_spdy::SpdyFramePriorityQueue queue;
-  spdy::SpdyFrame* frame;
+  net::SpdyFrame* frame;
   ASSERT_FALSE(queue.Pop(&frame));
 
   const base::TimeDelta time_to_wait = base::TimeDelta::FromMilliseconds(50);

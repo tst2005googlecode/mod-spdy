@@ -45,13 +45,13 @@ class SpdyFramePriorityQueue {
   // Insert a frame into the queue at the specified priority.  The queue takes
   // ownership of the frame, and will delete it if the queue is deleted before
   // the frame is removed from the queue by the Pop method.
-  void Insert(spdy::SpdyPriority priority, spdy::SpdyFrame* frame);
+  void Insert(net::SpdyPriority priority, net::SpdyFrame* frame);
 
   // Insert a frame at the *front* of the queue; it will be popped out before
   // any other frame currently in the queue, regardless of priority.  The queue
   // takes ownership of the frame, and will delete it if the queue is deleted
   // before the frame is removed from the queue by the Pop method.
-  void InsertFront(spdy::SpdyFrame* frame);
+  void InsertFront(net::SpdyFrame* frame);
 
   // Remove and provide a frame from the queue and return true, or return false
   // if the queue is empty.  The caller gains ownership of the provided frame
@@ -61,19 +61,19 @@ class SpdyFramePriorityQueue {
   // In particular, this means that a sequence of frames from the same SPDY
   // stream will stay in order (assuming they were all inserted with the same
   // priority -- that of the stream).
-  bool Pop(spdy::SpdyFrame** frame);
+  bool Pop(net::SpdyFrame** frame);
 
   // Like Pop(), but if the queue is empty this method will block for up to
   // max_time before returning false.
-  bool BlockingPop(const base::TimeDelta& max_time, spdy::SpdyFrame** frame);
+  bool BlockingPop(const base::TimeDelta& max_time, net::SpdyFrame** frame);
 
  private:
   mutable base::Lock lock_;
   base::ConditionVariable condvar_;
-  std::list<spdy::SpdyFrame*> p0_queue_;
-  std::list<spdy::SpdyFrame*> p1_queue_;
-  std::list<spdy::SpdyFrame*> p2_queue_;
-  std::list<spdy::SpdyFrame*> p3_queue_;
+  std::list<net::SpdyFrame*> p0_queue_;
+  std::list<net::SpdyFrame*> p1_queue_;
+  std::list<net::SpdyFrame*> p2_queue_;
+  std::list<net::SpdyFrame*> p3_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyFramePriorityQueue);
 };

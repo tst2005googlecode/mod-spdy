@@ -97,6 +97,13 @@
           'os_posix%': 1,
         }],
 
+        # A flag for BSD platforms
+        ['OS=="freebsd" or OS=="openbsd"', {
+          'os_bsd%': 1,
+        }, {
+          'os_bsd%': 0,
+        }],
+
         # Set to 1 compile with -fPIC cflag on linux. This is a must for shared
         # libraries on linux x86-64 and arm.
         ['host_arch=="ia32"', {
@@ -112,6 +119,7 @@
     'target_arch%': '<(target_arch)',
     'host_arch%': '<(host_arch)',
     'library%': 'static_library',
+    'os_bsd%': '<(os_bsd)',
     'os_posix%': '<(os_posix)',
     'linux_fpic%': '<(linux_fpic)',
     'python_ver%': '<(python_ver)',
@@ -570,22 +578,6 @@
                 'cflags!': [
                   '-fno-ident',
                 ],
-              }],
-              # At gyp time, we test the linker for ICF support; this flag
-              # is then provided to us by gyp.  (Currently only gold supports
-              # an --icf flag.)
-              # There seems to be a conflict of --icf and -pie in gold which
-              # can generate crashy binaries. As a security measure, -pie
-              # takes precendence for now.
-              ['LINKER_SUPPORTS_ICF==1', {
-                'target_conditions': [
-                  ['_toolset=="target"', {
-                    'ldflags': [
-                      #'-Wl,--icf=safe',
-                      '-Wl,--icf=none',
-                    ]
-                  }]
-                ]
               }],
             ]
           },

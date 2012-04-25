@@ -16,8 +16,7 @@
 #define MOD_SPDY_COMMON_HTTP_RESPONSE_VISITOR_INTERFACE_H_
 
 #include "base/basictypes.h"
-
-namespace base { class StringPiece; }
+#include "base/string_piece.h"
 
 namespace mod_spdy {
 

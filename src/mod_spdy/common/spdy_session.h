@@ -25,7 +25,7 @@
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "net/instaweb/util/public/function.h"
-#include "net/spdy/spdy_framer.h"
+#include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
@@ -39,7 +39,7 @@ class SpdyStreamTaskFactory;
 // individual SPDY streams, and a SpdySessionIO for communicating with the
 // client (sending and receiving frames), this class takes care of implementing
 // the SPDY protocol and responding correctly to various situations.
-class SpdySession : public spdy::SpdyFramerVisitorInterface {
+class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
  public:
   // The SpdySession does _not_ take ownership of any of these arguments.
   SpdySession(const SpdyServerConfig* config,
@@ -51,12 +51,23 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
   // Process the session; don't return until the session is finished.
   void Run();
 
-  // SpdyFramerVisitorInterface interface (note that we do _not_ take ownership
-  // of any of the arguments of these methods):
-  virtual void OnError(spdy::SpdyFramer* framer);
-  virtual void OnControl(const spdy::SpdyControlFrame* frame);
-  virtual void OnStreamFrameData(spdy::SpdyStreamId stream_id,
-                                 const char* data, size_t length);
+  // BufferedSpdyFramerVisitorInterface methods:
+  virtual void OnError(int error_code);
+  virtual void OnStreamError(net::SpdyStreamId stream_id,
+                             const std::string& description);
+  virtual void OnSynStream(const net::SpdySynStreamControlFrame& frame,
+                           const linked_ptr<net::SpdyHeaderBlock>& headers);
+  virtual void OnSynReply(const net::SpdySynReplyControlFrame& frame,
+                          const linked_ptr<net::SpdyHeaderBlock>& headers);
+  virtual void OnHeaders(const net::SpdyHeadersControlFrame& frame,
+                         const linked_ptr<net::SpdyHeaderBlock>& headers);
+  virtual void OnRstStream(const net::SpdyRstStreamControlFrame& frame);
+  virtual void OnGoAway(const net::SpdyGoAwayControlFrame& frame);
+  virtual void OnPing(const net::SpdyPingControlFrame& frame);
+  virtual void OnWindowUpdate(const net::SpdyWindowUpdateControlFrame& frame);
+  virtual void OnStreamFrameData(net::SpdyStreamId stream_id,
+                                 const char* data, size_t len);
+  virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value);
 
  private:
   // A helper class for wrapping tasks returned by
@@ -69,9 +80,9 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
     // This constructor, called by the main connection thread, will call
     // task_factory_->NewStreamTask() to produce the wrapped task.
     StreamTaskWrapper(SpdySession* spdy_session,
-                      spdy::SpdyStreamId stream_id,
-                      spdy::SpdyStreamId associated_stream_id,
-                      spdy::SpdyPriority priority);
+                      net::SpdyStreamId stream_id,
+                      net::SpdyStreamId associated_stream_id,
+                      net::SpdyPriority priority);
     virtual ~StreamTaskWrapper();
 
     SpdyStream* stream() { return &stream_; }
@@ -90,39 +101,29 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
     DISALLOW_COPY_AND_ASSIGN(StreamTaskWrapper);
   };
 
-  typedef std::map<spdy::SpdyStreamId, StreamTaskWrapper*> SpdyStreamMap;
-
-  // Handlers for specific types of control frames, dispatched from OnControl.
-  // Note that these methods do _not_ gain ownership of the passed frame.
-  void HandleSynStream(const spdy::SpdySynStreamControlFrame& frame);
-  void HandleSynReply(const spdy::SpdySynReplyControlFrame& frame);
-  void HandleRstStream(const spdy::SpdyRstStreamControlFrame& frame);
-  void HandleSettings(const spdy::SpdySettingsControlFrame& frame);
-  void HandlePing(const spdy::SpdyControlFrame& frame);
-  void HandleGoAway(const spdy::SpdyGoAwayControlFrame& frame);
-  void HandleHeaders(const spdy::SpdyHeadersControlFrame& frame);
+  typedef std::map<net::SpdyStreamId, StreamTaskWrapper*> SpdyStreamMap;
 
   // Send a single SPDY frame to the client, compressing it first if necessary.
   // Stop the session if the connection turns out to be closed.  This method
   // takes ownership of the passed frame and will delete it.
-  void SendFrame(const spdy::SpdyFrame* frame);
+  void SendFrame(const net::SpdyFrame* frame);
   // Send the frame as-is (without taking ownership).  Stop the session if the
   // connection turns out to be closed.
-  void SendFrameRaw(const spdy::SpdyFrame& frame);
+  void SendFrameRaw(const net::SpdyFrame& frame);
 
   // Convenience methods to send specific types of control frames:
   void SendGoAwayFrame();
-  void SendRstStreamFrame(spdy::SpdyStreamId stream_id,
-                          spdy::SpdyStatusCodes status);
+  void SendRstStreamFrame(net::SpdyStreamId stream_id,
+                          net::SpdyStatusCodes status);
   void SendSettingsFrame();
 
   // Close down the whole session, post-haste.  Block until all stream threads
   // have shut down.
   void StopSession();
   // Abort the stream without sending anything to the client.
-  void AbortStreamSilently(spdy::SpdyStreamId stream_id);
+  void AbortStreamSilently(net::SpdyStreamId stream_id);
   // Send a RST_STREAM frame and then abort the stream.
-  void AbortStream(spdy::SpdyStreamId stream_id, spdy::SpdyStatusCodes status);
+  void AbortStream(net::SpdyStreamId stream_id, net::SpdyStatusCodes status);
 
   // Remove the given StreamTaskWrapper object from the stream map.  This is
   // the method of this class that might be called from another thread.
@@ -139,11 +140,11 @@ class SpdySession : public spdy::SpdyFramerVisitorInterface {
   SpdySessionIO* const session_io_;
   SpdyStreamTaskFactory* const task_factory_;
   Executor* const executor_;
-  spdy::SpdyFramer framer_;
+  net::BufferedSpdyFramer framer_;
   bool no_more_reading_;  // don't read any more input from connection
   bool session_stopped_;  // StopSession() has been called
   bool already_sent_goaway_;  // GOAWAY frame has been sent
-  spdy::SpdyStreamId last_client_stream_id_;
+  net::SpdyStreamId last_client_stream_id_;
 
   // The stream map must be protected by a lock, because each stream thread
   // will remove itself from the map (by calling RemoveStreamTask) when the

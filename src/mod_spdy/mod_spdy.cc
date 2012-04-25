@@ -29,7 +29,7 @@
 #include "apr_optional_hooks.h"
 #include "apr_tables.h"
 
-#include "base/scoped_ptr.h"
+#include "base/memory/scoped_ptr.h"
 #include "mod_spdy/apache/apache_spdy_session_io.h"
 #include "mod_spdy/apache/apache_spdy_stream_task_factory.h"
 #include "mod_spdy/apache/config_commands.h"

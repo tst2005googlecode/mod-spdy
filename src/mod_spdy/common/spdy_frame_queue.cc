@@ -17,7 +17,7 @@
 #include <list>
 
 #include "base/logging.h"
-#include "base/stl_util-inl.h"
+#include "base/stl_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "net/spdy/spdy_protocol.h"
@@ -44,7 +44,7 @@ void SpdyFrameQueue::Abort() {
   condvar_.Broadcast();
 }
 
-void SpdyFrameQueue::Insert(spdy::SpdyFrame* frame) {
+void SpdyFrameQueue::Insert(net::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 
@@ -59,7 +59,7 @@ void SpdyFrameQueue::Insert(spdy::SpdyFrame* frame) {
   }
 }
 
-bool SpdyFrameQueue::Pop(bool block, spdy::SpdyFrame** frame) {
+bool SpdyFrameQueue::Pop(bool block, net::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 

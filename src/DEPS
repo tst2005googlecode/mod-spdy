@@ -14,7 +14,7 @@
 
 vars = {
   "chromium_trunk": "http://src.chromium.org/svn/trunk",
-  "chromium_revision": "@90205",
+  "chromium_revision": "@133496",
   "chromium_deps_root": "src/third_party/chromium_deps",
   "apr_src": "http://svn.apache.org/repos/asf/apr/apr/tags/1.4.2",
   "apr_revision": "@head",
@@ -50,8 +50,10 @@ deps = {
     Var("chromium_revision"),
 
   "src/third_party/chromium/src/net/base":
-    Var("chromium_trunk") + "/src/net/base" +
-    Var("chromium_revision"),
+    Var("chromium_trunk") + "/src/net/base" + Var("chromium_revision"),
+
+  "src/third_party/chromium/src/net/spdy":
+    Var("chromium_trunk") + "/src/net/spdy" + Var("chromium_revision"),
 
   "src/third_party/chromium/src/net/tools/flip_server":
     Var("chromium_trunk") + "/src/net/tools/flip_server" +
@@ -90,12 +92,6 @@ deps = {
 
   "src/third_party/zlib":
     Var("chromium_trunk") + "/src/third_party/zlib" + Var("chromium_revision"),
-
-  "src/tools/data_pack":
-    Var("chromium_trunk") + "/src/tools/data_pack" + Var("chromium_revision"),
-
-  "src/tools/grit":
-    Var("chromium_trunk") + "/src/tools/grit" + Var("chromium_revision"),
 
   "src/testing/gmock": From(Var("chromium_deps_root")),
   "src/testing/gtest": From(Var("chromium_deps_root")),

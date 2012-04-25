@@ -22,7 +22,7 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/time.h"
-#include "net/spdy/spdy_protocol.h"  // for spdy::SpdyPriority
+#include "net/spdy/spdy_protocol.h"  // for net::SpdyPriority
 
 namespace net_instaweb { class Function; }
 
@@ -83,7 +83,7 @@ class ThreadPool {
     ThreadPoolExecutor* owner;
   };
 
-  typedef std::multimap<spdy::SpdyPriority, Task> TaskQueue;
+  typedef std::multimap<net::SpdyPriority, Task> TaskQueue;
   typedef std::map<const ThreadPoolExecutor*, int> OwnerMap;
 
   // Start a new worker thread if 1) the task queue is larger than the number

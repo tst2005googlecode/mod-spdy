@@ -20,7 +20,7 @@ namespace {
 using mod_spdy::HeaderPopulatorInterface;
 
 TEST(HeaderPopulatorInterfaceTest, MergeIntoEmpty) {
-  spdy::SpdyHeaderBlock headers;
+  net::SpdyHeaderBlock headers;
   ASSERT_EQ(0, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("content-length", "256", &headers);
@@ -29,7 +29,7 @@ TEST(HeaderPopulatorInterfaceTest, MergeIntoEmpty) {
 }
 
 TEST(HeaderPopulatorInterfaceTest, MakeLowerCase) {
-  spdy::SpdyHeaderBlock headers;
+  net::SpdyHeaderBlock headers;
   ASSERT_EQ(0, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("Content-Length", "256", &headers);
@@ -39,7 +39,7 @@ TEST(HeaderPopulatorInterfaceTest, MakeLowerCase) {
 }
 
 TEST(HeaderPopulatorInterfaceTest, MergeDifferentHeaders) {
-  spdy::SpdyHeaderBlock headers;
+  net::SpdyHeaderBlock headers;
   ASSERT_EQ(0, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("x-foo", "bar", &headers);
@@ -53,7 +53,7 @@ TEST(HeaderPopulatorInterfaceTest, MergeDifferentHeaders) {
 }
 
 TEST(HeaderPopulatorInterfaceTest, MergeRepeatedHeader) {
-  spdy::SpdyHeaderBlock headers;
+  net::SpdyHeaderBlock headers;
   ASSERT_EQ(0, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("x-foo", "bar", &headers);

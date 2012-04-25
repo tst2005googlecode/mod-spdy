@@ -21,12 +21,6 @@
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
-// For some reason, spdy_protocol.h doesn't define kScheme along with kMethod,
-// kVersion, etc.  So we add it ourselves:
-namespace spdy {
-extern const char* const kScheme = "scheme";
-}  // namespace spdy
-
 namespace mod_spdy {
 
 namespace http {
@@ -43,34 +37,19 @@ extern const char* const kChunked = "chunked";
 
 }  // namespace http
 
-bool ParseHeaderBlockInBuffer(const char* header_data,
-                              size_t header_length,
-                              spdy::SpdyHeaderBlock* block) {
-  // Code from spdy_framer.cc:
-  spdy::SpdyFrameBuilder builder(header_data, header_length);
-  void* iter = NULL;
-  uint16 num_headers;
-  if (builder.ReadUInt16(&iter, &num_headers)) {
-    int index;
-    for (index = 0; index < num_headers; ++index) {
-      std::string name;
-      std::string value;
-      if (!builder.ReadString(&iter, &name))
-        break;
-      if (!builder.ReadString(&iter, &value))
-        break;
-      if (!name.size() || !value.size())
-        return false;
-      if (block->find(name) == block->end()) {
-        (*block)[name] = value;
-      } else {
-        return false;
-      }
-    }
-    return index == num_headers &&
-        iter == header_data + header_length;
-  }
-  return false;
+namespace spdy {
+
+extern const char* const kMethod = "method";
+extern const char* const kScheme = "scheme";
+extern const char* const kStatus = "status";
+extern const char* const kUrl = "url";
+extern const char* const kVersion = "version";
+
+}  // namespace spdy
+
+base::StringPiece FrameData(const net::SpdyFrame& frame) {
+  return base::StringPiece(
+      frame.data(), frame.length() + net::SpdyFrame::kHeaderSize);
 }
 
 }  // namespace mod_spdy

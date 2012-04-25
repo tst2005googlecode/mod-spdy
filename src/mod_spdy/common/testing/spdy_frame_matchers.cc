@@ -17,23 +17,23 @@
 #include <iostream>
 #include <string>
 
-#include "base/string_util.h"
+#include "base/stringprintf.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace {
 
-std::string ControlTypeName(spdy::SpdyControlType type) {
+std::string ControlTypeName(net::SpdyControlType type) {
   switch (type) {
-    case spdy::SYN_STREAM:    return "SYN_STREAM";
-    case spdy::SYN_REPLY:     return "SYN_REPLY";
-    case spdy::RST_STREAM:    return "RST_STREAM";
-    case spdy::SETTINGS:      return "SETTINGS";
-    case spdy::NOOP:          return "NOOP";
-    case spdy::PING:          return "PING";
-    case spdy::GOAWAY:        return "GOAWAY";
-    case spdy::HEADERS:       return "HEADERS";
-    case spdy::WINDOW_UPDATE: return "WINDOW_UPDATE";
+    case net::SYN_STREAM:    return "SYN_STREAM";
+    case net::SYN_REPLY:     return "SYN_REPLY";
+    case net::RST_STREAM:    return "RST_STREAM";
+    case net::SETTINGS:      return "SETTINGS";
+    case net::NOOP:          return "NOOP";
+    case net::PING:          return "PING";
+    case net::GOAWAY:        return "GOAWAY";
+    case net::HEADERS:       return "HEADERS";
+    case net::WINDOW_UPDATE: return "WINDOW_UPDATE";
     default: return base::StringPrintf("UNKNOWN(%d)", type);
   }
 }
@@ -43,14 +43,14 @@ std::string ControlTypeName(spdy::SpdyControlType type) {
 namespace mod_spdy {
 
 bool IsControlFrameOfTypeMatcher::MatchAndExplain(
-    const spdy::SpdyFrame& frame,
+    const net::SpdyFrame& frame,
     testing::MatchResultListener* listener) const {
   if (!frame.is_control_frame()) {
     *listener << "is a data frame";
     return false;
   }
-  const spdy::SpdyControlFrame* ctrl_frame =
-      static_cast<const spdy::SpdyControlFrame*>(&frame);
+  const net::SpdyControlFrame* ctrl_frame =
+      static_cast<const net::SpdyControlFrame*>(&frame);
   if (ctrl_frame->type() != type_) {
     *listener << "is a " << ControlTypeName(ctrl_frame->type()) << " frame";
     return false;
@@ -67,11 +67,11 @@ void IsControlFrameOfTypeMatcher::DescribeNegationTo(std::ostream* out) const {
 }
 
 bool IsDataFrameMatcher::MatchAndExplain(
-    const spdy::SpdyFrame& frame,
+    const net::SpdyFrame& frame,
     testing::MatchResultListener* listener) const {
   if (frame.is_control_frame()) {
     *listener << "is a " << ControlTypeName(
-        static_cast<const spdy::SpdyControlFrame*>(&frame)->type())
+        static_cast<const net::SpdyControlFrame*>(&frame)->type())
               << " frame";
     return false;
   }
@@ -87,11 +87,11 @@ void IsDataFrameMatcher::DescribeNegationTo(std::ostream* out) const {
 }
 
 bool FlagFinIsMatcher::MatchAndExplain(
-    const spdy::SpdyFrame& frame,
+    const net::SpdyFrame& frame,
     testing::MatchResultListener* listener) const {
   const bool fin = frame.is_control_frame() ?
-      (frame.flags() & spdy::CONTROL_FLAG_FIN) :
-      (frame.flags() & spdy::DATA_FLAG_FIN);
+      (frame.flags() & net::CONTROL_FLAG_FIN) :
+      (frame.flags() & net::DATA_FLAG_FIN);
   if (fin != fin_) {
     *listener << (fin ? "has FLAG_FIN set" : "doesn't have FLAG_FIN set");
     return false;

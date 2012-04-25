@@ -25,7 +25,7 @@ class ResponseHeaderPopulator : public HeaderPopulatorInterface {
  public:
   explicit ResponseHeaderPopulator(request_rec* request);
 
-  virtual void Populate(spdy::SpdyHeaderBlock* headers) const;
+  virtual void Populate(net::SpdyHeaderBlock* headers) const;
 
  private:
   request_rec* const request_;

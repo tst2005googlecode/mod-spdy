@@ -36,7 +36,7 @@ class Executor {
   // executor is free to ignore it.  If Stop has already been called, the
   // executor may immediately cancel the task rather than running it.
   virtual void AddTask(net_instaweb::Function* task,
-                       spdy::SpdyPriority priority) = 0;
+                       net::SpdyPriority priority) = 0;
 
   // Stop the executor.  Cancel all tasks that were pushed onto this executor
   // but that have not yet begun to run.  Tasks that were already running will

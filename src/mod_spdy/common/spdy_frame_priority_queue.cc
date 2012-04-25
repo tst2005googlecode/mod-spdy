@@ -16,14 +16,14 @@
 
 #include <list>
 
-#include "base/stl_util-inl.h"
+#include "base/stl_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/time.h"
 
 namespace {
 
-bool TryPopFrom(std::list<spdy::SpdyFrame*>* queue, spdy::SpdyFrame** frame) {
+bool TryPopFrom(std::list<net::SpdyFrame*>* queue, net::SpdyFrame** frame) {
   DCHECK(frame);
   if (queue->empty()) {
     return false;
@@ -53,8 +53,8 @@ bool SpdyFramePriorityQueue::IsEmpty() const {
           p2_queue_.empty() && p3_queue_.empty());
 }
 
-void SpdyFramePriorityQueue::Insert(spdy::SpdyPriority priority,
-                                    spdy::SpdyFrame* frame) {
+void SpdyFramePriorityQueue::Insert(net::SpdyPriority priority,
+                                    net::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
   switch (priority) {
@@ -77,7 +77,7 @@ void SpdyFramePriorityQueue::Insert(spdy::SpdyPriority priority,
   condvar_.Signal();
 }
 
-void SpdyFramePriorityQueue::InsertFront(spdy::SpdyFrame* frame) {
+void SpdyFramePriorityQueue::InsertFront(net::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
   // To ensure that this frame is at the very front of the queue, we push it at
@@ -86,7 +86,7 @@ void SpdyFramePriorityQueue::InsertFront(spdy::SpdyFrame* frame) {
   condvar_.Signal();
 }
 
-bool SpdyFramePriorityQueue::Pop(spdy::SpdyFrame** frame) {
+bool SpdyFramePriorityQueue::Pop(net::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
   return (TryPopFrom(&p0_queue_, frame) ||
@@ -96,7 +96,7 @@ bool SpdyFramePriorityQueue::Pop(spdy::SpdyFrame** frame) {
 }
 
 bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
-                                         spdy::SpdyFrame** frame) {
+                                         net::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 

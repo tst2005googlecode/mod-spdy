@@ -18,15 +18,22 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/scoped_ptr.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/time.h"
 #include "mod_spdy/common/connection_context.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session_io.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/spdy/spdy_protocol.h"
+
+namespace {
+
+const int kSpdyVersion = 2;
+
+}  // namespace
 
 namespace mod_spdy {
 
@@ -38,6 +45,7 @@ SpdySession::SpdySession(const SpdyServerConfig* config,
       session_io_(session_io),
       task_factory_(task_factory),
       executor_(executor),
+      framer_(kSpdyVersion),
       no_more_reading_(false),
       session_stopped_(false),
       already_sent_goaway_(false),
@@ -115,7 +123,7 @@ void SpdySession::Run() {
       // streams, we're willing to block briefly to wait for more frames to
       // send, if only to prevent this loop from busy-waiting too heavily --
       // not a great solution, but better than nothing for now.
-      spdy::SpdyFrame* frame = NULL;
+      net::SpdyFrame* frame = NULL;
       if (no_active_streams ? output_queue_.Pop(&frame) :
           output_queue_.BlockingPop(output_block_time, &frame)) {
         do {
@@ -153,51 +161,19 @@ void SpdySession::Run() {
   }
 }
 
-void SpdySession::OnError(spdy::SpdyFramer* framer) {
-  LOG(ERROR) << "SpdyFramer error: "
-             << spdy::SpdyFramer::ErrorCodeToString(framer->error_code());
+void SpdySession::OnError(int error_code) {
+  LOG(ERROR) << "Session error: "
+             << net::SpdyFramer::ErrorCodeToString(error_code);
   SendGoAwayFrame();
 }
 
-void SpdySession::OnControl(const spdy::SpdyControlFrame* frame) {
-  switch (frame->type()) {
-    case spdy::SYN_STREAM:
-      HandleSynStream(
-          *static_cast<const spdy::SpdySynStreamControlFrame*>(frame));
-      break;
-    case spdy::SYN_REPLY:
-      HandleSynReply(
-          *static_cast<const spdy::SpdySynReplyControlFrame*>(frame));
-      break;
-    case spdy::RST_STREAM:
-      HandleRstStream(
-          *static_cast<const spdy::SpdyRstStreamControlFrame*>(frame));
-      break;
-    case spdy::SETTINGS:
-      HandleSettings(
-          *static_cast<const spdy::SpdySettingsControlFrame*>(frame));
-      break;
-    case spdy::NOOP:
-      // ignore NOOP frames
-      VLOG(4) << "Received NOOP frame";
-      break;
-    case spdy::PING:
-      HandlePing(*frame);
-      break;
-    case spdy::GOAWAY:
-      HandleGoAway(*static_cast<const spdy::SpdyGoAwayControlFrame*>(frame));
-      break;
-    case spdy::HEADERS:
-      HandleHeaders(*static_cast<const spdy::SpdyHeadersControlFrame*>(frame));
-      break;
-    default:
-      // Ignore unknown control frames, as per the SPDY spec.
-      LOG(WARNING) << "Unknown control frame (type=" << frame->type() << ")";
-      break;
-  }
+void SpdySession::OnStreamError(net::SpdyStreamId stream_id,
+                                const std::string& description) {
+  LOG(ERROR) << "Stream " << stream_id << " error: " << description;
+  AbortStream(stream_id, net::PROTOCOL_ERROR);
 }
 
-void SpdySession::OnStreamFrameData(spdy::SpdyStreamId stream_id,
+void SpdySession::OnStreamFrameData(net::SpdyStreamId stream_id,
                                     const char* data, size_t length) {
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
@@ -211,8 +187,8 @@ void SpdySession::OnStreamFrameData(spdy::SpdyStreamId stream_id,
       SpdyStream* stream = iter->second->stream();
       // Copy the data into an _uncompressed_ SPDY data frame and post it to
       // the stream's input queue.
-      spdy::SpdyDataFlags flags =
-          length == 0 ? spdy::DATA_FLAG_FIN : spdy::DATA_FLAG_NONE;
+      net::SpdyDataFlags flags =
+          length == 0 ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
       // Note that we must still be holding stream_map_lock_ when we call this
       // method -- otherwise the stream may be deleted out from under us by the
       // StreamTaskWrapper destructor.  That's okay -- PostInputFrame is a
@@ -223,23 +199,35 @@ void SpdySession::OnStreamFrameData(spdy::SpdyStreamId stream_id,
     }
   }
 
+  // If we reach this point, it means that the client has sent us DATA for a
+  // stream that doesn't exist (possibly because it used to exist but has
+  // already been closed by a FLAG_FIN); *unless* length=0, which is just the
+  // BufferedSpdyFramer's way of telling us that there will be no more data on
+  // this stream (i.e. because a FLAG_FIN has been received, possibly on a
+  // previous control frame).
+
+  // TODO(mdsteele): The BufferedSpdyFramer sends us OnStreamFrameData with
+  // length=0 to indicate end-of-stream, but it will do this even if we already
+  // got FLAG_FIN in a control frame (such as SYN_STREAM).  For now, we fix
+  // this issue by simply ignoring length=0 data for streams that no longer
+  // exist.  Once we transition to the new plain SpdyFramer, we'll be able to
+  // handle this more precisely.
+  if (length == 0) {
+    return;
+  }
+
   // If the client sends data for a nonexistant stream, we must send a
   // RST_STREAM frame with error code INVALID_STREAM.  See
   // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-Data-frames
   // Note that we release the mutex *before* sending the frame.
   LOG(WARNING) << "Client sent DATA (length=" << length
                << ") for nonexistant stream " << stream_id;
-  SendRstStreamFrame(stream_id, spdy::INVALID_STREAM);
+  SendRstStreamFrame(stream_id, net::INVALID_STREAM);
 }
 
-void SpdySession::HandleSynStream(
-    const spdy::SpdySynStreamControlFrame& frame) {
-  // Start by decompressing the frame.  Even if we choose to ignore this frame,
-  // we must still do the work of decompressing it so that we correctly
-  // maintain this session's header compression context.
-  scoped_ptr<spdy::SpdyFrame> decompressed_frame(
-      framer_.DecompressFrame(frame));
-
+void SpdySession::OnSynStream(
+    const net::SpdySynStreamControlFrame& frame,
+    const linked_ptr<net::SpdyHeaderBlock>& headers) {
   // The SPDY spec requires us to ignore SYN_STREAM frames after sending a
   // GOAWAY frame.  See:
   // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-GOAWAY
@@ -247,24 +235,16 @@ void SpdySession::HandleSynStream(
     return;
   }
 
-  // If decompression failed, the session is unrecoverable.
-  if (decompressed_frame == NULL) {
-    LOG(WARNING) << "Client sent SYN_STREAM with a corrupted header block.  "
-                 << "Sending GOAWAY.";
-    SendGoAwayFrame();
-    return;
-  }
-
   // If we see invalid flags, reject the frame.
-  if (0 != (frame.flags() & ~(spdy::CONTROL_FLAG_FIN |
-                              spdy::CONTROL_FLAG_UNIDIRECTIONAL))) {
+  if (0 != (frame.flags() & ~(net::CONTROL_FLAG_FIN |
+                              net::CONTROL_FLAG_UNIDIRECTIONAL))) {
     LOG(WARNING) << "Client sent SYN_STREAM with invalid flags ("
                  << frame.flags() << ").  Sending GOAWAY.";
     SendGoAwayFrame();
     return;
   }
 
-  const spdy::SpdyStreamId stream_id = frame.stream_id();
+  const net::SpdyStreamId stream_id = frame.stream_id();
 
   // Client stream IDs must be odd-numbered.
   if (stream_id % 2 == 0) {
@@ -283,7 +263,7 @@ void SpdySession::HandleSynStream(
     // TODO(mdsteele): re-enable this code block when
     // http://code.google.com/p/chromium/issues/detail?id=111708 is
     // fixed.
-    AbortStream(stream_id, spdy::PROTOCOL_ERROR);
+    AbortStream(stream_id, net::PROTOCOL_ERROR);
     return;
 #endif
   }
@@ -313,7 +293,7 @@ void SpdySession::HandleSynStream(
     // Limit the number of simultaneous open streams; refuse the stream if
     // there are too many currently active streams.
     if (stream_map_.size() >= config_->max_streams_per_connection()) {
-      SendRstStreamFrame(stream_id, spdy::REFUSED_STREAM);
+      SendRstStreamFrame(stream_id, net::REFUSED_STREAM);
       return;
     }
 
@@ -322,7 +302,12 @@ void SpdySession::HandleSynStream(
     task_wrapper = new StreamTaskWrapper(
         this, stream_id, frame.associated_stream_id(), frame.priority());
     stream_map_[stream_id] = task_wrapper;
-    task_wrapper->stream()->PostInputFrame(decompressed_frame.release());
+    task_wrapper->stream()->PostInputFrame(framer_.CreateSynStream(
+        stream_id, frame.associated_stream_id(), frame.priority(),
+        frame.credential_slot(),
+        static_cast<net::SpdyControlFlags>(frame.flags()),
+        false,  // false = uncompressed
+        headers.get()));
   }
   DCHECK(task_wrapper);
   // Release the lock before adding the task to the executor.  This is mostly
@@ -335,13 +320,13 @@ void SpdySession::HandleSynStream(
   executor_->AddTask(task_wrapper, frame.priority());
 }
 
-void SpdySession::HandleSynReply(
-    const spdy::SpdySynReplyControlFrame& frame) {
+void SpdySession::OnSynReply(const net::SpdySynReplyControlFrame& frame,
+                             const linked_ptr<net::SpdyHeaderBlock>& headers) {
   // TODO(mdsteele)
 }
 
-void SpdySession::HandleRstStream(
-    const spdy::SpdyRstStreamControlFrame& frame) {
+void SpdySession::OnRstStream(
+    const net::SpdyRstStreamControlFrame& frame) {
   // RST_STREAM does not define any flags (SPDY draft 2 section 2.7.3).  If we
   // see invalid flags, tell the client to go away (but don't return from the
   // method; we'll still go ahead and abort the stream that the RST_STREAM
@@ -352,18 +337,18 @@ void SpdySession::HandleRstStream(
     SendGoAwayFrame();
   }
 
-  const spdy::SpdyStreamId stream_id = frame.stream_id();
+  const net::SpdyStreamId stream_id = frame.stream_id();
   switch (frame.status()) {
     // These are totally benign reasons to abort a stream, so just abort the
     // stream without a fuss.
-    case spdy::REFUSED_STREAM:
-    case spdy::CANCEL:
+    case net::REFUSED_STREAM:
+    case net::CANCEL:
       VLOG(2) << "Client cancelled/refused stream " << stream_id;
       AbortStreamSilently(stream_id);
       break;
     // If there was a PROTOCOL_ERROR, the session is probably unrecoverable,
     // so just log an error and abort the session.
-    case spdy::PROTOCOL_ERROR:
+    case net::PROTOCOL_ERROR:
       LOG(WARNING) << "Client sent RST_STREAM with PROTOCOL_ERROR for stream "
                    << stream_id << ".  Aborting stream and sending GOAWAY.";
       AbortStreamSilently(stream_id);
@@ -380,16 +365,17 @@ void SpdySession::HandleRstStream(
   }
 }
 
-void SpdySession::HandleSettings(
-    const spdy::SpdySettingsControlFrame& frame) {
-  VLOG(4) << "Received SETTINGS frame";
+void SpdySession::OnSetting(net::SpdySettingsIds id,
+                            uint8 flags, uint32 value) {
+  VLOG(4) << "Received SETTING (flags=" << flags << "): "
+          << id << "=" << value;
   // TODO(mdsteele): For now, we ignore SETTINGS frames from the client.  Once
   // we implement server-push, we should at least pay attention to the
   // MAX_CONCURRENT_STREAMS setting from the client so that we don't overload
   // them.
 }
 
-void SpdySession::HandlePing(const spdy::SpdyControlFrame& frame) {
+void SpdySession::OnPing(const net::SpdyPingControlFrame& frame) {
   VLOG(4) << "Received PING frame";
   // The SPDY spec requires the server to ignore even-numbered PING frames that
   // it did not initiate.  See:
@@ -404,29 +390,16 @@ void SpdySession::HandlePing(const spdy::SpdyControlFrame& frame) {
   SendFrameRaw(frame);
 }
 
-void SpdySession::HandleGoAway(const spdy::SpdyGoAwayControlFrame& frame) {
+void SpdySession::OnGoAway(const net::SpdyGoAwayControlFrame& frame) {
   VLOG(4) << "Received GOAWAY frame (last_accepted_stream_id="
           << frame.last_accepted_stream_id() << ")";
   // TODO(mdsteele): For now I think we can mostly ignore GOAWAY frames, but
   // once we implement server-push we definitely need to take note of them.
 }
 
-void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
-  // Start by decompressing the frame.  Even if we choose to ignore this frame,
-  // we must still do the work of decompressing it so that we correctly
-  // maintain this session's header compression context.
-  scoped_ptr<spdy::SpdyFrame> decompressed_frame(
-      framer_.DecompressFrame(frame));
-
-  // If decompression failed, the session is unrecoverable.
-  if (decompressed_frame == NULL) {
-    LOG(WARNING) << "Client sent HEADERS with a corrupted header block.  "
-                 << "Sending GOAWAY.";
-    SendGoAwayFrame();
-    return;
-  }
-
-  const spdy::SpdyStreamId stream_id = frame.stream_id();
+void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,
+                            const linked_ptr<net::SpdyHeaderBlock>& headers) {
+  const net::SpdyStreamId stream_id = frame.stream_id();
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
   // RemoveStreamTask() at any time.
@@ -438,19 +411,29 @@ void SpdySession::HandleHeaders(const spdy::SpdyHeadersControlFrame& frame){
     if (iter != stream_map_.end()) {
       VLOG(4) << "[stream " << stream_id << "] Received HEADERS frame";
       SpdyStream* stream = iter->second->stream();
-      stream->PostInputFrame(decompressed_frame.release());
+      stream->PostInputFrame(framer_.CreateHeaders(
+          stream_id, static_cast<net::SpdyControlFlags>(frame.flags()),
+          false,  // false = uncompressed
+          headers.get()));
       return;
     }
   }
 
   // Note that we release the mutex *before* sending the frame.
   LOG(WARNING) << "Client sent HEADERS for nonexistant stream " << stream_id;
-  SendRstStreamFrame(stream_id, spdy::INVALID_STREAM);
+  SendRstStreamFrame(stream_id, net::INVALID_STREAM);
+}
+
+void SpdySession::OnWindowUpdate(
+    const net::SpdyWindowUpdateControlFrame& frame) {
+  // TODO(mdsteele): These don't occur in SPDY v2.  We'll have to use them once
+  // we implement SPDY v3.
+  LOG(DFATAL) << "Got a WINDOW_UPDATE frame over a SPDY v2 connection!?";
 }
 
 // Compress (if necessary), send, and then delete the given frame object.
-void SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
-  scoped_ptr<const spdy::SpdyFrame> compressed_frame(frame);
+void SpdySession::SendFrame(const net::SpdyFrame* frame) {
+  scoped_ptr<const net::SpdyFrame> compressed_frame(frame);
   DCHECK(compressed_frame != NULL);
   if (framer_.IsCompressible(*frame)) {
     // IsCompressible will return true for SYN_STREAM, SYN_REPLY, and HEADERS
@@ -458,7 +441,8 @@ void SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
     // part of the SPDY v2 spec (and may be getting removed from the v3 spec).
     DCHECK(frame->is_control_frame());
     // First compress the original frame into a new frame object...
-    const spdy::SpdyFrame* compressed = framer_.CompressFrame(*frame);
+    const net::SpdyFrame* compressed = framer_.CompressControlFrame(
+        *static_cast<const net::SpdyControlFrame*>(frame));
     // ...then delete the original frame object and replace it with the
     // compressed frame object.
     compressed_frame.reset(compressed);
@@ -473,7 +457,7 @@ void SpdySession::SendFrame(const spdy::SpdyFrame* frame) {
   SendFrameRaw(*compressed_frame);
 }
 
-void SpdySession::SendFrameRaw(const spdy::SpdyFrame& frame) {
+void SpdySession::SendFrameRaw(const net::SpdyFrame& frame) {
   const SpdySessionIO::WriteStatus status = session_io_->SendFrameRaw(frame);
   if (status == SpdySessionIO::WRITE_CONNECTION_CLOSED) {
     // If the connection was closed and we can't write anything to the client
@@ -487,29 +471,28 @@ void SpdySession::SendFrameRaw(const spdy::SpdyFrame& frame) {
 void SpdySession::SendGoAwayFrame() {
   if (!already_sent_goaway_) {
     already_sent_goaway_ = true;
-    SendFrame(spdy::SpdyFramer::CreateGoAway(last_client_stream_id_));
+    // TODO(mdsteele): SPDY v3 adds a GOAWAY status code.  For SPDY v2, the
+    // framer will ignore this argument, so we just pass an arbitrary value
+    // (OK).  Once we support SPDY v3, we'll need to choose an appropriate
+    // status code in each case.
+    SendFrame(framer_.CreateGoAway(last_client_stream_id_, net::GOAWAY_OK));
   }
 }
 
-void SpdySession::SendRstStreamFrame(spdy::SpdyStreamId stream_id,
-                                     spdy::SpdyStatusCodes status) {
-  output_queue_.InsertFront(
-      spdy::SpdyFramer::CreateRstStream(stream_id, status));
+void SpdySession::SendRstStreamFrame(net::SpdyStreamId stream_id,
+                                     net::SpdyStatusCodes status) {
+  output_queue_.InsertFront(framer_.CreateRstStream(stream_id, status));
 }
 
 void SpdySession::SendSettingsFrame() {
   // For now, we only tell the client about our MAX_CONCURRENT_STREAMS limit.
   // In the future maybe we can do fancier things with the other settings.
-  spdy::SpdySettings settings;
-  spdy::SettingsFlagsAndId flags_and_id(0);
-  flags_and_id.set_flags(0);
-  flags_and_id.set_id(spdy::SETTINGS_MAX_CONCURRENT_STREAMS);
-  settings.push_back(std::make_pair(
-      flags_and_id,
-      static_cast<uint32>(config_->max_streams_per_connection())));
-  SendFrame(spdy::SpdyFramer::CreateSettings(settings));
+  net::SettingsMap settings;
+  settings[net::SETTINGS_MAX_CONCURRENT_STREAMS] = std::make_pair(
+      net::SETTINGS_FLAG_NONE,
+      static_cast<uint32>(config_->max_streams_per_connection()));
+  SendFrame(framer_.CreateSettings(settings));
 }
-
 
 void SpdySession::StopSession() {
   session_stopped_ = true;
@@ -532,7 +515,7 @@ void SpdySession::StopSession() {
 }
 
 // Abort the stream without sending anything to the client.
-void SpdySession::AbortStreamSilently(spdy::SpdyStreamId stream_id) {
+void SpdySession::AbortStreamSilently(net::SpdyStreamId stream_id) {
   // We need to lock when reading the stream map, because one of the stream
   // threads could call RemoveStreamTask() at any time.
   base::AutoLock autolock(stream_map_lock_);
@@ -543,8 +526,8 @@ void SpdySession::AbortStreamSilently(spdy::SpdyStreamId stream_id) {
 }
 
 // Send a RST_STREAM frame and then abort the stream.
-void SpdySession::AbortStream(spdy::SpdyStreamId stream_id,
-                              spdy::SpdyStatusCodes status) {
+void SpdySession::AbortStream(net::SpdyStreamId stream_id,
+                              net::SpdyStatusCodes status) {
   SendRstStreamFrame(stream_id, status);
   AbortStreamSilently(stream_id);
 }
@@ -558,7 +541,7 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   // We need to lock when touching the stream map, in case the main connection
   // thread is currently in the middle of reading the stream map.
   base::AutoLock autolock(stream_map_lock_);
-  const spdy::SpdyStreamId stream_id = task_wrapper->stream()->stream_id();
+  const net::SpdyStreamId stream_id = task_wrapper->stream()->stream_id();
   VLOG(2) << "Closing stream " << stream_id;
   DCHECK_EQ(1, stream_map_.count(stream_id));
   DCHECK_EQ(task_wrapper, stream_map_[stream_id]);
@@ -576,9 +559,9 @@ bool SpdySession::StreamMapIsEmpty() {
 // liable to be called from other threads by the executor.
 SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     SpdySession* spdy_conn,
-    spdy::SpdyStreamId stream_id,
-    spdy::SpdyStreamId associated_stream_id,
-    spdy::SpdyPriority priority)
+    net::SpdyStreamId stream_id,
+    net::SpdyStreamId associated_stream_id,
+    net::SpdyPriority priority)
     : spdy_session_(spdy_conn),
       stream_(stream_id, associated_stream_id, priority,
               &spdy_session_->output_queue_),

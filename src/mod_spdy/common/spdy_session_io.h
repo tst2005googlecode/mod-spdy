@@ -17,10 +17,10 @@
 
 #include "base/basictypes.h"
 
-namespace spdy {
+namespace net {
 class SpdyFrame;
-class SpdyFramer;
-}  // namespace spdy
+class BufferedSpdyFramer;
+}  // namespace net
 
 namespace mod_spdy {
 
@@ -61,8 +61,8 @@ class SpdySessionIO {
   // ProcessInput() method of the given SpdyFramer.  If no input data is
   // currently available and the block argument is true, this should block
   // until more data arrives; otherwise, this should not block.
-  virtual ReadStatus ProcessAvailableInput(bool block,
-                                           spdy::SpdyFramer* framer) = 0;
+  virtual ReadStatus ProcessAvailableInput(
+      bool block, net::BufferedSpdyFramer* framer) = 0;
 
   // Send a single SPDY frame to the client as-is; block until it has been
   // sent down the wire.  Return true on success.
@@ -71,7 +71,7 @@ class SpdySessionIO {
   //   wire, but we probably don't need/want to flush every single frame
   //   individually in places where we send multiple frames at once.  We'll
   //   probably want to adjust this API a bit.
-  virtual WriteStatus SendFrameRaw(const spdy::SpdyFrame& frame) = 0;
+  virtual WriteStatus SendFrameRaw(const net::SpdyFrame& frame) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SpdySessionIO);

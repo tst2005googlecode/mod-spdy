@@ -20,11 +20,11 @@ namespace mod_spdy {
 
 void HeaderPopulatorInterface::MergeInHeader(const std::string& key,
                                              const std::string& value,
-                                             spdy::SpdyHeaderBlock* headers) {
+                                             net::SpdyHeaderBlock* headers) {
   // The SPDY spec requires that header names be lowercase, so forcibly
   // lowercase the key here.
   const std::string lower_key(StringToLowerASCII(key));
-  spdy::SpdyHeaderBlock::iterator iter = headers->find(lower_key);
+  net::SpdyHeaderBlock::iterator iter = headers->find(lower_key);
   if (iter == headers->end()) {
     (*headers)[lower_key] = value;
   } else {

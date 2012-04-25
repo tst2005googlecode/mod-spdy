@@ -51,7 +51,7 @@ class HttpToSpdyFilter {
   void SendData(const char* data, size_t size, bool flag_fin);
 
   SpdyStream* const stream_;
-  spdy::SpdyFramer framer_;
+  net::SpdyFramer framer_;
   std::string data_buffer_;
   bool headers_have_been_sent_;
   bool end_of_stream_reached_;

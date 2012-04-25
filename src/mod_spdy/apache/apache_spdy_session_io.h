@@ -20,10 +20,10 @@
 #include "base/basictypes.h"
 #include "mod_spdy/common/spdy_session_io.h"
 
-namespace spdy {
+namespace net {
 class SpdyFrame;
 class SpdyFramer;
-}  // namespace spdy
+}  // namespace net
 
 namespace mod_spdy {
 
@@ -35,8 +35,8 @@ class ApacheSpdySessionIO : public SpdySessionIO {
   // SpdySessionIO methods:
   virtual bool IsConnectionAborted();
   virtual ReadStatus ProcessAvailableInput(bool block,
-                                           spdy::SpdyFramer* framer);
-  virtual WriteStatus SendFrameRaw(const spdy::SpdyFrame& frame);
+                                           net::BufferedSpdyFramer* framer);
+  virtual WriteStatus SendFrameRaw(const net::SpdyFrame& frame);
 
  private:
   conn_rec* const connection_;

@@ -40,7 +40,7 @@ class AprThreadPoolExecutor : public Executor {
 
   // Executor methods:
   virtual void AddTask(net_instaweb::Function* task,
-                       spdy::SpdyPriority priority);
+                       net::SpdyPriority priority);
   // Once Stop() has been called, AddTask() will reject new tasks.  It is safe
   // to call Stop() more than once.
   virtual void Stop();

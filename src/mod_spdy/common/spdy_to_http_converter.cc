@@ -27,26 +27,28 @@ namespace mod_spdy {
 
 namespace {
 
+const int kSpdyVersion = 2;
+
 // Functions to test for FLAG_FIN.  Using these functions instead of testing
 // flags() directly helps guard against mixing up & with && or mixing up
 // CONTROL_FLAG_FIN with DATA_FLAG_FIN.
-bool HasControlFlagFinSet(const spdy::SpdyControlFrame& frame) {
-  return bool(frame.flags() & spdy::CONTROL_FLAG_FIN);
+bool HasControlFlagFinSet(const net::SpdyControlFrame& frame) {
+  return bool(frame.flags() & net::CONTROL_FLAG_FIN);
 }
-bool HasDataFlagFinSet(const spdy::SpdyDataFrame& frame) {
-  return bool(frame.flags() & spdy::DATA_FLAG_FIN);
+bool HasDataFlagFinSet(const net::SpdyDataFrame& frame) {
+  return bool(frame.flags() & net::DATA_FLAG_FIN);
 }
 
 // Generate an HTTP request line from the given SPDY header block by calling
 // the OnStatusLine() method of the given visitor, and return true.  If there's
 // an error, this will return false without calling any methods on the visitor.
-bool GenerateRequestLine(const spdy::SpdyHeaderBlock& block,
+bool GenerateRequestLine(const net::SpdyHeaderBlock& block,
                          HttpRequestVisitorInterface* visitor) {
-  spdy::SpdyHeaderBlock::const_iterator method = block.find(spdy::kMethod);
-  spdy::SpdyHeaderBlock::const_iterator scheme = block.find(spdy::kScheme);
-  spdy::SpdyHeaderBlock::const_iterator host = block.find(http::kHost);
-  spdy::SpdyHeaderBlock::const_iterator path = block.find(spdy::kUrl);
-  spdy::SpdyHeaderBlock::const_iterator version = block.find(spdy::kVersion);
+  net::SpdyHeaderBlock::const_iterator method = block.find(spdy::kMethod);
+  net::SpdyHeaderBlock::const_iterator scheme = block.find(spdy::kScheme);
+  net::SpdyHeaderBlock::const_iterator host = block.find(http::kHost);
+  net::SpdyHeaderBlock::const_iterator path = block.find(spdy::kUrl);
+  net::SpdyHeaderBlock::const_iterator version = block.find(spdy::kVersion);
 
   if (method == block.end() ||
       scheme == block.end() ||
@@ -87,6 +89,7 @@ void InsertHeader(const base::StringPiece key,
 
 SpdyToHttpConverter::SpdyToHttpConverter(HttpRequestVisitorInterface* visitor)
     : visitor_(visitor),
+      framer_(kSpdyVersion),
       state_(NO_FRAMES_YET),
       use_chunking_(true) {
   CHECK(visitor);
@@ -110,15 +113,15 @@ const char* SpdyToHttpConverter::StatusString(Status status) {
 }
 
 SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertSynStreamFrame(
-    const spdy::SpdySynStreamControlFrame& frame) {
+    const net::SpdySynStreamControlFrame& frame) {
   if (state_ != NO_FRAMES_YET) {
     return EXTRA_SYN_STREAM;
   }
   state_ = RECEIVED_SYN_STREAM;
 
-  spdy::SpdyHeaderBlock block;
-  if (!ParseHeaderBlockInBuffer(frame.header_block(), frame.header_block_len(),
-                                &block)) {
+  net::SpdyHeaderBlock block;
+  if (!framer_.ParseHeaderBlockInBuffer(
+          frame.header_block(), frame.header_block_len(), &block)) {
     return INVALID_HEADER_BLOCK;
   }
 
@@ -139,7 +142,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertSynStreamFrame(
 }
 
 SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
-    const spdy::SpdyHeadersControlFrame& frame) {
+    const net::SpdyHeadersControlFrame& frame) {
   if (state_ == RECEIVED_FLAG_FIN) {
     return FRAME_AFTER_FIN;
   } else if (state_ == NO_FRAMES_YET) {
@@ -151,9 +154,9 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
   // trailing headers.  Otherwise, we can send them immediately.
   if (state_ == RECEIVED_DATA) {
     if (use_chunking_) {
-      if (!ParseHeaderBlockInBuffer(frame.header_block(),
-                                    frame.header_block_len(),
-                                    &trailing_headers_)) {
+      if (!framer_.ParseHeaderBlockInBuffer(
+              frame.header_block(), frame.header_block_len(),
+              &trailing_headers_)) {
         return INVALID_HEADER_BLOCK;
       }
     } else {
@@ -163,9 +166,9 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
   } else {
     DCHECK(state_ == RECEIVED_SYN_STREAM);
     DCHECK(trailing_headers_.empty());
-    spdy::SpdyHeaderBlock block;
-    if (!ParseHeaderBlockInBuffer(frame.header_block(),
-                                  frame.header_block_len(), &block)) {
+    net::SpdyHeaderBlock block;
+    if (!framer_.ParseHeaderBlockInBuffer(
+            frame.header_block(), frame.header_block_len(), &block)) {
       return INVALID_HEADER_BLOCK;
     }
 
@@ -182,7 +185,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
 }
 
 SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
-    const spdy::SpdyDataFrame& frame) {
+    const net::SpdyDataFrame& frame) {
   if (state_ == RECEIVED_FLAG_FIN) {
     return FRAME_AFTER_FIN;
   } else if (state_ == NO_FRAMES_YET) {
@@ -226,8 +229,8 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
 // Convert the given SPDY header block (e.g. from a SYN_STREAM or HEADERS
 // frame) into HTTP headers by calling OnLeadingHeader on the given visitor.
 void SpdyToHttpConverter::GenerateLeadingHeaders(
-    const spdy::SpdyHeaderBlock& block) {
-  for (spdy::SpdyHeaderBlock::const_iterator it = block.begin();
+    const net::SpdyHeaderBlock& block) {
+  for (net::SpdyHeaderBlock::const_iterator it = block.begin();
        it != block.end(); ++it) {
     const base::StringPiece key = it->first;
     const base::StringPiece value = it->second;
@@ -271,7 +274,7 @@ void SpdyToHttpConverter::FinishRequest() {
 
       // Append whatever trailing headers we've buffered, if any.
       if (!trailing_headers_.empty()) {
-        for (spdy::SpdyHeaderBlock::const_iterator it =
+        for (net::SpdyHeaderBlock::const_iterator it =
                  trailing_headers_.begin();
              it != trailing_headers_.end(); ++it) {
           InsertHeader<&HttpRequestVisitorInterface::OnTrailingHeader>(

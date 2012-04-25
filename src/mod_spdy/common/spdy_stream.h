@@ -30,9 +30,9 @@ class SpdyFramePriorityQueue;
 // and the connection thread.
 class SpdyStream {
  public:
-  SpdyStream(spdy::SpdyStreamId stream_id,
-             spdy::SpdyStreamId associated_stream_id_,
-             spdy::SpdyPriority priority,
+  SpdyStream(net::SpdyStreamId stream_id,
+             net::SpdyStreamId associated_stream_id_,
+             net::SpdyPriority priority,
              SpdyFramePriorityQueue* output_queue);
   ~SpdyStream();
 
@@ -41,16 +41,16 @@ class SpdyStream {
   bool is_server_push() const;
 
   // Get the ID for this SPDY stream.
-  spdy::SpdyStreamId stream_id() const { return stream_id_; }
+  net::SpdyStreamId stream_id() const { return stream_id_; }
 
   // Get the ID for the SPDY stream with which this one is associated.  By the
   // SPDY spec, if there is no associated stream, this will be zero.
-  spdy::SpdyStreamId associated_stream_id() const {
+  net::SpdyStreamId associated_stream_id() const {
     return associated_stream_id_;
   }
 
   // Get the priority of this stream.
-  spdy::SpdyPriority priority() const { return priority_; }
+  net::SpdyPriority priority() const { return priority_; }
 
   // Return true if this stream has been aborted and should shut down.
   bool is_aborted() const;
@@ -62,23 +62,23 @@ class SpdyStream {
   // Provide a SPDY frame sent from the client.  This is to be called from the
   // master connection thread.  This method takes ownership of the frame
   // object.
-  void PostInputFrame(spdy::SpdyFrame* frame);
+  void PostInputFrame(net::SpdyFrame* frame);
 
   // Get a SPDY frame from the client and return true, or return false if no
   // frame is available.  If the block argument is true and no frame is
   // currently available, block until a frame becomes available or the stream
   // is aborted.  This is to be called from the stream thread.  The caller
   // gains ownership of the provided frame.
-  bool GetInputFrame(bool block, spdy::SpdyFrame** frame);
+  bool GetInputFrame(bool block, net::SpdyFrame** frame);
 
   // Send a SPDY frame to the client.  This is to be called from the stream
   // thread.  This method takes ownership of the frame object.
-  void SendOutputFrame(spdy::SpdyFrame* frame);
+  void SendOutputFrame(net::SpdyFrame* frame);
 
  private:
-  const spdy::SpdyStreamId stream_id_;
-  const spdy::SpdyStreamId associated_stream_id_;
-  const spdy::SpdyPriority priority_;
+  const net::SpdyStreamId stream_id_;
+  const net::SpdyStreamId associated_stream_id_;
+  const net::SpdyPriority priority_;
   SpdyFrameQueue input_queue_;
   SpdyFramePriorityQueue* output_queue_;
 

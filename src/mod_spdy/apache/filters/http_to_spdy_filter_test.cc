@@ -37,10 +37,13 @@ using testing::Pointee;
 
 namespace {
 
+const int kSpdyVersion = 2;
+
 class HttpToSpdyFilterTest : public testing::Test {
  public:
   HttpToSpdyFilterTest()
-      : connection_(static_cast<conn_rec*>(
+      : framer_(kSpdyVersion),
+        connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         request_(static_cast<request_rec*>(
             apr_pcalloc(local_.pool(), sizeof(request_rec)))),
@@ -84,6 +87,7 @@ class HttpToSpdyFilterTest : public testing::Test {
     return status;
   }
 
+  net::SpdyFramer framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
   mod_spdy::LocalPool local_;
   conn_rec* const connection_;
@@ -113,13 +117,13 @@ const char* kBodyData3 =
 
 TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // Set up our data structures that we're testing:
-  const spdy::SpdyStreamId stream_id = 3;
-  const spdy::SpdyStreamId associated_stream_id = 0;
-  const spdy::SpdyPriority priority = SPDY_PRIORITY_HIGHEST;
+  const net::SpdyStreamId stream_id = 3;
+  const net::SpdyStreamId associated_stream_id = 0;
+  const net::SpdyPriority priority = SPDY_PRIORITY_HIGHEST;
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               &output_queue_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
-  spdy::SpdyFrame* frame;
+  net::SpdyFrame* frame;
 
   // Set the response headers of the request:
   apr_table_setn(request_->headers_out, "Connection", "close");
@@ -134,22 +138,22 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   // from request->headers_out rather than the data we put in):
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_THAT(frame, Pointee(IsControlFrameOfType(spdy::SYN_REPLY)));
-    const spdy::SpdySynReplyControlFrame& syn_reply_frame =
-        *static_cast<spdy::SpdySynReplyControlFrame*>(frame);
+    ASSERT_THAT(frame, Pointee(IsControlFrameOfType(net::SYN_REPLY)));
+    const net::SpdySynReplyControlFrame& syn_reply_frame =
+        *static_cast<net::SpdySynReplyControlFrame*>(frame);
     ASSERT_EQ(stream_id, syn_reply_frame.stream_id());
-    ASSERT_EQ(spdy::CONTROL_FLAG_NONE, syn_reply_frame.flags());
+    ASSERT_EQ(net::CONTROL_FLAG_NONE, syn_reply_frame.flags());
 
-    spdy::SpdyHeaderBlock block;
-    ASSERT_TRUE(mod_spdy::ParseHeaderBlockInBuffer(
+    net::SpdyHeaderBlock block;
+    ASSERT_TRUE(framer_.ParseHeaderBlockInBuffer(
         syn_reply_frame.header_block(),
         syn_reply_frame.header_block_len(),
         &block));
     EXPECT_EQ(5, block.size());
     EXPECT_EQ("text/html", block[mod_spdy::http::kContentType]);
     EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
-    EXPECT_EQ("200", block[spdy::kStatus]);
-    EXPECT_EQ("HTTP/1.1", block[spdy::kVersion]);
+    EXPECT_EQ("200", block[mod_spdy::spdy::kStatus]);
+    EXPECT_EQ("HTTP/1.1", block[mod_spdy::spdy::kVersion]);
     EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
               block[mod_spdy::http::kXModSpdy]);
     delete frame;
@@ -173,10 +177,10 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_THAT(frame, Pointee(IsDataFrame()));
-    const spdy::SpdyDataFrame& data_frame =
-        *static_cast<spdy::SpdyDataFrame*>(frame);
+    const net::SpdyDataFrame& data_frame =
+        *static_cast<net::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
-    ASSERT_EQ(spdy::DATA_FLAG_NONE, data_frame.flags());
+    ASSERT_EQ(net::DATA_FLAG_NONE, data_frame.flags());
     ASSERT_EQ(kBodyData1, std::string(data_frame.payload(),
                                       data_frame.length()));
     delete frame;
@@ -204,10 +208,10 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_THAT(frame, Pointee(IsDataFrame()));
-    const spdy::SpdyDataFrame& data_frame =
-        *static_cast<spdy::SpdyDataFrame*>(frame);
+    const net::SpdyDataFrame& data_frame =
+        *static_cast<net::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
-    ASSERT_EQ(spdy::DATA_FLAG_NONE, data_frame.flags());
+    ASSERT_EQ(net::DATA_FLAG_NONE, data_frame.flags());
     const base::StringPiece data(data_frame.payload(), data_frame.length());
     ASSERT_TRUE(data.starts_with(kBodyData2));
     ASSERT_TRUE(data.ends_with("xxxxxxx"));
@@ -216,10 +220,10 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_THAT(frame, Pointee(IsDataFrame()));
-    const spdy::SpdyDataFrame& data_frame =
-        *static_cast<spdy::SpdyDataFrame*>(frame);
+    const net::SpdyDataFrame& data_frame =
+        *static_cast<net::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
-    ASSERT_EQ(spdy::DATA_FLAG_NONE, data_frame.flags());
+    ASSERT_EQ(net::DATA_FLAG_NONE, data_frame.flags());
     const base::StringPiece data(data_frame.payload(), data_frame.length());
     ASSERT_TRUE(data.starts_with("xxxxxxx"));
     ASSERT_TRUE(data.ends_with("xxxxxxx"));
@@ -242,10 +246,10 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_THAT(frame, Pointee(IsDataFrame()));
-    const spdy::SpdyDataFrame& data_frame =
-        *static_cast<spdy::SpdyDataFrame*>(frame);
+    const net::SpdyDataFrame& data_frame =
+        *static_cast<net::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
-    ASSERT_EQ(spdy::DATA_FLAG_NONE, data_frame.flags());
+    ASSERT_EQ(net::DATA_FLAG_NONE, data_frame.flags());
     const base::StringPiece data(data_frame.payload(), data_frame.length());
     ASSERT_TRUE(data.starts_with("yyyyyyy"));
     ASSERT_TRUE(data.ends_with("yyyyyyy"));
@@ -254,10 +258,10 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_THAT(frame, Pointee(IsDataFrame()));
-    const spdy::SpdyDataFrame& data_frame =
-        *static_cast<spdy::SpdyDataFrame*>(frame);
+    const net::SpdyDataFrame& data_frame =
+        *static_cast<net::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
-    ASSERT_EQ(spdy::DATA_FLAG_FIN, data_frame.flags());
+    ASSERT_EQ(net::DATA_FLAG_FIN, data_frame.flags());
     const base::StringPiece data(data_frame.payload(), data_frame.length());
     ASSERT_TRUE(data.starts_with("yyyyyyy"));
     ASSERT_TRUE(data.ends_with(kBodyData3));
@@ -278,13 +282,13 @@ const char* kServerPushBodyData =
 
 TEST_F(HttpToSpdyFilterTest, ServerPush) {
   // Set up our data structures that we're testing:
-  const spdy::SpdyStreamId stream_id = 4;
-  const spdy::SpdyStreamId associated_stream_id = 3;
-  const spdy::SpdyPriority priority = 1;
+  const net::SpdyStreamId stream_id = 4;
+  const net::SpdyStreamId associated_stream_id = 3;
+  const net::SpdyPriority priority = 1;
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               &output_queue_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
-  spdy::SpdyFrame* frame;
+  net::SpdyFrame* frame;
 
   // Set the response headers of the request:
   apr_table_setn(request_->headers_out, "Connection", "close");
@@ -300,24 +304,24 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
   // set:
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
-    ASSERT_THAT(frame, Pointee(IsControlFrameOfType(spdy::SYN_STREAM)));
-    const spdy::SpdySynStreamControlFrame& syn_stream_frame =
-        *static_cast<spdy::SpdySynStreamControlFrame*>(frame);
+    ASSERT_THAT(frame, Pointee(IsControlFrameOfType(net::SYN_STREAM)));
+    const net::SpdySynStreamControlFrame& syn_stream_frame =
+        *static_cast<net::SpdySynStreamControlFrame*>(frame);
     ASSERT_EQ(stream_id, syn_stream_frame.stream_id());
     ASSERT_EQ(associated_stream_id, syn_stream_frame.associated_stream_id());
     ASSERT_EQ(priority, syn_stream_frame.priority());
-    ASSERT_EQ(spdy::CONTROL_FLAG_UNIDIRECTIONAL, syn_stream_frame.flags());
+    ASSERT_EQ(net::CONTROL_FLAG_UNIDIRECTIONAL, syn_stream_frame.flags());
 
-    spdy::SpdyHeaderBlock block;
-    ASSERT_TRUE(mod_spdy::ParseHeaderBlockInBuffer(
+    net::SpdyHeaderBlock block;
+    ASSERT_TRUE(framer_.ParseHeaderBlockInBuffer(
         syn_stream_frame.header_block(),
         syn_stream_frame.header_block_len(),
         &block));
     EXPECT_EQ(5, block.size());
     EXPECT_EQ("text/css", block[mod_spdy::http::kContentType]);
     EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
-    EXPECT_EQ("200", block[spdy::kStatus]);
-    EXPECT_EQ("HTTP/1.1", block[spdy::kVersion]);
+    EXPECT_EQ("200", block[mod_spdy::spdy::kStatus]);
+    EXPECT_EQ("HTTP/1.1", block[mod_spdy::spdy::kVersion]);
     EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
               block[mod_spdy::http::kXModSpdy]);
     delete frame;
@@ -334,10 +338,10 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
   {
     ASSERT_TRUE(output_queue_.Pop(&frame));
     ASSERT_THAT(frame, Pointee(IsDataFrame()));
-    const spdy::SpdyDataFrame& data_frame =
-        *static_cast<spdy::SpdyDataFrame*>(frame);
+    const net::SpdyDataFrame& data_frame =
+        *static_cast<net::SpdyDataFrame*>(frame);
     ASSERT_EQ(stream_id, data_frame.stream_id());
-    ASSERT_EQ(spdy::DATA_FLAG_FIN, data_frame.flags());
+    ASSERT_EQ(net::DATA_FLAG_FIN, data_frame.flags());
     const base::StringPiece data(data_frame.payload(), data_frame.length());
     ASSERT_EQ(kServerPushBodyData, data);
     delete frame;

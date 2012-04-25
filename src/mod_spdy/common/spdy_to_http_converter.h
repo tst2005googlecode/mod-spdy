@@ -44,13 +44,13 @@ class SpdyToHttpConverter {
   // Convert the SPDY frame to HTTP and make appropriate calls to the visitor.
   // In some cases data may be buffered, but everything will get flushed out to
   // the visitor by the time the final frame (with FLAG_FIN set) is done.
-  Status ConvertSynStreamFrame(const spdy::SpdySynStreamControlFrame& frame);
-  Status ConvertHeadersFrame(const spdy::SpdyHeadersControlFrame& frame);
-  Status ConvertDataFrame(const spdy::SpdyDataFrame& frame);
+  Status ConvertSynStreamFrame(const net::SpdySynStreamControlFrame& frame);
+  Status ConvertHeadersFrame(const net::SpdyHeadersControlFrame& frame);
+  Status ConvertDataFrame(const net::SpdyDataFrame& frame);
 
 private:
   // Called to generate leading headers from a SYN_STREAM or HEADERS frame.
-  void GenerateLeadingHeaders(const spdy::SpdyHeaderBlock& block);
+  void GenerateLeadingHeaders(const net::SpdyHeaderBlock& block);
   // Called when we see a FLAG_FIN.  This terminates the request and appends
   // whatever trailing headers (if any) we have buffered.
   void FinishRequest();
@@ -63,7 +63,8 @@ private:
   };
 
   HttpRequestVisitorInterface* const visitor_;
-  spdy::SpdyHeaderBlock trailing_headers_;
+  net::SpdyFramer framer_;
+  net::SpdyHeaderBlock trailing_headers_;
   State state_;
   bool use_chunking_;
 

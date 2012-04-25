@@ -15,14 +15,9 @@
 #ifndef MOD_SPDY_COMMON_PROTOCOL_UTIL_H_
 #define MOD_SPDY_COMMON_PROTOCOL_UTIL_H_
 
+#include "base/string_piece.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
-
-// For some reason, spdy_protocol.h doesn't define kScheme along with kMethod,
-// kVersion, etc.  So we add it ourselves:
-namespace spdy {
-extern const char* const kScheme;
-}  // namespace spdy
 
 namespace mod_spdy {
 
@@ -43,14 +38,22 @@ extern const char* const kChunked;
 
 }  // namespace http
 
-// Given a pointer to (uncompressed) SPDY header block data, parse out the
-// headers into a SpdyHeaderBlock map.  Return false on failure.
-// TODO(mdsteele): In more recent versions of net/spdy/, this is a static
-//   method on SpdyFramer.  We should upgrade and use that instead of
-//   duplicating it here.
-bool ParseHeaderBlockInBuffer(const char* header_data,
-                              size_t header_length,
-                              spdy::SpdyHeaderBlock* block);
+namespace spdy {
+
+// Magic header names for SPDY v2.
+// TODO(mdsteele): These values are different for SPDY v3.  Once we support
+//   SPDY v3, we'll probably want to rename these, or provide functions that
+//   return values based on a version argument, or whatever.
+extern const char* const kMethod;
+extern const char* const kScheme;
+extern const char* const kStatus;
+extern const char* const kUrl;
+extern const char* const kVersion;
+
+}  // namespace spdy
+
+// Return a view of the raw bytes of the frame.
+base::StringPiece FrameData(const net::SpdyFrame& frame);
 
 }  // namespace mod_spdy
 

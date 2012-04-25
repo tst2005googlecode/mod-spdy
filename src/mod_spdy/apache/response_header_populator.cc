@@ -23,7 +23,7 @@
 namespace {
 
 int AddOneHeader(void* ptr, const char* key, const char* value) {
-  spdy::SpdyHeaderBlock* headers = static_cast<spdy::SpdyHeaderBlock*>(ptr);
+  net::SpdyHeaderBlock* headers = static_cast<net::SpdyHeaderBlock*>(ptr);
   mod_spdy::HeaderPopulatorInterface::MergeInHeader(key, value, headers);
   return 1;  // return zero to stop, or non-zero to continue iterating
 }
@@ -35,7 +35,7 @@ namespace mod_spdy {
 ResponseHeaderPopulator::ResponseHeaderPopulator(request_rec* request)
     : request_(request) {}
 
-void ResponseHeaderPopulator::Populate(spdy::SpdyHeaderBlock* headers) const {
+void ResponseHeaderPopulator::Populate(net::SpdyHeaderBlock* headers) const {
   // Put all the HTTP headers into the SPDY header table.  Note that APR tables
   // are multimaps -- they can store multiple values for the same key (see
   // http://thomas.eibner.dk/apache/table.html for details), so AddOneHeader

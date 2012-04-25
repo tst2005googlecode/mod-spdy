@@ -5,6 +5,7 @@
 {
   'variables': {
     'chromium_code': 1,
+    'chromium_root': '<(DEPTH)/third_party/chromium/src',
   },
   'targets': [
     {
@@ -22,23 +23,6 @@
       'sources': [
         # TODO(mdsteele): Add sources here as we need them.
         'instaweb/util/function.cc',
-        'instaweb/util/string_util.cc',
-      ],
-    },
-    {
-      'target_name': 'instaweb_test',
-      'type': 'executable',
-      'dependencies': [
-        'instaweb_util',
-        '<(DEPTH)/testing/gtest.gyp:gtest',
-        '<(DEPTH)/testing/gtest.gyp:gtest_main',
-      ],
-      'include_dirs': [
-        '<(DEPTH)',
-      ],
-      'sources': [
-        # TODO(mdsteele): Add sources here as we need them.
-        'instaweb/util/function_test.cc',
       ],
     },
     {
@@ -53,31 +37,13 @@
       ],
       'include_dirs': [
         '<(DEPTH)',
+        '<(chromium_root)',
       ],
       'sources': [
-        'spdy/spdy_bitmasks.h',
-        'spdy/spdy_frame_builder.cc',
-        'spdy/spdy_frame_builder.h',
-        'spdy/spdy_framer.cc',
-        'spdy/spdy_framer.h',
-        'spdy/spdy_protocol.h',
-      ],
-    },
-    {
-      'target_name': 'spdy_test',
-      'type': 'executable',
-      'dependencies': [
-        'spdy',
-        '<(DEPTH)/testing/gmock.gyp:gmock',
-        '<(DEPTH)/testing/gtest.gyp:gtest',
-        '<(DEPTH)/testing/gtest.gyp:gtest_main',
-      ],
-      'include_dirs': [
-        '<(DEPTH)',
-      ],
-      'sources': [
-        'spdy/spdy_framer_test.cc',
-        'spdy/spdy_protocol_test.cc',
+        '<(chromium_root)/net/spdy/buffered_spdy_framer.cc',
+        '<(chromium_root)/net/spdy/spdy_frame_builder.cc',
+        '<(chromium_root)/net/spdy/spdy_frame_reader.cc',
+        '<(chromium_root)/net/spdy/spdy_framer.cc',
       ],
     },
   ],
