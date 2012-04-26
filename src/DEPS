@@ -67,12 +67,14 @@ deps = {
     Var("chromium_trunk") + "/src/build/win" + Var("chromium_revision"),
   "src/build/internal":
     Var("chromium_trunk") + "/src/build/internal" + Var("chromium_revision"),
-  # src/build/util gives us the lastchange.py script for populating our version
-  # number with the SVN revision.  Unfortunately, as of the Chromium revision
-  # we use above, this script has been changed in a way that breaks us.  The
-  # easiest solution for now is to just use the older version of the script.
+
+  # lastchange.py changed its behavior at some point in a way that it
+  # stopped working for us. Thus we continue to sync just that file at
+  # a known good revision. We do not sync all of src/build/util so as
+  # to make sure that we don't accidentally depend on something else
+  # at that old revision.
   "src/build/util":
-    Var("chromium_trunk") + "/src/build/util" + "@90205",
+    File(Var("chromium_trunk") + "/src/build/util/lastchange.py" + "@90205"),
 
   "src/third_party/apache/apr/src":
     Var("apr_src") + Var("apr_revision"),
