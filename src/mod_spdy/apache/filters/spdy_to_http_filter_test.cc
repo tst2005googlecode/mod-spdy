@@ -25,7 +25,7 @@
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
-#include "net/spdy/spdy_framer.h"
+#include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -39,7 +39,7 @@ class SpdyToHttpFilterTest : public testing::Test {
       : stream_id_(1),
         priority_(SPDY_PRIORITY_HIGHEST),
         framer_(kSpdyVersion),
-        stream_(stream_id_, 0, priority_, &output_queue_),
+        stream_(stream_id_, 0, priority_, &output_queue_, &framer_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
     connection_ = static_cast<conn_rec*>(
@@ -120,7 +120,7 @@ class SpdyToHttpFilterTest : public testing::Test {
 
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
-  net::SpdyFramer framer_;
+  net::BufferedSpdyFramer framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
   mod_spdy::SpdyStream stream_;
   mod_spdy::SpdyToHttpFilter spdy_to_http_filter_;

@@ -29,15 +29,10 @@
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/spdy/spdy_protocol.h"
 
-namespace {
-
-const int kSpdyVersion = 2;
-
-}  // namespace
-
 namespace mod_spdy {
 
-SpdySession::SpdySession(const SpdyServerConfig* config,
+SpdySession::SpdySession(int spdy_version,
+                         const SpdyServerConfig* config,
                          SpdySessionIO* session_io,
                          SpdyStreamTaskFactory* task_factory,
                          Executor* executor)
@@ -45,7 +40,7 @@ SpdySession::SpdySession(const SpdyServerConfig* config,
       session_io_(session_io),
       task_factory_(task_factory),
       executor_(executor),
-      framer_(kSpdyVersion),
+      framer_(spdy_version),
       no_more_reading_(false),
       session_stopped_(false),
       already_sent_goaway_(false),
@@ -302,6 +297,10 @@ void SpdySession::OnSynStream(
     task_wrapper = new StreamTaskWrapper(
         this, stream_id, frame.associated_stream_id(), frame.priority());
     stream_map_[stream_id] = task_wrapper;
+    // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
+    //   stream, which the stream task will then have to re-parse.  This is
+    //   wasteful.  We should probably refactor such that we can send the
+    //   header map itself, and avoid the extra parsing.
     task_wrapper->stream()->PostInputFrame(framer_.CreateSynStream(
         stream_id, frame.associated_stream_id(), frame.priority(),
         frame.credential_slot(),
@@ -378,12 +377,11 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
 void SpdySession::OnPing(const net::SpdyPingControlFrame& frame) {
   VLOG(4) << "Received PING frame";
   // The SPDY spec requires the server to ignore even-numbered PING frames that
-  // it did not initiate.  See:
+  // it did not initiate (and right now, we never initiate pings).  See:
   // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-PING
-
-  // TODO(mdsteele): Check the ping ID, and ignore if it's even.  The current
-  // version of SpdyFramer we're using lacks a method to get the ping ID, so
-  // we'll have to wait until we upgrade.
+  if (frame.unique_id() % 2 == 0) {
+    return;
+  }
 
   // Any odd-numbered PING frame we receive was initiated by the client, and
   // should thus be echoed back, as per the SPDY spec.
@@ -411,6 +409,10 @@ void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,
     if (iter != stream_map_.end()) {
       VLOG(4) << "[stream " << stream_id << "] Received HEADERS frame";
       SpdyStream* stream = iter->second->stream();
+      // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
+      //   stream, which the stream task will then have to re-parse.  This is
+      //   wasteful.  We should probably refactor such that we can send the
+      //   header map itself, and avoid the extra parsing.
       stream->PostInputFrame(framer_.CreateHeaders(
           stream_id, static_cast<net::SpdyControlFlags>(frame.flags()),
           false,  // false = uncompressed
@@ -503,7 +505,7 @@ void SpdySession::StopSession() {
     base::AutoLock autolock(stream_map_lock_);
     for (SpdyStreamMap::const_iterator iter = stream_map_.begin();
          iter != stream_map_.end(); ++iter) {
-      iter->second->stream()->Abort();
+      iter->second->stream()->AbortSilently();
     }
   }
   // Stop all stream threads and tasks for this SPDY session.  This will
@@ -521,7 +523,7 @@ void SpdySession::AbortStreamSilently(net::SpdyStreamId stream_id) {
   base::AutoLock autolock(stream_map_lock_);
   SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
   if (iter != stream_map_.end()) {
-    iter->second->stream()->Abort();
+    iter->second->stream()->AbortSilently();
   }
 }
 
@@ -558,13 +560,13 @@ bool SpdySession::StreamMapIsEmpty() {
 // the other methods of this class (Run(), Cancel(), and the destructor) are
 // liable to be called from other threads by the executor.
 SpdySession::StreamTaskWrapper::StreamTaskWrapper(
-    SpdySession* spdy_conn,
+    SpdySession* spdy_session,
     net::SpdyStreamId stream_id,
     net::SpdyStreamId associated_stream_id,
     net::SpdyPriority priority)
-    : spdy_session_(spdy_conn),
+    : spdy_session_(spdy_session),
       stream_(stream_id, associated_stream_id, priority,
-              &spdy_session_->output_queue_),
+              &spdy_session_->output_queue_, &spdy_session_->framer_),
       subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {}
 
 SpdySession::StreamTaskWrapper::~StreamTaskWrapper() {

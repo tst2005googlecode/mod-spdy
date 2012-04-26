@@ -42,10 +42,11 @@ class SpdyStreamTaskFactory;
 class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
  public:
   // The SpdySession does _not_ take ownership of any of these arguments.
-  SpdySession(const SpdyServerConfig* config,
-                 SpdySessionIO* session_io,
-                 SpdyStreamTaskFactory* task_factory,
-                 Executor* executor);
+  SpdySession(int spdy_version,
+              const SpdyServerConfig* config,
+              SpdySessionIO* session_io,
+              SpdyStreamTaskFactory* task_factory,
+              Executor* executor);
   virtual ~SpdySession();
 
   // Process the session; don't return until the session is finished.

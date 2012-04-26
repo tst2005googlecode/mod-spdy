@@ -84,11 +84,9 @@ class FakeStreamTask : public net_instaweb::Function {
 
  private:
   FakeStreamTask(mod_spdy::SpdyStream* stream)
-      : stream_(stream),
-        framer_(kSpdyVersion) {}
+      : stream_(stream) {}
 
   mod_spdy::SpdyStream* const stream_;
-  net::SpdyFramer framer_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeStreamTask);
 };
@@ -105,26 +103,13 @@ void FakeStreamTask::Run() {
   headers["status"] = "200";
   headers["version"] = "HTTP/1.1";
   if (stream_->is_server_push()) {
-    stream_->SendOutputFrame(framer_.CreateSynStream(
-        stream_->stream_id(),
-        stream_->associated_stream_id(),
-        stream_->priority(),
-        0,  // 0 = no credential slot
-        net::CONTROL_FLAG_NONE,
-        false,  // false = don't use compression
-        &headers));
+    stream_->SendOutputSynStream(headers, false);
   } else {
-    stream_->SendOutputFrame(framer_.CreateSynReply(
-        stream_->stream_id(),
-        net::CONTROL_FLAG_NONE,
-        false,  // false = don't use compression
-        &headers));
+    stream_->SendOutputSynReply(headers, false);
   }
 
-  stream_->SendOutputFrame(framer_.CreateDataFrame(
-      stream_->stream_id(), "foobar", 6, net::DATA_FLAG_NONE));
-  stream_->SendOutputFrame(framer_.CreateDataFrame(
-      stream_->stream_id(), "quux", 4, net::DATA_FLAG_FIN));
+  stream_->SendOutputDataFrame("foobar", false);
+  stream_->SendOutputDataFrame("quux", true);
 }
 
 // An executor that runs all tasks in the same thread, either immediately when
@@ -177,7 +162,8 @@ class SpdySessionTest : public testing::Test {
  public:
   SpdySessionTest()
       : framer_(kSpdyVersion),
-        session_(&config_, &session_io_, &task_factory_, &executor_) {
+        session_(kSpdyVersion, &config_, &session_io_, &task_factory_,
+                 &executor_) {
     ON_CALL(session_io_, IsConnectionAborted()).WillByDefault(Return(false));
     ON_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
         .WillByDefault(Invoke(this, &SpdySessionTest::ReadNextInputChunk));

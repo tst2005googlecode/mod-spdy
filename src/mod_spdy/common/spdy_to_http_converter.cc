@@ -27,8 +27,6 @@ namespace mod_spdy {
 
 namespace {
 
-const int kSpdyVersion = 2;
-
 // Functions to test for FLAG_FIN.  Using these functions instead of testing
 // flags() directly helps guard against mixing up & with && or mixing up
 // CONTROL_FLAG_FIN with DATA_FLAG_FIN.
@@ -87,9 +85,10 @@ void InsertHeader(const base::StringPiece key,
 
 }  // namespace
 
-SpdyToHttpConverter::SpdyToHttpConverter(HttpRequestVisitorInterface* visitor)
+SpdyToHttpConverter::SpdyToHttpConverter(int spdy_version,
+                                         HttpRequestVisitorInterface* visitor)
     : visitor_(visitor),
-      framer_(kSpdyVersion),
+      framer_(spdy_version),
       state_(NO_FRAMES_YET),
       use_chunking_(true) {
   CHECK(visitor);

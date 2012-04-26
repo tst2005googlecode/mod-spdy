@@ -504,7 +504,7 @@ int ProcessConnection(conn_rec* connection) {
   scoped_ptr<mod_spdy::Executor> executor(
       gPerProcessThreadPool->NewExecutor());
   mod_spdy::SpdySession spdy_session(
-      config, &session_io, &task_factory, executor.get());
+      kSpdyVersionNumber, config, &session_io, &task_factory, executor.get());
   // This call will block until the session has closed down.
   spdy_session.Run();
 

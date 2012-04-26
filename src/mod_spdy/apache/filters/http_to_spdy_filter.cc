@@ -54,12 +54,9 @@
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/version.h"
-#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace {
-
-const int kSpdyVersion = 2;
 
 const char* kModSpdyVersion = MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
 
@@ -76,7 +73,6 @@ namespace mod_spdy {
 
 HttpToSpdyFilter::HttpToSpdyFilter(SpdyStream* stream)
     : stream_(stream),
-      framer_(kSpdyVersion),
       headers_have_been_sent_(false),
       end_of_stream_reached_(false) {
   DCHECK(stream_ != NULL);
@@ -290,36 +286,15 @@ void HttpToSpdyFilter::SendHeaders(const HeaderPopulatorInterface& populator,
   net::SpdyHeaderBlock headers;
   populator.Populate(&headers);
   headers[http::kXModSpdy] = kModSpdyVersion;
-  const net::SpdyControlFlags flags =
-      flag_fin ? net::CONTROL_FLAG_FIN : net::CONTROL_FLAG_NONE;
-  // Don't compress the headers in the frame here; it will be compressed later
-  // by the master connection (which maintains the shared header compression
-  // state for all streams).
   if (stream_->is_server_push()) {
-    stream_->SendOutputFrame(framer_.CreateSynStream(
-        stream_->stream_id(), stream_->associated_stream_id(),
-        stream_->priority(),
-        0,  // 0 = no credential slot
-        static_cast<net::SpdyControlFlags>(
-            flags | net::CONTROL_FLAG_UNIDIRECTIONAL),
-        false,  // false = don't use compression
-        &headers));
+    stream_->SendOutputSynStream(headers, flag_fin);
   } else {
-    stream_->SendOutputFrame(framer_.CreateSynReply(
-        stream_->stream_id(), flags,
-        false,  // false = don't use compression
-        &headers));
+    stream_->SendOutputSynReply(headers, flag_fin);
   }
 }
 
 void HttpToSpdyFilter::SendData(const char* data, size_t size, bool flag_fin) {
-  // TODO(mdsteele): Once we support SPDY v3 (and if the DATA frame
-  //   comprsession feature hasn't been removed), we may want to consider doing
-  //   that compression here rather than in the master connection.
-  const net::SpdyDataFlags flags =
-      flag_fin ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
-  stream_->SendOutputFrame(framer_.CreateDataFrame(
-      stream_->stream_id(), data, size, flags));
+  stream_->SendOutputDataFrame(base::StringPiece(data, size), flag_fin);
 }
 
 }  // namespace mod_spdy

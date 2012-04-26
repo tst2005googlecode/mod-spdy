@@ -26,7 +26,8 @@
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "mod_spdy/common/version.h"
-#include "net/spdy/spdy_frame_builder.h"
+#include "net/spdy/buffered_spdy_framer.h"
+#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -43,6 +44,7 @@ class HttpToSpdyFilterTest : public testing::Test {
  public:
   HttpToSpdyFilterTest()
       : framer_(kSpdyVersion),
+        buffered_framer_(kSpdyVersion),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         request_(static_cast<request_rec*>(
@@ -88,6 +90,7 @@ class HttpToSpdyFilterTest : public testing::Test {
   }
 
   net::SpdyFramer framer_;
+  net::BufferedSpdyFramer buffered_framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
   mod_spdy::LocalPool local_;
   conn_rec* const connection_;
@@ -121,7 +124,7 @@ TEST_F(HttpToSpdyFilterTest, ClientRequest) {
   const net::SpdyStreamId associated_stream_id = 0;
   const net::SpdyPriority priority = SPDY_PRIORITY_HIGHEST;
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              &output_queue_);
+                              &output_queue_, &buffered_framer_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
   net::SpdyFrame* frame;
 
@@ -286,7 +289,7 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
   const net::SpdyStreamId associated_stream_id = 3;
   const net::SpdyPriority priority = 1;
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              &output_queue_);
+                              &output_queue_, &buffered_framer_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
   net::SpdyFrame* frame;
 

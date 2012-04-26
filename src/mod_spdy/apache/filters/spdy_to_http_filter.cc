@@ -29,8 +29,6 @@
 
 namespace {
 
-const int kSpdyVersion = 2;
-
 // If, during an AP_MODE_GETLINE read, we pull in this much data (or more)
 // without seeing a linebreak, just give up and return what we have.
 const size_t kGetlineThreshold = 4096;
@@ -41,9 +39,8 @@ namespace mod_spdy {
 
 SpdyToHttpFilter::SpdyToHttpFilter(SpdyStream* stream)
     : stream_(stream),
-      framer_(kSpdyVersion),
       visitor_(&data_buffer_),
-      converter_(&visitor_),
+      converter_(stream_->spdy_version(), &visitor_),
       next_read_start_(0) {
   DCHECK(stream_ != NULL);
 }
@@ -336,9 +333,7 @@ bool SpdyToHttpFilter::DecodeDataFrame(const net::SpdyDataFrame& frame) {
 }
 
 void SpdyToHttpFilter::AbortStream(net::SpdyStatusCodes status) {
-  stream_->SendOutputFrame(framer_.CreateRstStream(
-      stream_->stream_id(), status));
-  stream_->Abort();
+  stream_->AbortWithRstStream(status);
 }
 
 }  // namespace mod_spdy

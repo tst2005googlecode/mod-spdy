@@ -57,7 +57,9 @@ class MockHttpRequestVisitor: public mod_spdy::HttpRequestVisitorInterface {
 
 class SpdyToHttpConverterTest : public testing::Test {
  public:
-  SpdyToHttpConverterTest() : converter_(&visitor_), framer_(kSpdyVersion) {}
+  SpdyToHttpConverterTest() :
+      converter_(kSpdyVersion, &visitor_),
+      framer_(kSpdyVersion) {}
 
  protected:
   void AddRequiredHeaders() {

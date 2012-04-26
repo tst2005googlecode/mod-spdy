@@ -27,7 +27,8 @@ class HttpRequestVisitorInterface;
 // stream to the specified HttpRequestVisitorInterface.
 class SpdyToHttpConverter {
  public:
-  explicit SpdyToHttpConverter(HttpRequestVisitorInterface* visitor);
+  SpdyToHttpConverter(int spdy_version,
+                      HttpRequestVisitorInterface* visitor);
   ~SpdyToHttpConverter();
 
   enum Status {

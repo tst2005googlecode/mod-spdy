@@ -21,8 +21,8 @@
 #include "mod_spdy/common/spdy_session_io.h"
 
 namespace net {
+class BufferedSpdyFramer;
 class SpdyFrame;
-class SpdyFramer;
 }  // namespace net
 
 namespace mod_spdy {

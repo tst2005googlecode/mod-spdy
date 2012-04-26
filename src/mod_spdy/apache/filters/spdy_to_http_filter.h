@@ -66,7 +66,6 @@ class SpdyToHttpFilter {
   void AbortStream(net::SpdyStatusCodes status);
 
   SpdyStream* const stream_;
-  net::SpdyFramer framer_;
   std::string data_buffer_;
   HttpStringBuilder visitor_;
   SpdyToHttpConverter converter_;
