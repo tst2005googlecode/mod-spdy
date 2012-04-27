@@ -31,14 +31,12 @@
 
 namespace {
 
-const int kSpdyVersion = 2;
-
-class SpdyToHttpFilterTest : public testing::Test {
+class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
  public:
   SpdyToHttpFilterTest()
       : stream_id_(1),
         priority_(SPDY_PRIORITY_HIGHEST),
-        framer_(kSpdyVersion),
+        framer_(GetParam()),
         stream_(stream_id_, 0, priority_, &output_queue_, &framer_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
@@ -132,7 +130,7 @@ class SpdyToHttpFilterTest : public testing::Test {
   apr_bucket_brigade* brigade_;
 };
 
-TEST_F(SpdyToHttpFilterTest, SimpleGetRequest) {
+TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
   // Perform an INIT.  It should succeed, with no effect.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_INIT, APR_BLOCK_READ, 1337));
   ExpectEndOfBrigade();
@@ -199,7 +197,7 @@ TEST_F(SpdyToHttpFilterTest, SimpleGetRequest) {
       Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 4)));
 }
 
-TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
+TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
   headers["host"] = "www.example.com";
@@ -264,7 +262,7 @@ TEST_F(SpdyToHttpFilterTest, SimplePostRequest) {
   ASSERT_TRUE(APR_STATUS_IS_EOF(Read(AP_MODE_GETLINE, APR_BLOCK_READ, 0)));
 }
 
-TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
+TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
   headers["host"] = "www.example.net";
@@ -310,7 +308,7 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
   ExpectEndOfBrigade();
 }
 
-TEST_F(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
+TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
   // Send a SYN_STREAM frame with some of the headers.
   net::SpdyHeaderBlock headers;
   headers["host"] = "www.example.org";
@@ -343,7 +341,7 @@ TEST_F(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
   ExpectEndOfBrigade();
 }
 
-TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
+TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
   headers["host"] = "www.example.org";
@@ -388,7 +386,7 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
   ExpectEndOfBrigade();
 }
 
-TEST_F(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
+TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
   headers["host"] = "www.example.org";
@@ -424,7 +422,7 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
   ExpectEndOfBrigade();
 }
 
-TEST_F(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
+TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
   headers["host"] = "www.example.org";
@@ -461,7 +459,7 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
   ExpectEndOfBrigade();
 }
 
-TEST_F(SpdyToHttpFilterTest, PostRequestWithContentLength) {
+TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLength) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
   headers["host"] = "www.example.org";
@@ -498,7 +496,7 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithContentLength) {
   ExpectEndOfBrigade();
 }
 
-TEST_F(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
+TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
   // Send a SYN_STREAM frame from the client, including a content-length.
   net::SpdyHeaderBlock headers;
   headers["content-length"] = "22";
@@ -536,5 +534,9 @@ TEST_F(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
   ExpectEosBucket();
   ExpectEndOfBrigade();
 }
+
+// Run each test over both SPDY v2 and SPDY v3.
+INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdyToHttpFilterTest,
+                        testing::Values(2, 3));
 
 }  // namespace

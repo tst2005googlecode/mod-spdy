@@ -38,13 +38,11 @@ using testing::Pointee;
 
 namespace {
 
-const int kSpdyVersion = 2;
-
-class HttpToSpdyFilterTest : public testing::Test {
+class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
  public:
   HttpToSpdyFilterTest()
-      : framer_(kSpdyVersion),
-        buffered_framer_(kSpdyVersion),
+      : framer_(GetParam()),
+        buffered_framer_(GetParam()),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         request_(static_cast<request_rec*>(
@@ -118,7 +116,7 @@ const char* kBodyData3 =
     "  </body>\n"
     "</html>\n";
 
-TEST_F(HttpToSpdyFilterTest, ClientRequest) {
+TEST_P(HttpToSpdyFilterTest, ClientRequest) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyStreamId associated_stream_id = 0;
@@ -283,7 +281,7 @@ const char* kServerPushBodyData =
     "BODY { color: red; }\n"
     "H1 { color: blue; }\n";
 
-TEST_F(HttpToSpdyFilterTest, ServerPush) {
+TEST_P(HttpToSpdyFilterTest, ServerPush) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 4;
   const net::SpdyStreamId associated_stream_id = 3;
@@ -351,5 +349,9 @@ TEST_F(HttpToSpdyFilterTest, ServerPush) {
   }
   ASSERT_FALSE(output_queue_.Pop(&frame));
 }
+
+// Run each test over both SPDY v2 and SPDY v3.
+INSTANTIATE_TEST_CASE_P(Spdy2And3, HttpToSpdyFilterTest,
+                        testing::Values(2, 3));
 
 }  // namespace

@@ -29,8 +29,6 @@ using testing::Eq;
 using testing::InSequence;
 using testing::Sequence;
 
-const int kSpdyVersion = 2;
-
 const char* kMethod = "GET";
 const char* kScheme = "http";
 const char* kHost = "www.example.com";
@@ -55,11 +53,11 @@ class MockHttpRequestVisitor: public mod_spdy::HttpRequestVisitorInterface {
   MOCK_METHOD0(OnComplete, void());
 };
 
-class SpdyToHttpConverterTest : public testing::Test {
+class SpdyToHttpConverterTest : public testing::TestWithParam<int> {
  public:
   SpdyToHttpConverterTest() :
-      converter_(kSpdyVersion, &visitor_),
-      framer_(kSpdyVersion) {}
+      converter_(GetParam(), &visitor_),
+      framer_(GetParam()) {}
 
  protected:
   void AddRequiredHeaders() {
@@ -76,7 +74,7 @@ class SpdyToHttpConverterTest : public testing::Test {
   net::SpdyHeaderBlock headers_;
 };
 
-TEST_F(SpdyToHttpConverterTest, MultiFrameStream) {
+TEST_P(SpdyToHttpConverterTest, MultiFrameStream) {
   // We expect all calls to happen in the specified order.
   InSequence seq;
 
@@ -124,7 +122,7 @@ TEST_F(SpdyToHttpConverterTest, MultiFrameStream) {
             converter_.ConvertDataFrame(*data_frame_2));
 }
 
-TEST_F(SpdyToHttpConverterTest, SynFrameWithHeaders) {
+TEST_P(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   AddRequiredHeaders();
   headers_["foo"] = "bar";
   headers_["spdy"] = "spdy";
@@ -184,7 +182,7 @@ TEST_F(SpdyToHttpConverterTest, SynFrameWithHeaders) {
             converter_.ConvertSynStreamFrame(*syn_frame));
 }
 
-TEST_F(SpdyToHttpConverterTest, TrailingHeaders) {
+TEST_P(SpdyToHttpConverterTest, TrailingHeaders) {
   // First, send a SYN_STREAM frame without FLAG_FIN set.  We should get the
   // headers out that we sent, but no call yet to OnLeadingHeadersComplete,
   // because there might still be a HEADERS frame.
@@ -250,7 +248,7 @@ TEST_F(SpdyToHttpConverterTest, TrailingHeaders) {
             converter_.ConvertHeadersFrame(*headers_frame));
 }
 
-TEST_F(SpdyToHttpConverterTest, WithContentLength) {
+TEST_P(SpdyToHttpConverterTest, WithContentLength) {
   // First, send a SYN_STREAM frame without FLAG_FIN set.  We should get the
   // headers out that we sent, but no call yet to OnLeadingHeadersComplete,
   // because there might still be a HEADERS frame.
@@ -309,7 +307,7 @@ TEST_F(SpdyToHttpConverterTest, WithContentLength) {
             converter_.ConvertHeadersFrame(*headers_frame));
 }
 
-TEST_F(SpdyToHttpConverterTest, DoubleSynStreamFrame) {
+TEST_P(SpdyToHttpConverterTest, DoubleSynStreamFrame) {
   AddRequiredHeaders();
   scoped_ptr<net::SpdySynStreamControlFrame> syn_stream_frame(
       framer_.CreateSynStream(
@@ -333,7 +331,7 @@ TEST_F(SpdyToHttpConverterTest, DoubleSynStreamFrame) {
             converter_.ConvertSynStreamFrame(*syn_stream_frame));
 }
 
-TEST_F(SpdyToHttpConverterTest, HeadersFrameBeforeSynStreamFrame) {
+TEST_P(SpdyToHttpConverterTest, HeadersFrameBeforeSynStreamFrame) {
   headers_["x-foo"] = "bar";
   scoped_ptr<net::SpdyHeadersControlFrame> headers_frame(
       framer_.CreateHeaders(
@@ -345,7 +343,7 @@ TEST_F(SpdyToHttpConverterTest, HeadersFrameBeforeSynStreamFrame) {
             converter_.ConvertHeadersFrame(*headers_frame));
 }
 
-TEST_F(SpdyToHttpConverterTest, DataFrameBeforeSynStreamFrame) {
+TEST_P(SpdyToHttpConverterTest, DataFrameBeforeSynStreamFrame) {
   scoped_ptr<net::SpdyDataFrame> data_frame(
       framer_.CreateDataFrame(
           1,  // stream ID
@@ -353,5 +351,9 @@ TEST_F(SpdyToHttpConverterTest, DataFrameBeforeSynStreamFrame) {
   EXPECT_EQ(SpdyToHttpConverter::FRAME_BEFORE_SYN_STREAM,
             converter_.ConvertDataFrame(*data_frame));
 }
+
+// Run each test over both SPDY v2 and SPDY v3.
+INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdyToHttpConverterTest,
+                        testing::Values(2, 3));
 
 }  // namespace

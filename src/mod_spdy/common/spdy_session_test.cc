@@ -47,8 +47,6 @@ using testing::WithArg;
 
 namespace {
 
-const int kSpdyVersion = 2;
-
 void AddRequiredHeaders(net::SpdyHeaderBlock* headers) {
   (*headers)["host"] = "www.example.com";
   (*headers)["method"] = "GET";
@@ -158,11 +156,11 @@ class InlineExecutor : public mod_spdy::Executor {
   DISALLOW_COPY_AND_ASSIGN(InlineExecutor);
 };
 
-class SpdySessionTest : public testing::Test {
+class SpdySessionTest : public testing::TestWithParam<int> {
  public:
   SpdySessionTest()
-      : framer_(kSpdyVersion),
-        session_(kSpdyVersion, &config_, &session_io_, &task_factory_,
+      : framer_(GetParam()),
+        session_(GetParam(), &config_, &session_io_, &task_factory_,
                  &executor_) {
     ON_CALL(session_io_, IsConnectionAborted()).WillByDefault(Return(false));
     ON_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
@@ -226,7 +224,7 @@ class SpdySessionTest : public testing::Test {
 };
 
 // Test that if the connection is already closed, we stop immediately.
-TEST_F(SpdySessionTest, ConnectionAlreadyClosed) {
+TEST_P(SpdySessionTest, ConnectionAlreadyClosed) {
   testing::InSequence seq;
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)))
       .WillOnce(Return(mod_spdy::SpdySessionIO::WRITE_CONNECTION_CLOSED));
@@ -236,7 +234,7 @@ TEST_F(SpdySessionTest, ConnectionAlreadyClosed) {
 }
 
 // Test that when the connection is aborted, we stop.
-TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
+TEST_P(SpdySessionTest, ImmediateConnectionAbort) {
   testing::InSequence seq;
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
@@ -247,7 +245,7 @@ TEST_F(SpdySessionTest, ImmediateConnectionAbort) {
 
 // Test responding to a PING frame from the client (followed by the connection
 // closing, so that we can exit the Run loop).
-TEST_F(SpdySessionTest, SinglePing) {
+TEST_P(SpdySessionTest, SinglePing) {
   PushPingFrame(1);
 
   testing::InSequence seq;
@@ -263,7 +261,7 @@ TEST_F(SpdySessionTest, SinglePing) {
 }
 
 // Test handling a single stream request.
-TEST_F(SpdySessionTest, SingleStream) {
+TEST_P(SpdySessionTest, SingleStream) {
   executor_.set_run_on_add(true);
   const net::SpdyStreamId stream_id = 1;
   const net::SpdyPriority priority = 2;
@@ -293,7 +291,7 @@ TEST_F(SpdySessionTest, SingleStream) {
 
 // Test that if SendFrameRaw fails, we immediately stop trying to send data and
 // shut down the session.
-TEST_F(SpdySessionTest, ShutDownSessionIfSendFrameRawFails) {
+TEST_P(SpdySessionTest, ShutDownSessionIfSendFrameRawFails) {
   executor_.set_run_on_add(true);
   PushSynStreamFrame(1, 2, net::CONTROL_FLAG_FIN);
 
@@ -319,7 +317,7 @@ TEST_F(SpdySessionTest, ShutDownSessionIfSendFrameRawFails) {
 
 // Test that when the client sends us garbage data, we send a GOAWAY frame and
 // then quit.
-TEST_F(SpdySessionTest, SendGoawayInResponseToGarbage) {
+TEST_P(SpdySessionTest, SendGoawayInResponseToGarbage) {
   PushGarbageData();
 
   testing::InSequence seq;
@@ -334,7 +332,7 @@ TEST_F(SpdySessionTest, SendGoawayInResponseToGarbage) {
 
 // Test that when the client sends us a SYN_STREAM with a corrupted header
 // block, we send a GOAWAY frame and then quit.
-TEST_F(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
+TEST_P(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
   net::SpdyHeaderBlock headers;
   headers["foobar"] = "Foo is to bar as bar is to baz.";
   scoped_ptr<net::SpdyFrame> frame(framer_.CreateSynStream(
@@ -359,7 +357,7 @@ TEST_F(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
 #ifdef NDEBUG
 // Test that when the client sends us a SYN_STREAM with a stream ID of 0, we
 // send a GOAWAY frame and then quit.
-TEST_F(SpdySessionTest, SendGoawayForSynStreamIdZero) {
+TEST_P(SpdySessionTest, SendGoawayForSynStreamIdZero) {
   net::SpdyHeaderBlock headers;
   AddRequiredHeaders(&headers);
   // SpdyFramer DCHECKS that the stream_id isn't zero, so just create the frame
@@ -382,7 +380,7 @@ TEST_F(SpdySessionTest, SendGoawayForSynStreamIdZero) {
 
 // Test that when the client sends us a SYN_STREAM with invalid flags, we
 // send a GOAWAY frame and then quit.
-TEST_F(SpdySessionTest, SendGoawayForSynStreamWithInvalidFlags) {
+TEST_P(SpdySessionTest, SendGoawayForSynStreamWithInvalidFlags) {
   net::SpdyHeaderBlock headers;
   AddRequiredHeaders(&headers);
   // SpdyFramer DCHECKS that the flags are valid, so just create the frame
@@ -404,7 +402,7 @@ TEST_F(SpdySessionTest, SendGoawayForSynStreamWithInvalidFlags) {
 
 // Test that when the client sends us two SYN_STREAMs with the same ID, we send
 // a GOAWAY frame (but still finish out the good stream before quitting).
-TEST_F(SpdySessionTest, SendGoawayForDuplicateStreamId) {
+TEST_P(SpdySessionTest, SendGoawayForDuplicateStreamId) {
   executor_.set_run_on_add(false);
   const net::SpdyStreamId stream_id = 1;
   const net::SpdyPriority priority = 2;
@@ -449,5 +447,8 @@ TEST_F(SpdySessionTest, SendGoawayForDuplicateStreamId) {
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
 }
+
+// Run each test over both SPDY v2 and SPDY v3.
+INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdySessionTest, testing::Values(2, 3));
 
 }  // namespace
