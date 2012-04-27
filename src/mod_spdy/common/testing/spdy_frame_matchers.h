@@ -23,13 +23,15 @@
 
 namespace mod_spdy {
 
+namespace testing {
+
 class IsControlFrameOfTypeMatcher :
-      public testing::MatcherInterface<const net::SpdyFrame&> {
+      public ::testing::MatcherInterface<const net::SpdyFrame&> {
  public:
   IsControlFrameOfTypeMatcher(net::SpdyControlType type) : type_(type) {}
   virtual ~IsControlFrameOfTypeMatcher() {}
   virtual bool MatchAndExplain(const net::SpdyFrame& frame,
-                               testing::MatchResultListener* listener) const;
+                               ::testing::MatchResultListener* listener) const;
   virtual void DescribeTo(std::ostream* out) const;
   virtual void DescribeNegationTo(std::ostream* out) const;
  private:
@@ -39,18 +41,18 @@ class IsControlFrameOfTypeMatcher :
 
 // Make a matcher that requires the argument to be a control frame of the given
 // type.
-inline testing::Matcher<const net::SpdyFrame&> IsControlFrameOfType(
+inline ::testing::Matcher<const net::SpdyFrame&> IsControlFrameOfType(
     net::SpdyControlType type) {
-  return testing::MakeMatcher(new IsControlFrameOfTypeMatcher(type));
+  return ::testing::MakeMatcher(new IsControlFrameOfTypeMatcher(type));
 }
 
 class IsDataFrameMatcher :
-      public testing::MatcherInterface<const net::SpdyFrame&> {
+      public ::testing::MatcherInterface<const net::SpdyFrame&> {
  public:
   IsDataFrameMatcher() {}
   virtual ~IsDataFrameMatcher() {}
   virtual bool MatchAndExplain(const net::SpdyFrame& frame,
-                               testing::MatchResultListener* listener) const;
+                               ::testing::MatchResultListener* listener) const;
   virtual void DescribeTo(std::ostream* out) const;
   virtual void DescribeNegationTo(std::ostream* out) const;
  private:
@@ -58,17 +60,17 @@ class IsDataFrameMatcher :
 };
 
 // Make a matcher that requires the argument to be a DATA frame.
-inline testing::Matcher<const net::SpdyFrame&> IsDataFrame() {
-  return testing::MakeMatcher(new IsDataFrameMatcher);
+inline ::testing::Matcher<const net::SpdyFrame&> IsDataFrame() {
+  return ::testing::MakeMatcher(new IsDataFrameMatcher);
 }
 
 class FlagFinIsMatcher :
-      public testing::MatcherInterface<const net::SpdyFrame&> {
+      public ::testing::MatcherInterface<const net::SpdyFrame&> {
  public:
   FlagFinIsMatcher(bool fin) : fin_(fin) {}
   virtual ~FlagFinIsMatcher() {}
   virtual bool MatchAndExplain(const net::SpdyFrame& frame,
-                               testing::MatchResultListener* listener) const;
+                               ::testing::MatchResultListener* listener) const;
   virtual void DescribeTo(std::ostream* out) const;
   virtual void DescribeNegationTo(std::ostream* out) const;
  private:
@@ -77,9 +79,11 @@ class FlagFinIsMatcher :
 };
 
 // Make a matcher that requires the frame to have the given FLAG_FIN value.
-inline testing::Matcher<const net::SpdyFrame&> FlagFinIs(bool fin) {
-  return testing::MakeMatcher(new FlagFinIsMatcher(fin));
+inline ::testing::Matcher<const net::SpdyFrame&> FlagFinIs(bool fin) {
+  return ::testing::MakeMatcher(new FlagFinIsMatcher(fin));
 }
+
+}  // namespace testing
 
 }  // namespace mod_spdy
 

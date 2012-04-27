@@ -23,6 +23,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/time.h"
 #include "mod_spdy/common/executor.h"
+#include "mod_spdy/common/testing/notification.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,28 +33,6 @@
 // because you're running under Valgrind.
 
 namespace {
-
-// A Notification allows one thread to Wait() until another thread calls Set().
-class Notification {
- public:
-  Notification() : condvar_(&lock_), flag_(false) {}
-  ~Notification() { Set(); }
-  void Set() {
-    base::AutoLock autolock(lock_);
-    flag_ = true;
-    condvar_.Broadcast();
-  }
-  void Wait() {
-    base::AutoLock autolock(lock_);
-    while (!flag_) {
-      condvar_.Wait();
-    }
-  }
- private:
-  base::Lock lock_;
-  base::ConditionVariable condvar_;
-  bool flag_;
-};
 
 // When run, a TestFunction waits for `wait` millis, then sets `*result` to
 // RAN.  When cancelled, it sets *result to CANCELLED.
@@ -176,7 +155,8 @@ TEST(ThreadPoolTest, MultipleExecutors) {
 // When run, a WaitFunction blocks until the notification is set.
 class WaitFunction : public net_instaweb::Function {
  public:
-  WaitFunction(Notification* notification) : notification_(notification) {}
+  WaitFunction(mod_spdy::testing::Notification* notification)
+      : notification_(notification) {}
   virtual ~WaitFunction() {}
  protected:
   // net_instaweb::Function methods:
@@ -185,7 +165,7 @@ class WaitFunction : public net_instaweb::Function {
   }
   virtual void Cancel() {}
  private:
-  Notification* const notification_;
+  mod_spdy::testing::Notification* const notification_;
   DISALLOW_COPY_AND_ASSIGN(WaitFunction);
 };
 
@@ -222,7 +202,7 @@ TEST(ThreadPoolTest, SamePriorityTasksAreFIFO) {
 
   // First, make sure no other tasks will get started until we set the
   // notification.
-  Notification start;
+  mod_spdy::testing::Notification start;
   executor->AddTask(new WaitFunction(&start), 0);
 
   // Add many tasks to the executor, of varying priorities.
@@ -299,7 +279,7 @@ TEST(ThreadPoolTest, CreateAndRetireWorkers) {
   // Start up three tasks.  That should push us up to three workers
   // immediately.  If we make sure to give those threads a chance to run, they
   // should soon pick up the tasks and all be busy.
-  Notification done1;
+  mod_spdy::testing::Notification done1;
   executor->AddTask(new WaitFunction(&done1), 0);
   executor->AddTask(new WaitFunction(&done1), 1);
   executor->AddTask(new WaitFunction(&done1), 2);
@@ -308,7 +288,7 @@ TEST(ThreadPoolTest, CreateAndRetireWorkers) {
 
   // Add three more tasks.  We should now be at the maximum number of workers,
   // and that fourth worker should be busy soon.
-  Notification done2;
+  mod_spdy::testing::Notification done2;
   executor->AddTask(new WaitFunction(&done2), 1);
   executor->AddTask(new WaitFunction(&done2), 2);
   executor->AddTask(new WaitFunction(&done2), 3);

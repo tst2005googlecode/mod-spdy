@@ -32,8 +32,8 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using mod_spdy::IsControlFrameOfType;
-using mod_spdy::IsDataFrame;
+using mod_spdy::testing::IsControlFrameOfType;
+using mod_spdy::testing::IsDataFrame;
 using testing::Pointee;
 
 namespace {

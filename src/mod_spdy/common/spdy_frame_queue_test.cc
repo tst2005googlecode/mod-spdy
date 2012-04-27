@@ -14,6 +14,10 @@
 
 #include "mod_spdy/common/spdy_frame_queue.h"
 
+#include "base/basictypes.h"
+#include "base/threading/platform_thread.h"
+#include "mod_spdy/common/testing/async_task_runner.h"
+#include "mod_spdy/common/testing/notification.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,9 +35,10 @@ net::SpdyStreamId GetPingId(net::SpdyFrame* frame) {
   return static_cast<net::SpdyPingControlFrame*>(frame)->unique_id();
 }
 
-void ExpectPop(net::SpdyStreamId expected, mod_spdy::SpdyFrameQueue* queue) {
+void ExpectPop(bool block, net::SpdyStreamId expected,
+               mod_spdy::SpdyFrameQueue* queue) {
   net::SpdyFrame* raw_frame = NULL;
-  const bool success = queue->Pop(false, &raw_frame);
+  const bool success = queue->Pop(block, &raw_frame);
   scoped_ptr<net::SpdyFrame> scoped_frame(raw_frame);
   EXPECT_TRUE(success);
   ASSERT_TRUE(scoped_frame != NULL);
@@ -55,15 +60,15 @@ TEST(SpdyFrameQueueTest, Simple) {
   queue.Insert(framer.CreatePingFrame(1));
   queue.Insert(framer.CreatePingFrame(3));
 
-  ExpectPop(4, &queue);
-  ExpectPop(1, &queue);
+  ExpectPop(false, 4, &queue);
+  ExpectPop(false, 1, &queue);
 
   queue.Insert(framer.CreatePingFrame(2));
   queue.Insert(framer.CreatePingFrame(5));
 
-  ExpectPop(3, &queue);
-  ExpectPop(2, &queue);
-  ExpectPop(5, &queue);
+  ExpectPop(false, 3, &queue);
+  ExpectPop(false, 2, &queue);
+  ExpectPop(false, 5, &queue);
   ExpectEmpty(&queue);
 }
 
@@ -77,7 +82,7 @@ TEST(SpdyFrameQueueTest, AbortEmptiesQueue) {
   queue.Insert(framer.CreatePingFrame(1));
   queue.Insert(framer.CreatePingFrame(3));
 
-  ExpectPop(4, &queue);
+  ExpectPop(false, 4, &queue);
 
   queue.Abort();
 
@@ -85,6 +90,34 @@ TEST(SpdyFrameQueueTest, AbortEmptiesQueue) {
   ASSERT_TRUE(queue.is_aborted());
 }
 
-// TODO(mdsteele): Add tests for threaded behavior and blocking Pop() calls.
+class BlockingPopTask : public mod_spdy::testing::AsyncTaskRunner::Task {
+ public:
+  explicit BlockingPopTask(mod_spdy::SpdyFrameQueue* queue) : queue_(queue) {}
+  virtual void Run() { ExpectPop(true, 7, queue_); }
+ private:
+  mod_spdy::SpdyFrameQueue* const queue_;
+  DISALLOW_COPY_AND_ASSIGN(BlockingPopTask);
+};
+
+TEST(SpdyFrameQueueTest, BlockingPop) {
+  net::SpdyFramer framer(kSpdyVersion);
+  mod_spdy::SpdyFrameQueue queue;
+
+  // Start a task that will do a blocking pop from the queue.
+  mod_spdy::testing::AsyncTaskRunner runner(new BlockingPopTask(&queue));
+  ASSERT_TRUE(runner.Start());
+
+  // Even if we wait for a little bit, the task shouldn't complete, because
+  // that thread is blocked, because the queue is still empty.
+  base::PlatformThread::Sleep(50);
+  runner.notification()->ExpectNotSet();
+  ExpectEmpty(&queue);
+
+  // Now, if we push something into the queue, the task should soon unblock and
+  // complete, and the queue should then be empty.
+  queue.Insert(framer.CreatePingFrame(7));
+  runner.notification()->ExpectSetWithinMillis(100);
+  ExpectEmpty(&queue);
+}
 
 }  // namespace

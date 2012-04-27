@@ -108,6 +108,7 @@
       'type': '<(library)',
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/net/net.gyp:instaweb_util',
         '<(DEPTH)/net/net.gyp:spdy',
         '<(DEPTH)/testing/gmock.gyp:gmock',
       ],
@@ -120,6 +121,8 @@
         '<(DEPTH)/testing/gmock.gyp:gmock',
       ],
       'sources': [
+        'common/testing/async_task_runner.cc',
+        'common/testing/notification.cc',
         'common/testing/spdy_frame_matchers.cc',
       ],
     },

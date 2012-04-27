@@ -42,9 +42,11 @@ std::string ControlTypeName(net::SpdyControlType type) {
 
 namespace mod_spdy {
 
+namespace testing {
+
 bool IsControlFrameOfTypeMatcher::MatchAndExplain(
     const net::SpdyFrame& frame,
-    testing::MatchResultListener* listener) const {
+    ::testing::MatchResultListener* listener) const {
   if (!frame.is_control_frame()) {
     *listener << "is a data frame";
     return false;
@@ -68,7 +70,7 @@ void IsControlFrameOfTypeMatcher::DescribeNegationTo(std::ostream* out) const {
 
 bool IsDataFrameMatcher::MatchAndExplain(
     const net::SpdyFrame& frame,
-    testing::MatchResultListener* listener) const {
+    ::testing::MatchResultListener* listener) const {
   if (frame.is_control_frame()) {
     *listener << "is a " << ControlTypeName(
         static_cast<const net::SpdyControlFrame*>(&frame)->type())
@@ -88,7 +90,7 @@ void IsDataFrameMatcher::DescribeNegationTo(std::ostream* out) const {
 
 bool FlagFinIsMatcher::MatchAndExplain(
     const net::SpdyFrame& frame,
-    testing::MatchResultListener* listener) const {
+    ::testing::MatchResultListener* listener) const {
   const bool fin = frame.is_control_frame() ?
       (frame.flags() & net::CONTROL_FLAG_FIN) :
       (frame.flags() & net::DATA_FLAG_FIN);
@@ -106,5 +108,7 @@ void FlagFinIsMatcher::DescribeTo(std::ostream* out) const {
 void FlagFinIsMatcher::DescribeNegationTo(std::ostream* out) const {
   *out << (fin_ ? "doesn't have FLAG_FIN set" : "has FLAG_FIN set");
 }
+
+}  // namespace testing
 
 }  // namespace mod_spdy
