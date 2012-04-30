@@ -44,7 +44,8 @@ SpdySession::SpdySession(int spdy_version,
       no_more_reading_(false),
       session_stopped_(false),
       already_sent_goaway_(false),
-      last_client_stream_id_(0) {
+      last_client_stream_id_(0),
+      initial_window_size_(net::kSpdyStreamInitialWindowSize) {
   framer_.set_visitor(this);
 }
 
@@ -224,8 +225,7 @@ void SpdySession::OnSynStream(
     const net::SpdySynStreamControlFrame& frame,
     const linked_ptr<net::SpdyHeaderBlock>& headers) {
   // The SPDY spec requires us to ignore SYN_STREAM frames after sending a
-  // GOAWAY frame.  See:
-  // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-GOAWAY
+  // GOAWAY frame (SPDY draft 3 section 2.6.6).
   if (already_sent_goaway_) {
     return;
   }
@@ -368,17 +368,39 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
                             uint8 flags, uint32 value) {
   VLOG(4) << "Received SETTING (flags=" << flags << "): "
           << id << "=" << value;
-  // TODO(mdsteele): For now, we ignore SETTINGS frames from the client.  Once
-  // we implement server-push, we should at least pay attention to the
-  // MAX_CONCURRENT_STREAMS setting from the client so that we don't overload
-  // them.
+  switch (id) {
+    case net::SETTINGS_INITIAL_WINDOW_SIZE:
+      // Flow control only exists for SPDY v3 and up.
+      if (spdy_version() < 3) {
+        LOG(ERROR) << "Client sent INITIAL_WINDOW_SIZE setting over "
+                   << "SPDY v" << spdy_version() << ".  Sending GOAWAY.";
+        SendGoAwayFrame();
+      } else {
+        SetInitialWindowSize(value);
+      }
+      break;
+    case net::SETTINGS_UPLOAD_BANDWIDTH:
+    case net::SETTINGS_DOWNLOAD_BANDWIDTH:
+    case net::SETTINGS_ROUND_TRIP_TIME:
+    case net::SETTINGS_MAX_CONCURRENT_STREAMS:
+    case net::SETTINGS_CURRENT_CWND:
+    case net::SETTINGS_DOWNLOAD_RETRANS_RATE:
+      // Ignore other settings for now.  Once we support server push, we'll
+      // need to pay attention to SETTINGS_MAX_CONCURRENT_STREAMS.
+      break;
+    default:
+      LOG(ERROR) << "Client sent invalid SETTINGS id (" << id
+                 << ").  Sending GOAWAY.";
+      SendGoAwayFrame();
+      break;
+  }
 }
 
 void SpdySession::OnPing(const net::SpdyPingControlFrame& frame) {
   VLOG(4) << "Received PING frame";
   // The SPDY spec requires the server to ignore even-numbered PING frames that
-  // it did not initiate (and right now, we never initiate pings).  See:
-  // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-PING
+  // it did not initiate (SPDY draft 3 section 2.6.5), and right now, we never
+  // initiate pings.
   if (frame.unique_id() % 2 == 0) {
     return;
   }
@@ -428,9 +450,60 @@ void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,
 
 void SpdySession::OnWindowUpdate(
     const net::SpdyWindowUpdateControlFrame& frame) {
-  // TODO(mdsteele): These don't occur in SPDY v2.  We'll have to use them once
-  // we implement SPDY v3.
-  LOG(DFATAL) << "Got a WINDOW_UPDATE frame over a SPDY v2 connection!?";
+  // Flow control only exists for SPDY v3 and up.
+  if (spdy_version() < 3) {
+    LOG(ERROR) << "Got a WINDOW_UPDATE frame over SPDY v" << spdy_version();
+    SendGoAwayFrame();
+    return;
+  }
+
+  base::AutoLock autolock(stream_map_lock_);
+  const net::SpdyStreamId stream_id = frame.stream_id();
+  SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
+  if (iter == stream_map_.end()) {
+    // We must ignore WINDOW_UPDATE frames for closed streams (SPDY draft 3
+    // section 2.6.8).
+    return;
+  }
+
+  VLOG(4) << "[stream " << stream_id << "] Received WINDOW_UPDATE("
+          << frame.delta_window_size() << ") frame";
+  iter->second->stream()->AdjustWindowSize(frame.delta_window_size());
+}
+
+void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {
+  // Flow control only exists for SPDY v3 and up.  We shouldn't be calling this
+  // method for SPDY v2.
+  if (spdy_version() < 3) {
+    LOG(DFATAL) << "SetInitialWindowSize called for SPDY v" << spdy_version();
+    return;
+  }
+
+  // Validate the new window size; it must be positive, but at most int32max.
+  if (new_init_window_size == 0 ||
+      new_init_window_size >
+      static_cast<uint32>(net::kSpdyStreamMaximumWindowSize)) {
+    LOG(WARNING) << "Client sent invalid init window size ("
+                 << new_init_window_size << ").  Sending GOAWAY.";
+    SendGoAwayFrame();
+    return;
+  }
+  // Sanity check that our current init window size is positive.  It's a signed
+  // int32, so we know it's no more than int32max.
+  DCHECK_GT(initial_window_size_, 0);
+  // We can now be sure that this subtraction won't overflow/underflow.
+  const int32 delta =
+      static_cast<int32>(new_init_window_size) - initial_window_size_;
+
+  // Set the initial window size for new streams.
+  initial_window_size_ = new_init_window_size;
+  // We also have to adjust the window size of all currently active streams by
+  // the delta (SPDY draft 3 section 2.6.8).
+  base::AutoLock autolock(stream_map_lock_);
+  for (SpdyStreamMap::const_iterator iter = stream_map_.begin();
+       iter != stream_map_.end(); ++iter) {
+    iter->second->stream()->AdjustWindowSize(delta);
+  }
 }
 
 // Compress (if necessary), send, and then delete the given frame object.
@@ -566,6 +639,7 @@ SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     net::SpdyPriority priority)
     : spdy_session_(spdy_session),
       stream_(stream_id, associated_stream_id, priority,
+              spdy_session_->initial_window_size_,
               &spdy_session_->output_queue_, &spdy_session_->framer_),
       subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {}
 

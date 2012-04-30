@@ -49,6 +49,11 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
               Executor* executor);
   virtual ~SpdySession();
 
+  // What SPDY version is being used for this session?
+  // TODO(mdsteele): This method should be const, but it isn't beacuse
+  //   BufferedSpdyFramer::protocol_version() isn't const, for no reason.
+  int spdy_version() { framer_.protocol_version(); }
+
   // Process the session; don't return until the session is finished.
   void Run();
 
@@ -104,6 +109,10 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
 
   typedef std::map<net::SpdyStreamId, StreamTaskWrapper*> SpdyStreamMap;
 
+  // Validate and set the per-stream initial flow-control window size to the
+  // new value.  Must be using SPDY v3 or later to call this method.
+  void SetInitialWindowSize(uint32 new_init_window_size);
+
   // Send a single SPDY frame to the client, compressing it first if necessary.
   // Stop the session if the connection turns out to be closed.  This method
   // takes ownership of the passed frame and will delete it.
@@ -146,6 +155,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   bool session_stopped_;  // StopSession() has been called
   bool already_sent_goaway_;  // GOAWAY frame has been sent
   net::SpdyStreamId last_client_stream_id_;
+  int32 initial_window_size_;  // per-stream initial flow-control window size
 
   // The stream map must be protected by a lock, because each stream thread
   // will remove itself from the map (by calling RemoveStreamTask) when the

@@ -17,6 +17,8 @@
 
 #include "base/basictypes.h"
 #include "base/string_piece.h"
+#include "base/synchronization/condition_variable.h"
+#include "base/synchronization/lock.h"
 #include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
@@ -40,6 +42,7 @@ class SpdyStream {
   SpdyStream(net::SpdyStreamId stream_id,
              net::SpdyStreamId associated_stream_id_,
              net::SpdyPriority priority,
+             int32 initial_window_size,
              SpdyFramePriorityQueue* output_queue,
              net::BufferedSpdyFramer* framer);
   ~SpdyStream();
@@ -67,11 +70,27 @@ class SpdyStream {
   bool is_aborted() const;
 
   // Abort this stream.  This method returns immediately, and the thread
-  // running the stream will stop as soon as possible.
+  // running the stream will stop as soon as possible (if it is currently
+  // blocked on the window size, it will be woken up).
   void AbortSilently();
 
   // Same as AbortSilently, but also sends a RST_STREAM frame for this stream.
   void AbortWithRstStream(net::SpdyStatusCodes status);
+
+  // What is the current window size for this stream?  This is mostly useful
+  // for debugging.
+  int32 current_window_size() const;
+
+  // This should be called by the connection thread to adjust the window size,
+  // either due to receiving a WINDOW_UPDATE frame from the client, or from the
+  // client changing the initial window size with a SETTINGS frame.  The delta
+  // argument will usually be positive (WINDOW_UPDATE is always positive), but
+  // *can* be negative (if the client reduces the window size with SETTINGS).
+  //
+  // This method should *not* be called by the stream thread; the SpdyStream
+  // object will automatically take care of decreasing the window size for sent
+  // data.
+  void AdjustWindowSize(int32 delta);
 
   // Provide a SPDY frame sent from the client.  This is to be called from the
   // master connection thread.  This method takes ownership of the frame
@@ -96,20 +115,41 @@ class SpdyStream {
   // Send a HEADERS frame to the client for this stream.
   void SendOutputHeaders(const net::SpdyHeaderBlock& headers, bool flag_fin);
 
+  // Send a WINDOW_UPDATE frame to the client for this stream, indicating that
+  // we have consumed the given quantity of data.  The delta must be within the
+  // legal range for window update frames (from 1 to 0x7fffffff).
+  void SendOutputWindowUpdate(size_t delta);
+
   // Send a SPDY data frame to the client on this stream.
   void SendOutputDataFrame(base::StringPiece data, bool flag_fin);
 
  private:
   // Send a SPDY frame to the client.  This is to be called from the stream
-  // thread.  This method takes ownership of the frame object.
+  // thread.  This method takes ownership of the frame object.  Must be holding
+  // lock_ to call this method.
   void SendOutputFrame(net::SpdyFrame* frame);
+
+  // Aborts the input queue, sets aborted_, and wakes up threads waiting on
+  // condvar_.  Must be holding lock_ to call this method.
+  void InternalAbortSilently();
+
+  // Like InternalAbortSilently, but also sends a RST_STREAM frame for this
+  // stream.  Must be holding lock_ to call this method.
+  void InternalAbortWithRstStream(net::SpdyStatusCodes status);
 
   const net::SpdyStreamId stream_id_;
   const net::SpdyStreamId associated_stream_id_;
   const net::SpdyPriority priority_;
   SpdyFrameQueue input_queue_;
-  SpdyFramePriorityQueue* output_queue_;
+  SpdyFramePriorityQueue* const output_queue_;
   net::BufferedSpdyFramer* const framer_;
+
+  // The lock protects the fields below.  The above fields do not require
+  // additional synchronization.
+  mutable base::Lock lock_;
+  base::ConditionVariable condvar_;
+  int32 window_size_;
+  bool aborted_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyStream);
 };

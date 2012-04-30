@@ -25,9 +25,16 @@
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
+#include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using mod_spdy::testing::IsRstStream;
+using mod_spdy::testing::IsWindowUpdate;
+using mod_spdy::testing::StreamIdIs;
+using testing::AllOf;
 
 namespace {
 
@@ -37,7 +44,8 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
       : stream_id_(1),
         priority_(SPDY_PRIORITY_HIGHEST),
         framer_(GetParam()),
-        stream_(stream_id_, 0, priority_, &output_queue_, &framer_),
+        stream_(stream_id_, 0, priority_, net::kSpdyStreamInitialWindowSize,
+                &output_queue_, &framer_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
     connection_ = static_cast<conn_rec*>(
@@ -116,6 +124,29 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
     ASSERT_EQ(APR_SUCCESS, apr_brigade_cleanup(brigade_));
   }
 
+  void ExpectRstStream(net::SpdyStatusCodes status) {
+    net::SpdyFrame* raw_frame;
+    ASSERT_TRUE(output_queue_.Pop(&raw_frame))
+        << "Expected RST_STREAM frame, but output queue is empty.";
+    scoped_ptr<net::SpdyFrame> frame(raw_frame);
+    EXPECT_THAT(*frame, AllOf(IsRstStream(status), StreamIdIs(stream_id_)));
+  }
+
+  void ExpectWindowUpdateUnlessSpdy2(uint32 delta) {
+    if (stream_.spdy_version() < 3) {
+      return;
+    }
+    net::SpdyFrame* raw_frame;
+    ASSERT_TRUE(output_queue_.Pop(&raw_frame))
+        << "Expected WINDOW_UPDATE frame, but output queue is empty.";
+    scoped_ptr<net::SpdyFrame> frame(raw_frame);
+    EXPECT_THAT(*frame, AllOf(IsWindowUpdate(delta), StreamIdIs(stream_id_)));
+  }
+
+  void ExpectNoMoreOutputFrames() {
+    EXPECT_TRUE(output_queue_.IsEmpty());
+  }
+
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
   net::BufferedSpdyFramer framer_;
@@ -191,6 +222,7 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectNoMoreOutputFrames();
 
   // There's no more data left; attempting another read should result in EOF.
   ASSERT_TRUE(APR_STATUS_IS_EOF(
@@ -222,6 +254,7 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   ASSERT_TRUE(APR_STATUS_IS_EAGAIN(
       Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 4)));
   ExpectEndOfBrigade();
+  ExpectNoMoreOutputFrames();
 
   // Send some DATA frames.
   PostDataFrame(net::DATA_FLAG_NONE, "Hello, world!\nPlease erase ");
@@ -241,12 +274,18 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 24));
   ExpectTransientBucket("Hello, world!\nPlease era");
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(27);
+  ExpectNoMoreOutputFrames();
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_SPECULATIVE, APR_NONBLOCK_READ, 15));
   ExpectTransientBucket("se \r\n13\r\nthe wh");
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(19);
+  ExpectNoMoreOutputFrames();
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 36));
   ExpectTransientBucket("se \r\n13\r\nthe whole database \r\n15\r\nim");
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(21);
+  ExpectNoMoreOutputFrames();
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 21));
   ExpectTransientBucket("mediately.\nThanks!\n\r\n");
   ExpectEndOfBrigade();
@@ -257,6 +296,7 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   ExpectTransientBucket("\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectNoMoreOutputFrames();
 
   // There's no more data left; attempting another read should result in EOF.
   ASSERT_TRUE(APR_STATUS_IS_EOF(Read(AP_MODE_GETLINE, APR_BLOCK_READ, 0)));
@@ -306,6 +346,10 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(13);
+  ExpectWindowUpdateUnlessSpdy2(11);
+  ExpectWindowUpdateUnlessSpdy2(14);
+  ExpectNoMoreOutputFrames();
 }
 
 TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
@@ -339,6 +383,7 @@ TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectNoMoreOutputFrames();
 }
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
@@ -384,6 +429,9 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(35);
+  ExpectWindowUpdateUnlessSpdy2(10);
+  ExpectNoMoreOutputFrames();
 }
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
@@ -420,6 +468,10 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(9);
+  ExpectWindowUpdateUnlessSpdy2(6);
+  ExpectWindowUpdateUnlessSpdy2(7);
+  ExpectNoMoreOutputFrames();
 }
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
@@ -457,6 +509,10 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(9);
+  ExpectWindowUpdateUnlessSpdy2(6);
+  ExpectWindowUpdateUnlessSpdy2(7);
+  ExpectNoMoreOutputFrames();
 }
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLength) {
@@ -494,6 +550,10 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLength) {
                         "Please do some stuff.\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(9);
+  ExpectWindowUpdateUnlessSpdy2(6);
+  ExpectWindowUpdateUnlessSpdy2(7);
+  ExpectNoMoreOutputFrames();
 }
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
@@ -533,6 +593,43 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
                         "Please do some stuff.\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
+  ExpectWindowUpdateUnlessSpdy2(9);
+  ExpectWindowUpdateUnlessSpdy2(6);
+  ExpectWindowUpdateUnlessSpdy2(7);
+  ExpectNoMoreOutputFrames();
+}
+
+TEST_P(SpdyToHttpFilterTest, ExtraSynStream) {
+  // Send a SYN_STREAM frame from the client.
+  net::SpdyHeaderBlock headers;
+  headers["host"] = "www.example.com";
+  headers["method"] = "POST";
+  headers["referer"] = "https://www.example.com/index.html";
+  headers["scheme"] = "https";
+  headers["url"] = "/erase/the/whole/database.cgi";
+  headers["user-agent"] = "ModSpdyUnitTest/1.0";
+  headers["version"] = "HTTP/1.1";
+  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+
+  // Read in all available data.
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("POST /erase/the/whole/database.cgi HTTP/1.1\r\n"
+                        "host: www.example.com\r\n"
+                        "referer: https://www.example.com/index.html\r\n"
+                        "user-agent: ModSpdyUnitTest/1.0\r\n");
+  ExpectEndOfBrigade();
+
+  // Now send another SYN_STREAM for the same stream_id, which is illegal.
+  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  // If we try to read more data, we'll get nothing.
+  ASSERT_TRUE(APR_STATUS_IS_ECONNABORTED(
+      Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0)));
+  ExpectEosBucket();
+  ExpectEndOfBrigade();
+  // The stream should have been aborted.
+  ExpectRstStream(net::PROTOCOL_ERROR);
+  ExpectNoMoreOutputFrames();
+  EXPECT_TRUE(stream_.is_aborted());
 }
 
 // Run each test over both SPDY v2 and SPDY v3.

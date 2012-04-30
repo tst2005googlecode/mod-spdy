@@ -316,6 +316,22 @@ bool SpdyToHttpFilter::DecodeDataFrame(const net::SpdyDataFrame& frame) {
       converter_.ConvertDataFrame(frame);
   switch (status) {
     case SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS:
+      // TODO(mdsteele): This isn't really the ideal place for this -- we
+      //   shouldn't send the WINDOW_UPDATE until we're about to return the
+      //   data to the previous filter, so that we're aren't buffering an
+      //   unbounded amount of data in this filter.  The trouble is that once
+      //   we convert the frames, everything goes into data_buffer_ and we
+      //   forget which of it is leading/trailing headers and which of it is
+      //   request data, so it'll take a little work to know when to send the
+      //   WINDOW_UPDATE frames.  For now, just doing it here is good enough.
+      // Flow control only exists for SPDY v3 and up.
+      if (stream_->spdy_version() >= 3) {
+        // Sending a WINDOW_UPDATE with a delta of zero would be pointless, and
+        // in fact, the SPDY spec forbids it (SPDY draft 3 section 2.6.8).
+        if (frame.length() > 0) {
+          stream_->SendOutputWindowUpdate(frame.length());
+        }
+      }
       return true;
     case SpdyToHttpConverter::FRAME_AFTER_FIN:
       // If the stream is no longer open, we must send a RST_STREAM with

@@ -122,6 +122,7 @@ TEST_P(HttpToSpdyFilterTest, ClientRequest) {
   const net::SpdyStreamId associated_stream_id = 0;
   const net::SpdyPriority priority = SPDY_PRIORITY_HIGHEST;
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
+                              net::kSpdyStreamInitialWindowSize,
                               &output_queue_, &buffered_framer_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
   net::SpdyFrame* frame;
@@ -287,6 +288,7 @@ TEST_P(HttpToSpdyFilterTest, ServerPush) {
   const net::SpdyStreamId associated_stream_id = 3;
   const net::SpdyPriority priority = 1;
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
+                              net::kSpdyStreamInitialWindowSize,
                               &output_queue_, &buffered_framer_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
   net::SpdyFrame* frame;
