@@ -41,14 +41,19 @@ extern const char* const kChunked;
 namespace spdy {
 
 // Magic header names for SPDY v2.
-// TODO(mdsteele): These values are different for SPDY v3.  Once we support
-//   SPDY v3, we'll probably want to rename these, or provide functions that
-//   return values based on a version argument, or whatever.
-extern const char* const kMethod;
-extern const char* const kScheme;
-extern const char* const kStatus;
-extern const char* const kUrl;
-extern const char* const kVersion;
+extern const char* const kSpdy2Method;
+extern const char* const kSpdy2Scheme;
+extern const char* const kSpdy2Status;
+extern const char* const kSpdy2Url;
+extern const char* const kSpdy2Version;
+
+// Magic header names for SPDY v3.
+extern const char* const kSpdy3Host;
+extern const char* const kSpdy3Method;
+extern const char* const kSpdy3Path;
+extern const char* const kSpdy3Scheme;
+extern const char* const kSpdy3Status;
+extern const char* const kSpdy3Version;
 
 }  // namespace spdy
 

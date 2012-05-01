@@ -40,13 +40,19 @@ bool HasDataFlagFinSet(const net::SpdyDataFrame& frame) {
 // Generate an HTTP request line from the given SPDY header block by calling
 // the OnStatusLine() method of the given visitor, and return true.  If there's
 // an error, this will return false without calling any methods on the visitor.
-bool GenerateRequestLine(const net::SpdyHeaderBlock& block,
+bool GenerateRequestLine(int spdy_version,
+                         const net::SpdyHeaderBlock& block,
                          HttpRequestVisitorInterface* visitor) {
-  net::SpdyHeaderBlock::const_iterator method = block.find(spdy::kMethod);
-  net::SpdyHeaderBlock::const_iterator scheme = block.find(spdy::kScheme);
-  net::SpdyHeaderBlock::const_iterator host = block.find(http::kHost);
-  net::SpdyHeaderBlock::const_iterator path = block.find(spdy::kUrl);
-  net::SpdyHeaderBlock::const_iterator version = block.find(spdy::kVersion);
+  net::SpdyHeaderBlock::const_iterator method = block.find(
+      spdy_version < 3 ? spdy::kSpdy2Method : spdy::kSpdy3Method);
+  net::SpdyHeaderBlock::const_iterator scheme = block.find(
+      spdy_version < 3 ? spdy::kSpdy2Scheme : spdy::kSpdy3Scheme);
+  net::SpdyHeaderBlock::const_iterator host = block.find(
+      spdy_version < 3 ? http::kHost : spdy::kSpdy3Host);
+  net::SpdyHeaderBlock::const_iterator path = block.find(
+      spdy_version < 3 ? spdy::kSpdy2Url : spdy::kSpdy3Path);
+  net::SpdyHeaderBlock::const_iterator version = block.find(
+      spdy_version < 3 ? spdy::kSpdy2Version : spdy::kSpdy3Version);
 
   if (method == block.end() ||
       scheme == block.end() ||
@@ -124,7 +130,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertSynStreamFrame(
     return INVALID_HEADER_BLOCK;
   }
 
-  if (!GenerateRequestLine(block, visitor_)) {
+  if (!GenerateRequestLine(spdy_version(), block, visitor_)) {
     return BAD_REQUEST;
   }
 
@@ -231,13 +237,20 @@ void SpdyToHttpConverter::GenerateLeadingHeaders(
     const net::SpdyHeaderBlock& block) {
   for (net::SpdyHeaderBlock::const_iterator it = block.begin();
        it != block.end(); ++it) {
-    const base::StringPiece key = it->first;
+    base::StringPiece key = it->first;
     const base::StringPiece value = it->second;
 
     // Skip SPDY-specific (i.e. non-HTTP) headers.
-    if (key == spdy::kMethod || key == spdy::kScheme || key == spdy::kUrl ||
-        key == spdy::kVersion) {
-      continue;
+    if (spdy_version() < 3) {
+      if (key == spdy::kSpdy2Method || key == spdy::kSpdy2Scheme ||
+          key == spdy::kSpdy2Url || key == spdy::kSpdy2Version) {
+        continue;
+      }
+    } else {
+      if (key == spdy::kSpdy3Method || key == spdy::kSpdy3Scheme ||
+          key == spdy::kSpdy3Path || key == spdy::kSpdy3Version) {
+        continue;
+      }
     }
 
     // Skip headers that are ignored by SPDY.
@@ -258,6 +271,12 @@ void SpdyToHttpConverter::GenerateLeadingHeaders(
       LOG(WARNING) << "Client sent \"transfer-encoding: " << value
                    << "\" header over SPDY.  Why would they do that?";
       continue;
+    }
+
+    // For SPDY v3 and later, we need to convert the SPDY ":host" header to an
+    // HTTP "host" header.
+    if (spdy_version() >= 3 && key == spdy::kSpdy3Host) {
+      key = http::kHost;
     }
 
     InsertHeader<&HttpRequestVisitorInterface::OnLeadingHeader>(

@@ -16,6 +16,7 @@
 
 #include <string>
 
+#include "base/logging.h"
 #include "base/string_number_conversions.h"  // for IntToString
 #include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_protocol.h"
@@ -32,8 +33,11 @@ int AddOneHeader(void* ptr, const char* key, const char* value) {
 
 namespace mod_spdy {
 
-ResponseHeaderPopulator::ResponseHeaderPopulator(request_rec* request)
-    : request_(request) {}
+ResponseHeaderPopulator::ResponseHeaderPopulator(
+    int spdy_version, request_rec* request)
+    : spdy_version_(spdy_version), request_(request) {
+  DCHECK(request_);
+}
 
 void ResponseHeaderPopulator::Populate(net::SpdyHeaderBlock* headers) const {
   // Put all the HTTP headers into the SPDY header table.  Note that APR tables
@@ -52,9 +56,11 @@ void ResponseHeaderPopulator::Populate(net::SpdyHeaderBlock* headers) const {
 
   // Now add the SPDY-specific required headers.
   HeaderPopulatorInterface::MergeInHeader(
-      spdy::kStatus, base::IntToString(request_->status), headers);
+      (spdy_version_ < 3 ? spdy::kSpdy2Status : spdy::kSpdy3Status),
+      base::IntToString(request_->status), headers);
   HeaderPopulatorInterface::MergeInHeader(
-      spdy::kVersion, request_->protocol, headers);
+      (spdy_version_ < 3 ? spdy::kSpdy2Version : spdy::kSpdy3Version),
+      request_->protocol, headers);
   // Finally remove SPDY-ignored headers.
   headers->erase(http::kConnection);
   headers->erase(http::kKeepAlive);

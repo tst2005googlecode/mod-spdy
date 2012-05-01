@@ -23,6 +23,7 @@
 
 #include "base/string_piece.h"
 #include "mod_spdy/apache/pool_util.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/testing/spdy_frame_matchers.h"
@@ -147,6 +148,26 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
     EXPECT_TRUE(output_queue_.IsEmpty());
   }
 
+  const char* host_header_name() const {
+    return GetParam() < 3 ? mod_spdy::http::kHost : mod_spdy::spdy::kSpdy3Host;
+  }
+  const char* method_header_name() const {
+    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Method :
+            mod_spdy::spdy::kSpdy3Method);
+  }
+  const char* path_header_name() const {
+    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Url :
+            mod_spdy::spdy::kSpdy3Path);
+  }
+  const char* scheme_header_name() const {
+    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Scheme :
+            mod_spdy::spdy::kSpdy3Scheme);
+  }
+  const char* version_header_name() const {
+    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Version :
+            mod_spdy::spdy::kSpdy3Version);
+  }
+
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
   net::BufferedSpdyFramer framer_;
@@ -174,15 +195,14 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
 
   // Send a SYN_STREAM frame from the client, with FLAG_FIN set.
   net::SpdyHeaderBlock headers;
-  headers["accept-charset"] = "utf8";
-  headers["accept-language"] = "en";
-  headers["host"] = "www.example.com";
-  headers["method"] = "GET";
+  headers[host_header_name()] = "www.example.com";
+  headers[method_header_name()] = "GET";
   headers["referer"] = "https://www.example.com/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/foo/bar/index.html";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/foo/bar/index.html";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
-  headers["version"] = "HTTP/1.1";
+  headers[version_header_name()] = "HTTP/1.1";
+  headers["x-do-not-track"] = "1";
   PostSynStreamFrame(net::CONTROL_FLAG_FIN, &headers);
 
   // Invoke the filter in blocking GETLINE mode.  We should get back just the
@@ -193,32 +213,31 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
 
   // Now do a SPECULATIVE read.  We should get back a few bytes.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_SPECULATIVE, APR_NONBLOCK_READ, 8));
-  ExpectTransientBucket("accept-c");
+  ExpectTransientBucket("host: ww");
   ExpectEndOfBrigade();
 
   // Now do another GETLINE read.  We should get back the first header line,
   // including the data we just read speculatively.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
-  ExpectTransientBucket("accept-charset: utf8\r\n");
+  ExpectTransientBucket("host: www.example.com\r\n");
   ExpectEndOfBrigade();
 
   // Do a READBYTES read.  We should get back a few bytes.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_READBYTES, APR_NONBLOCK_READ, 12));
-  ExpectTransientBucket("accept-langu");
+  ExpectTransientBucket("referer: htt");
   ExpectEndOfBrigade();
 
   // Do another GETLINE read.  We should get back the rest of the header line,
   // *not* including the data we just read.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
-  ExpectTransientBucket("age: en\r\n");
+  ExpectTransientBucket("ps://www.example.com/index.html\r\n");
   ExpectEndOfBrigade();
 
   // Finally, do an EXHAUSTIVE read.  We should get back everything that
   // remains, terminating with an EOS bucket.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
-  ExpectTransientBucket("host: www.example.com\r\n"
-                        "referer: https://www.example.com/index.html\r\n"
-                        "user-agent: ModSpdyUnitTest/1.0\r\n"
+  ExpectTransientBucket("user-agent: ModSpdyUnitTest/1.0\r\n"
+                        "x-do-not-track: 1\r\n"
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
@@ -232,13 +251,13 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
 TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.com";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.com";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.com/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/erase/the/whole/database.cgi";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/erase/the/whole/database.cgi";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
-  headers["version"] = "HTTP/1.1";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Do a nonblocking READBYTES read.  We ask for lots of bytes, but since it's
@@ -305,13 +324,13 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
 TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.net";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.net";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.net/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/erase/the/whole/database.cgi";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/erase/the/whole/database.cgi";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
-  headers["version"] = "HTTP/1.1";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Send some DATA and HEADERS frames.  The HEADERS frames should get buffered
@@ -355,12 +374,12 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
 TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
   // Send a SYN_STREAM frame with some of the headers.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.org";
-  headers["method"] = "GET";
+  headers[host_header_name()] = "www.example.org";
+  headers[method_header_name()] = "GET";
   headers["referer"] = "https://www.example.org/foo/bar.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/index.html";
-  headers["version"] = "HTTP/1.1";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/index.html";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Read in everything that's available so far.
@@ -389,12 +408,12 @@ TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
 TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.org";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.org";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/delete/everything.py";
-  headers["version"] = "HTTP/1.1";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/delete/everything.py";
+  headers[version_header_name()] = "HTTP/1.1";
   headers["x-zzzz"] = "4Z";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
@@ -437,12 +456,12 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
 TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.org";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.org";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/do/some/stuff.py";
-  headers["version"] = "HTTP/1.1";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/do/some/stuff.py";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Now send a few DATA frames, with a zero-length data frame in the middle.
@@ -477,12 +496,12 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
 TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.org";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.org";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/do/some/stuff.py";
-  headers["version"] = "HTTP/1.1";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/do/some/stuff.py";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Now send a few DATA frames, with a zero-length data frame at the end.
@@ -518,12 +537,12 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
 TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLength) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.org";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.org";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/do/some/stuff.py";
-  headers["version"] = "HTTP/1.1";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/do/some/stuff.py";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Send a few more headers before sending data, including a content-length.
@@ -560,12 +579,12 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
   // Send a SYN_STREAM frame from the client, including a content-length.
   net::SpdyHeaderBlock headers;
   headers["content-length"] = "22";
-  headers["host"] = "www.example.org";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.org";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/do/some/stuff.py";
-  headers["version"] = "HTTP/1.1";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/do/some/stuff.py";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Now send a few DATA frames.
@@ -580,17 +599,30 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
   PostHeadersFrame(net::CONTROL_FLAG_FIN, &headers2);
 
   // Read in all the data.  Because we supplied a content-length, chunked
-  // encoding should not be used, and as an unfortunately consequence, we must
+  // encoding should not be used, and as an unfortunate consequence, we must
   // therefore ignore the trailing headers (justified in that, at least in
   // HTTP, they're generally only used for ignorable metadata; in fact, they're
   // not generally used at all).
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
-  ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
-                        "content-length: 22\r\n"
-                        "host: www.example.org\r\n"
-                        "referer: https://www.example.org/index.html\r\n"
-                        "\r\n"
-                        "Please do some stuff.\n");
+  // One (usually irrelevant) quirk of our implementation is that the host
+  // header appears in a slightly different place for SPDY v2 and SPDY v3.
+  // This is beacuse in SPDY v3 the host header is ":host", which sorts
+  // earlier, and which we transform into the HTTP header "host".
+  if (GetParam() < 3) {
+    ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
+                          "content-length: 22\r\n"
+                          "host: www.example.org\r\n"
+                          "referer: https://www.example.org/index.html\r\n"
+                          "\r\n"
+                          "Please do some stuff.\n");
+  } else {
+    ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
+                          "host: www.example.org\r\n"
+                          "content-length: 22\r\n"
+                          "referer: https://www.example.org/index.html\r\n"
+                          "\r\n"
+                          "Please do some stuff.\n");
+  }
   ExpectEosBucket();
   ExpectEndOfBrigade();
   ExpectWindowUpdateUnlessSpdy2(9);
@@ -602,13 +634,13 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
 TEST_P(SpdyToHttpFilterTest, ExtraSynStream) {
   // Send a SYN_STREAM frame from the client.
   net::SpdyHeaderBlock headers;
-  headers["host"] = "www.example.com";
-  headers["method"] = "POST";
+  headers[host_header_name()] = "www.example.com";
+  headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.com/index.html";
-  headers["scheme"] = "https";
-  headers["url"] = "/erase/the/whole/database.cgi";
+  headers[scheme_header_name()] = "https";
+  headers[path_header_name()] = "/erase/the/whole/database.cgi";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
-  headers["version"] = "HTTP/1.1";
+  headers[version_header_name()] = "HTTP/1.1";
   PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
 
   // Read in all available data.

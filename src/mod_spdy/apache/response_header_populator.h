@@ -23,11 +23,12 @@ namespace mod_spdy {
 // request_rec as a source.
 class ResponseHeaderPopulator : public HeaderPopulatorInterface {
  public:
-  explicit ResponseHeaderPopulator(request_rec* request);
+  ResponseHeaderPopulator(int spdy_version, request_rec* request);
 
   virtual void Populate(net::SpdyHeaderBlock* headers) const;
 
  private:
+  const int spdy_version_;
   request_rec* const request_;
 
   DISALLOW_COPY_AND_ASSIGN(ResponseHeaderPopulator);

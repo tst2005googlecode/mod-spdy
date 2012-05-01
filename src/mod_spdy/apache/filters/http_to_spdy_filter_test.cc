@@ -87,6 +87,16 @@ class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
     return status;
   }
 
+  const char* status_header_name() const {
+    return (framer_.protocol_version() < 3 ? mod_spdy::spdy::kSpdy2Status :
+            mod_spdy::spdy::kSpdy3Status);
+  }
+
+  const char* version_header_name() const {
+    return (framer_.protocol_version() < 3 ? mod_spdy::spdy::kSpdy2Version :
+            mod_spdy::spdy::kSpdy3Version);
+  }
+
   net::SpdyFramer framer_;
   net::BufferedSpdyFramer buffered_framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
@@ -154,8 +164,8 @@ TEST_P(HttpToSpdyFilterTest, ClientRequest) {
     EXPECT_EQ(5, block.size());
     EXPECT_EQ("text/html", block[mod_spdy::http::kContentType]);
     EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
-    EXPECT_EQ("200", block[mod_spdy::spdy::kStatus]);
-    EXPECT_EQ("HTTP/1.1", block[mod_spdy::spdy::kVersion]);
+    EXPECT_EQ("200", block[status_header_name()]);
+    EXPECT_EQ("HTTP/1.1", block[version_header_name()]);
     EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
               block[mod_spdy::http::kXModSpdy]);
     delete frame;
@@ -323,8 +333,8 @@ TEST_P(HttpToSpdyFilterTest, ServerPush) {
     EXPECT_EQ(5, block.size());
     EXPECT_EQ("text/css", block[mod_spdy::http::kContentType]);
     EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
-    EXPECT_EQ("200", block[mod_spdy::spdy::kStatus]);
-    EXPECT_EQ("HTTP/1.1", block[mod_spdy::spdy::kVersion]);
+    EXPECT_EQ("200", block[status_header_name()]);
+    EXPECT_EQ("HTTP/1.1", block[version_header_name()]);
     EXPECT_EQ(MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING,
               block[mod_spdy::http::kXModSpdy]);
     delete frame;

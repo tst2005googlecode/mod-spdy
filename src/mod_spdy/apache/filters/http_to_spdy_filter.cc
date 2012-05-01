@@ -239,7 +239,7 @@ void HttpToSpdyFilter::Send(ap_filter_t* filter, bool flush) {
 
   // Send headers if we haven't yet.
   if (!headers_have_been_sent_) {
-    ResponseHeaderPopulator populator(filter->r);
+    ResponseHeaderPopulator populator(stream_->spdy_version(), filter->r);
     headers_fin = end_of_stream_reached_ && data_buffer_.empty();
     SendHeaders(populator, headers_fin);
     headers_have_been_sent_ = true;

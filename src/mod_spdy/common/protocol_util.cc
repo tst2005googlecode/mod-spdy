@@ -39,11 +39,18 @@ extern const char* const kChunked = "chunked";
 
 namespace spdy {
 
-extern const char* const kMethod = "method";
-extern const char* const kScheme = "scheme";
-extern const char* const kStatus = "status";
-extern const char* const kUrl = "url";
-extern const char* const kVersion = "version";
+extern const char* const kSpdy2Method = "method";
+extern const char* const kSpdy2Scheme = "scheme";
+extern const char* const kSpdy2Status = "status";
+extern const char* const kSpdy2Url = "url";
+extern const char* const kSpdy2Version = "version";
+
+extern const char* const kSpdy3Host = ":host";
+extern const char* const kSpdy3Method = ":method";
+extern const char* const kSpdy3Path = ":path";
+extern const char* const kSpdy3Scheme = ":scheme";
+extern const char* const kSpdy3Status = ":status";
+extern const char* const kSpdy3Version = ":version";
 
 }  // namespace spdy
 

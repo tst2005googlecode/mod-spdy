@@ -42,6 +42,9 @@ class SpdyToHttpConverter {
 
   static const char* StatusString(Status status);
 
+  // Return the SPDY version from which we are converting.
+  int spdy_version() const { return framer_.protocol_version(); }
+
   // Convert the SPDY frame to HTTP and make appropriate calls to the visitor.
   // In some cases data may be buffered, but everything will get flushed out to
   // the visitor by the time the final frame (with FLAG_FIN set) is done.

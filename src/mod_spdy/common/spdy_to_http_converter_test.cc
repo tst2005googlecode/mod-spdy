@@ -17,6 +17,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/string_piece.h"
 #include "mod_spdy/common/http_request_visitor_interface.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -61,11 +62,19 @@ class SpdyToHttpConverterTest : public testing::TestWithParam<int> {
 
  protected:
   void AddRequiredHeaders() {
-    headers_["method"] = kMethod;
-    headers_["scheme"] = kScheme;
-    headers_["host"] = kHost;
-    headers_["url"] = kPath;
-    headers_["version"] = kVersion;
+    if (framer_.protocol_version() < 3) {
+      headers_[mod_spdy::spdy::kSpdy2Method] = kMethod;
+      headers_[mod_spdy::spdy::kSpdy2Scheme] = kScheme;
+      headers_[mod_spdy::http::kHost] = kHost;
+      headers_[mod_spdy::spdy::kSpdy2Url] = kPath;
+      headers_[mod_spdy::spdy::kSpdy2Version] = kVersion;
+    } else {
+      headers_[mod_spdy::spdy::kSpdy3Method] = kMethod;
+      headers_[mod_spdy::spdy::kSpdy3Scheme] = kScheme;
+      headers_[mod_spdy::spdy::kSpdy3Host] = kHost;
+      headers_[mod_spdy::spdy::kSpdy3Path] = kPath;
+      headers_[mod_spdy::spdy::kSpdy3Version] = kVersion;
+    }
   }
 
   MockHttpRequestVisitor visitor_;
