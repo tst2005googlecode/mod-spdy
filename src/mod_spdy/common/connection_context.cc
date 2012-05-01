@@ -15,6 +15,7 @@
 #include "mod_spdy/common/connection_context.h"
 
 #include "base/logging.h"
+#include "mod_spdy/common/spdy_stream.h"
 
 namespace mod_spdy {
 
@@ -22,13 +23,17 @@ ConnectionContext::ConnectionContext(bool using_ssl)
     : using_ssl_(using_ssl),
       npn_state_(NOT_DONE_YET),
       assume_spdy_(false),
-      slave_stream_(NULL) {}
+      slave_stream_(NULL),
+      spdy_version_(0) {}
 
 ConnectionContext::ConnectionContext(bool using_ssl, SpdyStream* slave_stream)
     : using_ssl_(using_ssl),
       npn_state_(USING_SPDY),
       assume_spdy_(false),
-      slave_stream_(slave_stream) {}
+      slave_stream_(slave_stream),
+      spdy_version_(slave_stream_->spdy_version()) {
+  DCHECK(slave_stream_);
+}
 
 ConnectionContext::~ConnectionContext() {}
 
@@ -62,6 +67,21 @@ bool ConnectionContext::is_assuming_spdy() const {
 void ConnectionContext::set_assume_spdy(bool assume) {
   DCHECK(!is_slave());
   assume_spdy_ = assume;
+}
+
+int ConnectionContext::spdy_version() const {
+  DCHECK(is_using_spdy());
+  DCHECK_GT(spdy_version_, 0);
+  DCHECK(!is_slave() || slave_stream()->spdy_version() == spdy_version_);
+  return spdy_version_;
+}
+
+void ConnectionContext::set_spdy_version(int spdy_version) {
+  DCHECK(!is_slave());
+  DCHECK(is_using_spdy());
+  DCHECK_EQ(spdy_version_, 0);
+  DCHECK_GT(spdy_version, 0);
+  spdy_version_ = spdy_version;
 }
 
 }  // namespace mod_spdy

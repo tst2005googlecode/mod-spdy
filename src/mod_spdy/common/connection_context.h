@@ -81,11 +81,21 @@ class ConnectionContext {
   // Requires that is_slave() is false.
   void set_assume_spdy(bool assume);
 
+  // Return the SPDY version number we will be using.  Requires that
+  // is_using_spdy() is true and that the version number has already been set.
+  int spdy_version() const;
+
+  // Set the SPDY version number we will be using.  Requires that
+  // is_using_spdy() is true, is_slave() is false, and set_spdy_version hasn't
+  // already been called.
+  void set_spdy_version(int spdy_version);
+
  private:
   const bool using_ssl_;
   NpnState npn_state_;
   bool assume_spdy_;
   SpdyStream* const slave_stream_;
+  int spdy_version_;
 
   DISALLOW_COPY_AND_ASSIGN(ConnectionContext);
 };

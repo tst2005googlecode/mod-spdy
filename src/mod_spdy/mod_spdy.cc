@@ -30,6 +30,8 @@
 #include "apr_tables.h"
 
 #include "base/memory/scoped_ptr.h"
+#include "base/string_number_conversions.h"  // for IntToString
+#include "base/string_piece.h"
 #include "mod_spdy/apache/apache_spdy_session_io.h"
 #include "mod_spdy/apache/apache_spdy_stream_task_factory.h"
 #include "mod_spdy/apache/config_commands.h"
@@ -55,20 +57,16 @@ extern "C" {
       (conn_rec* connection, apr_array_header_t* protos));
   APR_DECLARE_EXTERNAL_HOOK(
       ssl, AP, int, npn_proto_negotiated_hook,
-      (conn_rec* connection, char* proto_name, apr_size_t proto_name_len));
+      (conn_rec* connection, const char* proto_name,
+       apr_size_t proto_name_len));
 }  // extern "C"
 
 namespace {
 
-// For now, we only support SPDY version 2.  Note that if we ever decide to
-// support multiple SPDY versions simultaneously, we will need to make some
-// structural changes to the code.
-// TODO(mdsteele): Pretty soon we will probably need to support SPDY v3.
-const int kSpdyVersionNumber = 2;
-const char* const kSpdyVersionNumberString = "2";
-const char* const kSpdyVersionEnvironmentVariable = "SPDY_VERSION";
-const char* const kSpdyProtocolName = "spdy/2";
 const char* const kHttpProtocolName = "http/1.1";
+const char* const kSpdy2ProtocolName = "spdy/2";
+const char* const kSpdy3ProtocolName = "spdy/3";
+const char* const kSpdyVersionEnvironmentVariable = "SPDY_VERSION";
 
 // These global variables store the filter handles for our filters.  Normally,
 // global variables would be very dangerous in a concurrent environment like
@@ -102,8 +100,7 @@ int spdy_get_version(conn_rec* connection) {
   const mod_spdy::ConnectionContext* context =
       mod_spdy::GetConnectionContext(connection);
   if (context != NULL && context->is_using_spdy()) {
-    COMPILE_ASSERT(kSpdyVersionNumber != 0, version_number_is_nonzero);
-    return kSpdyVersionNumber;
+    return context->spdy_version();
   }
   return 0;
 }
@@ -504,7 +501,8 @@ int ProcessConnection(conn_rec* connection) {
   scoped_ptr<mod_spdy::Executor> executor(
       gPerProcessThreadPool->NewExecutor());
   mod_spdy::SpdySession spdy_session(
-      kSpdyVersionNumber, config, &session_io, &task_factory, executor.get());
+      context->spdy_version(), config, &session_io, &task_factory,
+      executor.get());
   // This call will block until the session has closed down.
   spdy_session.Run();
 
@@ -523,11 +521,10 @@ int AdvertiseSpdy(conn_rec* connection, apr_array_header_t* protos) {
     return DECLINED;
   }
 
-  // Advertise SPDY to the client.
-  // TODO(mdsteele): Pretty soon we will probably need to support SPDY v3.  If
-  //   we want to support both v2 and v3, we need to advertise both of them
-  //   here; the one we prefer (presumably v3) should be pushed first.
-  APR_ARRAY_PUSH(protos, const char*) = kSpdyProtocolName;
+  // Advertise SPDY to the client.  We prefer SPDY v3 to SPDY v2, so we push it
+  // first.
+  APR_ARRAY_PUSH(protos, const char*) = kSpdy3ProtocolName;
+  APR_ARRAY_PUSH(protos, const char*) = kSpdy2ProtocolName;
   return OK;
 }
 
@@ -558,7 +555,7 @@ int AdvertiseHttp(conn_rec* connection, apr_array_header_t* protos) {
 
 // Called by mod_ssl after Next Protocol Negotiation (NPN) has completed,
 // informing us which protocol was chosen by the client.
-int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
+int OnNextProtocolNegotiated(conn_rec* connection, const char* proto_name,
                              apr_size_t proto_name_len) {
   mod_spdy::ScopedConnectionLogHandler log_handler(connection);
 
@@ -595,9 +592,13 @@ int OnNextProtocolNegotiated(conn_rec* connection, char* proto_name,
 
   // If the client chose the SPDY version that we advertised, then mark this
   // connection as using SPDY.
-  if (proto_name_len == strlen(kSpdyProtocolName) &&
-      !strncmp(kSpdyProtocolName, proto_name, proto_name_len)) {
+  const base::StringPiece protocol_name(proto_name, proto_name_len);
+  if (protocol_name == kSpdy2ProtocolName) {
     context->set_npn_state(mod_spdy::ConnectionContext::USING_SPDY);
+    context->set_spdy_version(2);
+  } else if (protocol_name == kSpdy3ProtocolName) {
+    context->set_npn_state(mod_spdy::ConnectionContext::USING_SPDY);
+    context->set_spdy_version(3);
   }
   // Otherwise, explicitly mark this connection as not using SPDY.
   else {
@@ -700,8 +701,9 @@ int SetUpSubprocessEnv(request_rec* request) {
   // request is over SPDY (and what SPDY version is being used), allowing them
   // to optimize the response for SPDY.
   // See http://code.google.com/p/mod-spdy/issues/detail?id=27 for details.
-  apr_table_setn(request->subprocess_env, kSpdyVersionEnvironmentVariable,
-                 kSpdyVersionNumberString);
+  const std::string version_number(base::IntToString(context->spdy_version()));
+  apr_table_set(request->subprocess_env, kSpdyVersionEnvironmentVariable,
+                version_number.c_str());
 
   // Normally, mod_ssl sets the HTTPS environment variable to "on" for requests
   // served over SSL.  We turn mod_ssl off for our slave connections, but those
