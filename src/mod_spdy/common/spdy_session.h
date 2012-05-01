@@ -122,7 +122,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   void SendFrameRaw(const net::SpdyFrame& frame);
 
   // Convenience methods to send specific types of control frames:
-  void SendGoAwayFrame();
+  void SendGoAwayFrame(net::SpdyGoAwayStatus status);
   void SendRstStreamFrame(net::SpdyStreamId stream_id,
                           net::SpdyStatusCodes status);
   void SendSettingsFrame();

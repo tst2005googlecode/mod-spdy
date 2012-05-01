@@ -88,6 +88,27 @@ inline ::testing::Matcher<const net::SpdyFrame&> IsDataFrameWith(
   return ::testing::MakeMatcher(new IsDataFrameWithMatcher(payload));
 }
 
+class IsGoAwayMatcher :
+      public ::testing::MatcherInterface<const net::SpdyFrame&> {
+ public:
+  explicit IsGoAwayMatcher(net::SpdyGoAwayStatus status) : status_(status) {}
+  virtual ~IsGoAwayMatcher() {}
+  virtual bool MatchAndExplain(const net::SpdyFrame& frame,
+                               ::testing::MatchResultListener* listener) const;
+  virtual void DescribeTo(std::ostream* out) const;
+  virtual void DescribeNegationTo(std::ostream* out) const;
+ private:
+  const net::SpdyGoAwayStatus status_;
+  DISALLOW_COPY_AND_ASSIGN(IsGoAwayMatcher);
+};
+
+// Make a matcher that requires the argument to be a GOAWAY frame with the
+// given status code.
+inline ::testing::Matcher<const net::SpdyFrame&> IsGoAway(
+    net::SpdyGoAwayStatus status) {
+  return ::testing::MakeMatcher(new IsGoAwayMatcher(status));
+}
+
 class IsRstStreamMatcher :
       public ::testing::MatcherInterface<const net::SpdyFrame&> {
  public:

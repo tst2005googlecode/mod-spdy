@@ -36,6 +36,7 @@
 using mod_spdy::testing::FlagFinIs;
 using mod_spdy::testing::IsControlFrameOfType;
 using mod_spdy::testing::IsDataFrameWith;
+using mod_spdy::testing::IsGoAway;
 using testing::_;
 using testing::AllOf;
 using testing::AtLeast;
@@ -295,6 +296,7 @@ TEST_P(SpdySessionTest, SinglePing) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::PING)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -324,6 +326,7 @@ TEST_P(SpdySessionTest, SingleStream) {
       AllOf(IsDataFrameWith("quux"), FlagFinIs(true))));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -364,7 +367,7 @@ TEST_P(SpdySessionTest, SendGoawayInResponseToGarbage) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -385,7 +388,7 @@ TEST_P(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -411,7 +414,7 @@ TEST_P(SpdySessionTest, SendGoawayForSynStreamIdZero) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -434,7 +437,7 @@ TEST_P(SpdySessionTest, SendGoawayForSynStreamWithInvalidFlags) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -465,7 +468,7 @@ TEST_P(SpdySessionTest, SendGoawayForDuplicateStreamId) {
   // for the first argument (false = nonblocking read).  Here we get the second
   // SYN_STREAM with the same stream ID, so we should send GOAWAY.
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(false), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
   // At this point, tell the executor to run the task.
   EXPECT_CALL(session_io_, IsConnectionAborted())
       .WillOnce(DoAll(InvokeWithoutArgs(&executor_, &InlineExecutor::RunAll),
@@ -508,7 +511,7 @@ TEST_P(SpdySessionNoFlowControlTest, SendGoawayForInitialWindowSize) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -597,6 +600,7 @@ TEST_P(SpdySessionFlowControlTest, SingleStreamWithFlowControl) {
       AllOf(IsDataFrameWith("quu"), FlagFinIs(false)))).InSequence(s1);
   EXPECT_CALL(session_io_, SendFrameRaw(
       AllOf(IsDataFrameWith("x"), FlagFinIs(true)))).InSequence(s1);
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
 
   session_->Run();
 }
@@ -614,7 +618,7 @@ TEST_P(SpdySessionFlowControlTest, SendGoawayForTooSmallInitialWindowSize) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
 
   session_->Run();
 }
@@ -632,7 +636,7 @@ TEST_P(SpdySessionFlowControlTest, SendGoawayForTooLargeInitialWindowSize) {
   EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::GOAWAY)));
+  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
 
   session_->Run();
 }

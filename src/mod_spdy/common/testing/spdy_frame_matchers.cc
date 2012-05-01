@@ -99,6 +99,41 @@ void IsDataFrameWithMatcher::DescribeNegationTo(std::ostream* out) const {
   *out << "isn't a data frame with payload \"" << payload_ << "\"";
 }
 
+bool IsGoAwayMatcher::MatchAndExplain(
+    const net::SpdyFrame& frame,
+    ::testing::MatchResultListener* listener) const {
+  if (!frame.is_control_frame()) {
+    *listener << "is a data frame";
+    return false;
+  }
+  const net::SpdyControlFrame* ctrl_frame =
+      static_cast<const net::SpdyControlFrame*>(&frame);
+  if (ctrl_frame->type() != net::GOAWAY) {
+    *listener << "is a " << net::SpdyFramer::ControlTypeToString(
+        ctrl_frame->type()) << " frame";
+    return false;
+  }
+  // The GOAWAY status field only exists for SPDY v3 and later, so for earlier
+  // versions just skip this check.
+  if (ctrl_frame->version() >= 3) {
+    const net::SpdyGoAwayControlFrame* go_away_frame =
+        static_cast<const net::SpdyGoAwayControlFrame*>(ctrl_frame);
+    if (go_away_frame->status() != status_) {
+      *listener << "is a GOAWAY frame with status " << go_away_frame->status();
+      return false;
+    }
+  }
+  return true;
+}
+
+void IsGoAwayMatcher::DescribeTo(std::ostream* out) const {
+  *out << "is a GOAWAY frame with status " << status_;
+}
+
+void IsGoAwayMatcher::DescribeNegationTo(std::ostream* out) const {
+  *out << "isn't a GOAWAY frame with status " << status_;
+}
+
 bool IsRstStreamMatcher::MatchAndExplain(
     const net::SpdyFrame& frame,
     ::testing::MatchResultListener* listener) const {

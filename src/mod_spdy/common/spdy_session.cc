@@ -101,10 +101,24 @@ void SpdySession::Run() {
       if (status == SpdySessionIO::READ_SUCCESS) {
         // We successfully did some I/O, so reset the output block timeout.
         output_block_time = kInitOutputBlockTime;
-      } else if (status == SpdySessionIO::READ_CONNECTION_CLOSED ||
-                 status == SpdySessionIO::READ_ERROR) {
+      } else if (status == SpdySessionIO::READ_CONNECTION_CLOSED) {
+        // The reading side of the connection has closed, so we won't be
+        // reading anything more.
         no_more_reading_ = true;
+        // In case the writing side is still open, let's try to send a GOAWAY
+        // to let the client know we're shutting down gracefully.
+        SendGoAwayFrame(net::GOAWAY_OK);
+      } else if (status == SpdySessionIO::READ_ERROR) {
+        // There was an error during reading, so the session is corrupted and
+        // we have no chance of reading anything more.
+        no_more_reading_ = true;
+        // We've probably already sent a GOAWAY with a PROTOCOL_ERROR by this
+        // point, but if we haven't (perhaps the error was our fault?) then
+        // send a GOAWAY now.  (If we've already sent a GOAWAY, then
+        // SendGoAwayFrame is a no-op.)
+        SendGoAwayFrame(net::GOAWAY_INTERNAL_ERROR);
       } else {
+        // Otherwise, there's simply no data available at the moment.
         DCHECK_EQ(SpdySessionIO::READ_NO_DATA, status);
       }
     }
@@ -160,7 +174,7 @@ void SpdySession::Run() {
 void SpdySession::OnError(int error_code) {
   LOG(ERROR) << "Session error: "
              << net::SpdyFramer::ErrorCodeToString(error_code);
-  SendGoAwayFrame();
+  SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
 }
 
 void SpdySession::OnStreamError(net::SpdyStreamId stream_id,
@@ -235,7 +249,7 @@ void SpdySession::OnSynStream(
                               net::CONTROL_FLAG_UNIDIRECTIONAL))) {
     LOG(WARNING) << "Client sent SYN_STREAM with invalid flags ("
                  << frame.flags() << ").  Sending GOAWAY.";
-    SendGoAwayFrame();
+    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
     return;
   }
 
@@ -245,7 +259,7 @@ void SpdySession::OnSynStream(
   if (stream_id % 2 == 0) {
     LOG(WARNING) << "Client sent SYN_STREAM for even stream ID (" << stream_id
                  << ").  Sending GOAWAY.";
-    SendGoAwayFrame();
+    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
     return;
   }
 
@@ -280,7 +294,7 @@ void SpdySession::OnSynStream(
     DCHECK_EQ(0, stream_map_.count(stream_id));
 #else
     if (stream_map_.count(stream_id) != 0) {
-      SendGoAwayFrame();
+      SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
       return;
     }
 #endif
@@ -333,7 +347,7 @@ void SpdySession::OnRstStream(
   if (0 != frame.flags()) {
     LOG(WARNING) << "Client sent RST_STREAM with invalid flags ("
                  << frame.flags() << ").  Sending GOAWAY.";
-    SendGoAwayFrame();
+    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
   }
 
   const net::SpdyStreamId stream_id = frame.stream_id();
@@ -351,7 +365,7 @@ void SpdySession::OnRstStream(
       LOG(WARNING) << "Client sent RST_STREAM with PROTOCOL_ERROR for stream "
                    << stream_id << ".  Aborting stream and sending GOAWAY.";
       AbortStreamSilently(stream_id);
-      SendGoAwayFrame();
+      SendGoAwayFrame(net::GOAWAY_OK);
       break;
     // For all other errors, abort the stream, but log a warning first.
     // TODO(mdsteele): Should we have special behavior for any other kinds of
@@ -374,7 +388,7 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
       if (spdy_version() < 3) {
         LOG(ERROR) << "Client sent INITIAL_WINDOW_SIZE setting over "
                    << "SPDY v" << spdy_version() << ".  Sending GOAWAY.";
-        SendGoAwayFrame();
+        SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
       } else {
         SetInitialWindowSize(value);
       }
@@ -391,7 +405,7 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
     default:
       LOG(ERROR) << "Client sent invalid SETTINGS id (" << id
                  << ").  Sending GOAWAY.";
-      SendGoAwayFrame();
+      SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
       break;
   }
 }
@@ -453,7 +467,7 @@ void SpdySession::OnWindowUpdate(
   // Flow control only exists for SPDY v3 and up.
   if (spdy_version() < 3) {
     LOG(ERROR) << "Got a WINDOW_UPDATE frame over SPDY v" << spdy_version();
-    SendGoAwayFrame();
+    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
     return;
   }
 
@@ -485,7 +499,7 @@ void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {
       static_cast<uint32>(net::kSpdyStreamMaximumWindowSize)) {
     LOG(WARNING) << "Client sent invalid init window size ("
                  << new_init_window_size << ").  Sending GOAWAY.";
-    SendGoAwayFrame();
+    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
     return;
   }
   // Sanity check that our current init window size is positive.  It's a signed
@@ -543,14 +557,10 @@ void SpdySession::SendFrameRaw(const net::SpdyFrame& frame) {
   }
 }
 
-void SpdySession::SendGoAwayFrame() {
+void SpdySession::SendGoAwayFrame(net::SpdyGoAwayStatus status) {
   if (!already_sent_goaway_) {
     already_sent_goaway_ = true;
-    // TODO(mdsteele): SPDY v3 adds a GOAWAY status code.  For SPDY v2, the
-    // framer will ignore this argument, so we just pass an arbitrary value
-    // (OK).  Once we support SPDY v3, we'll need to choose an appropriate
-    // status code in each case.
-    SendFrame(framer_.CreateGoAway(last_client_stream_id_, net::GOAWAY_OK));
+    SendFrame(framer_.CreateGoAway(last_client_stream_id_, status));
   }
 }
 
