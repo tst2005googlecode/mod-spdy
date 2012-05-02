@@ -63,8 +63,13 @@ void LogWithHandler(LogHandler* handler, int log_level,
   if (handler != NULL) {
     handler->Log(log_level, message);
   } else {
-    ap_log_perror(APLOG_MARK, log_level, APR_SUCCESS, log_pool,
-                  "%s", message.c_str());
+    // ap_log_perror only prints messages with a severity of at least NOTICE,
+    // so if we're falling back to ap_log_perror (which should be rare) then
+    // force the log_level to a verbosity of NOTICE or lower.
+    COMPILE_ASSERT(APLOG_DEBUG > APLOG_NOTICE,
+                   higher_verbosity_is_higher_number);
+    ap_log_perror(APLOG_MARK, std::min(log_level, APLOG_NOTICE), APR_SUCCESS,
+                  log_pool, "%s", message.c_str());
   }
 }
 
@@ -121,10 +126,7 @@ class StreamLogHandler : public LogHandler {
 int GetApacheLogLevel(int severity) {
   switch (severity) {
     case logging::LOG_INFO:
-      // Note: ap_log_perror only prints NOTICE and higher messages.
-      // TODO(sligocki): Find some way to print these as INFO if we can.
-      //return APLOG_INFO;
-      return APLOG_NOTICE;
+      return APLOG_INFO;
     case logging::LOG_WARNING:
       return APLOG_WARNING;
     case logging::LOG_ERROR:
@@ -134,8 +136,7 @@ int GetApacheLogLevel(int severity) {
     case logging::LOG_FATAL:
       return APLOG_ALERT;
     default:  // For VLOG()s
-      // TODO(sligocki): return APLOG_DEBUG;
-      return APLOG_NOTICE;
+      return APLOG_DEBUG;
   }
 }
 

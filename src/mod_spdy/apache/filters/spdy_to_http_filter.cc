@@ -165,8 +165,8 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   // for more information on its subtle semantics.
   else {
     DCHECK(mode == AP_MODE_EATCRLF);
-    LOG(WARNING) << "Unsupported read mode (" << mode << ") on stream "
-                 << stream_->stream_id();
+    VLOG(2) << "Unsupported read mode (" << mode << ") on stream "
+            << stream_->stream_id();
     return APR_ENOTIMPL;
   }
 

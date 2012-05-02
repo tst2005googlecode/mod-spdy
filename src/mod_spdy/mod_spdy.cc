@@ -461,11 +461,12 @@ int ProcessConnection(conn_rec* connection) {
         // TIMEUP errors also seem to happen occasionally.  I think we should
         // also give up in this case, but I'm not sure yet; for now let's VLOG
         // when it happens, to help with debugging [mdsteele].
-        VLOG(1) << "Speculative read returned TIMEUP.";
+        VLOG(1) << "Couldn't read from SSL connection (TIMEUP).";
       } else {
-        // Any other error might be a real problem, so let's log it.
-        LOG(ERROR) << "Speculative read failed with status " << status << ": "
-                   << mod_spdy::AprStatusString(status);
+        // Any other error could be a real issue, so let's log it (slightly)
+        // more noisily.
+        LOG(INFO) << "Couldn't read from SSL connection; failed with status "
+                  << status << ": " << mod_spdy::AprStatusString(status);
       }
       return DECLINED;
     }
@@ -491,7 +492,8 @@ int ProcessConnection(conn_rec* connection) {
     return DECLINED;
   }
 
-  VLOG(1) << "Starting SPDY session";
+  const int spdy_version = context->spdy_version();
+  LOG(INFO) << "Starting SPDY/" << spdy_version << " session";
 
   // At this point, we and the client have agreed to use SPDY (either that, or
   // we've been configured to use SPDY regardless of what the client says), so
@@ -501,12 +503,11 @@ int ProcessConnection(conn_rec* connection) {
   scoped_ptr<mod_spdy::Executor> executor(
       gPerProcessThreadPool->NewExecutor());
   mod_spdy::SpdySession spdy_session(
-      context->spdy_version(), config, &session_io, &task_factory,
-      executor.get());
+      spdy_version, config, &session_io, &task_factory, executor.get());
   // This call will block until the session has closed down.
   spdy_session.Run();
 
-  VLOG(1) << "Terminating SPDY session";
+  LOG(INFO) << "Terminating SPDY/" << spdy_version << " session";
 
   // Return OK to tell Apache that we handled this connection.
   return OK;
