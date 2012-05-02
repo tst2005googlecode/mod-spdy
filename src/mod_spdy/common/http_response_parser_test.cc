@@ -32,9 +32,8 @@ class MockHttpResponseVisitor: public mod_spdy::HttpResponseVisitorInterface {
                                   const base::StringPiece&));
   MOCK_METHOD2(OnLeadingHeader, void(const base::StringPiece&,
                                      const base::StringPiece&));
-  MOCK_METHOD0(OnLeadingHeadersComplete, void());
-  MOCK_METHOD1(OnData, void(const base::StringPiece&));
-  MOCK_METHOD0(OnComplete, void());
+  MOCK_METHOD1(OnLeadingHeadersComplete, void(bool));
+  MOCK_METHOD2(OnData, void(const base::StringPiece&, bool));
 };
 
 class HttpResponseParserTest : public testing::Test {
@@ -52,9 +51,8 @@ TEST_F(HttpResponseParserTest, SimpleWithContentLength) {
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Content-Length"), Eq("14")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Content-Type"), Eq("text/plain")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("X-Whatever"), Eq("foobar")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnData(Eq("Hello, world!\n")));
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("Hello, world!\n"), Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput(
       "HTTP/1.1 200 OK\r\n"
@@ -72,10 +70,11 @@ TEST_F(HttpResponseParserTest, SimpleWithChunkedData) {
   EXPECT_CALL(visitor_, OnLeadingHeader(
       Eq("Transfer-Encoding"), Eq("chunked")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Content-Type"), Eq("text/plain")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnData(Eq("Hello, world!\n")));
-  EXPECT_CALL(visitor_, OnData(Eq("It sure is good to see you today.")));
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("Hello, world!\n"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("It sure is good to see you today."),
+                               Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(""), Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput(
       "HTTP/1.1 200 OK\r\n"
@@ -97,10 +96,10 @@ TEST_F(HttpResponseParserTest, ContentLengthAndTransferEncoding) {
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Content-Length"), Eq("3")));
   EXPECT_CALL(visitor_, OnLeadingHeader(
       Eq("Transfer-Encoding"), Eq("chunked")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnData(Eq("Hello,")));
-  EXPECT_CALL(visitor_, OnData(Eq(" world!\n")));
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("Hello,"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(" world!\n"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(""), Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput(
       "HTTP/1.1 200 OK\r\n"
@@ -123,10 +122,10 @@ TEST_F(HttpResponseParserTest, TransferEncodingAndContentLength) {
   EXPECT_CALL(visitor_, OnLeadingHeader(
       Eq("Transfer-Encoding"), Eq("chunked")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Content-Length"), Eq("3")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnData(Eq("Hello,")));
-  EXPECT_CALL(visitor_, OnData(Eq(" world!\n")));
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("Hello,"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(" world!\n"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(""), Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput(
       "HTTP/1.1 200 OK\r\n"
@@ -147,8 +146,7 @@ TEST_F(HttpResponseParserTest, NoBodyData) {
                                      Eq("Moved permenantly")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("X-Empty"), Eq("")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Location"), Eq("/foo/bar.html")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput(
       "HTTP/1.1  301  Moved permenantly\r\n"
@@ -160,8 +158,7 @@ TEST_F(HttpResponseParserTest, NoBodyData) {
 TEST_F(HttpResponseParserTest, NoStatusPhrase) {
   InSequence seq;
   EXPECT_CALL(visitor_, OnStatusLine(Eq("HTTP/1.1"), Eq("123"), Eq("")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput(
       "HTTP/1.1 123\r\n"
@@ -177,8 +174,7 @@ TEST_F(HttpResponseParserTest, HeadersBrokenAcrossLines) {
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Location"), Eq("/foo/bar.html")));
   EXPECT_CALL(visitor_, OnLeadingHeader(
       Eq("X-ThreeLines"), Eq("foo    bar  baz     quux")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput(
       "HTTP/1.1 301 Moved permenantly\r\n"
@@ -199,12 +195,12 @@ TEST_F(HttpResponseParserTest, DividedUpIntoPieces) {
       Eq("tRaNsFeR-EnCoDiNg"), Eq("chunked")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("X-TwoLines"), Eq("foo  bar")));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Content-Type"), Eq("text/plain")));
-  EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  EXPECT_CALL(visitor_, OnData(Eq("Hello,")));
-  EXPECT_CALL(visitor_, OnData(Eq(" world!\n")));
-  EXPECT_CALL(visitor_, OnData(Eq("It sure")));
-  EXPECT_CALL(visitor_, OnData(Eq(" is good to see you today.")));
-  EXPECT_CALL(visitor_, OnComplete());
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("Hello,"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(" world!\n"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("It sure"), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(" is good to see you today."), Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq(""), Eq(true)));
 
   ASSERT_TRUE(parser_.ProcessInput("HTTP/1.1 418 I'm"));
   ASSERT_TRUE(parser_.ProcessInput(" a teapot\r\ntRaNsFeR-EnCoDiNg:"));

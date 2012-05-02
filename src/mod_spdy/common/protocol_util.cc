@@ -17,6 +17,8 @@
 
 #include "mod_spdy/common/protocol_util.h"
 
+#include "base/string_piece.h"
+#include "base/string_util.h"  // for LowerCaseEqualsASCII
 #include "net/spdy/spdy_frame_builder.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
@@ -30,6 +32,7 @@ extern const char* const kContentLength = "content-length";
 extern const char* const kContentType = "content-type";
 extern const char* const kHost = "host";
 extern const char* const kKeepAlive = "keep-alive";
+extern const char* const kProxyConnection = "proxy-connection";
 extern const char* const kTransferEncoding = "transfer-encoding";
 extern const char* const kXModSpdy = "x-mod-spdy";
 
@@ -57,6 +60,17 @@ extern const char* const kSpdy3Version = ":version";
 base::StringPiece FrameData(const net::SpdyFrame& frame) {
   return base::StringPiece(
       frame.data(), frame.length() + net::SpdyFrame::kHeaderSize);
+}
+
+bool IsInvalidSpdyResponseHeader(base::StringPiece key) {
+  // The following headers are forbidden in SPDY responses (SPDY draft 3
+  // section 3.2.2).
+  return (LowerCaseEqualsASCII(key.begin(), key.end(), http::kConnection) ||
+          LowerCaseEqualsASCII(key.begin(), key.end(), http::kKeepAlive) ||
+          LowerCaseEqualsASCII(key.begin(), key.end(),
+                               http::kProxyConnection) ||
+          LowerCaseEqualsASCII(key.begin(), key.end(),
+                               http::kTransferEncoding));
 }
 
 }  // namespace mod_spdy

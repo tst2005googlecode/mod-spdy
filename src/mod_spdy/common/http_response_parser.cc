@@ -171,8 +171,6 @@ bool HttpResponseParser::ProcessLeadingHeaders(base::StringPiece* data) {
   // depending on what headers we saw (Is there body data?  Is it chunked?),
   // and return.
   if (linebreak == 0 && buffer_.empty()) {
-    visitor_->OnLeadingHeadersComplete();
-    *data = data->substr(linebreak + 2);
     switch (body_type_) {
       case CHUNKED_BODY:
         state_ = CHUNK_START;
@@ -182,12 +180,13 @@ bool HttpResponseParser::ProcessLeadingHeaders(base::StringPiece* data) {
         break;
       case NO_BODY:
         state_ = COMPLETE;
-        visitor_->OnComplete();
         break;
       default:
         LOG(DFATAL) << "Invalid body type: " << body_type_;
         return false;
     }
+    visitor_->OnLeadingHeadersComplete(state_ == COMPLETE);
+    *data = data->substr(linebreak + 2);
     return true;
   }
 
@@ -227,7 +226,7 @@ bool HttpResponseParser::ProcessChunkStart(base::StringPiece* data) {
   // Otherwise, we now need to read the data in this chunk.
   if (remaining_bytes_ == 0) {
     state_ = COMPLETE;
-    visitor_->OnComplete();
+    visitor_->OnData(base::StringPiece(), true);
   } else {
     state_ = BODY_DATA;
   }
@@ -246,7 +245,7 @@ bool HttpResponseParser::ProcessBodyData(base::StringPiece* data) {
   // content-length), then read in all the data we have and subtract from
   // remaining_bytes_.
   if (data->size() < remaining_bytes_) {
-    visitor_->OnData(*data);
+    visitor_->OnData(*data, false);
     remaining_bytes_ -= data->size();
     *data = base::StringPiece();
   }
@@ -254,16 +253,15 @@ bool HttpResponseParser::ProcessBodyData(base::StringPiece* data) {
   // in that much data, and then switch states depending on whether we're using
   // chunking or not.
   else {
-    visitor_->OnData(data->substr(0, remaining_bytes_));
-    *data = data->substr(remaining_bytes_);
-    remaining_bytes_ = 0;
     if (body_type_ == CHUNKED_BODY) {
       state_ = CHUNK_ENDING;
     } else {
       DCHECK(body_type_ == UNCHUNKED_BODY);
       state_ = COMPLETE;
-      visitor_->OnComplete();
     }
+    visitor_->OnData(data->substr(0, remaining_bytes_), state_ == COMPLETE);
+    *data = data->substr(remaining_bytes_);
+    remaining_bytes_ = 0;
   }
   return true;
 }

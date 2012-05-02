@@ -19,6 +19,7 @@
       'type': '<(library)',
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/build/build_util.gyp:mod_spdy_version_header',
         '<(DEPTH)/net/net.gyp:instaweb_util',
         '<(DEPTH)/net/net.gyp:spdy',
       ],
@@ -37,6 +38,7 @@
         'common/http_response_parser.cc',
         'common/http_response_visitor_interface.cc',
         'common/http_string_builder.cc',
+        'common/http_to_spdy_converter.cc',
         'common/protocol_util.cc',
         'common/spdy_frame_priority_queue.cc',
         'common/spdy_frame_queue.cc',
@@ -142,6 +144,7 @@
       'sources': [
         'common/header_populator_interface_test.cc',
         'common/http_response_parser_test.cc',
+        'common/http_to_spdy_converter_test.cc',
         'common/spdy_frame_priority_queue_test.cc',
         'common/spdy_frame_queue_test.cc',
         'common/spdy_session_test.cc',

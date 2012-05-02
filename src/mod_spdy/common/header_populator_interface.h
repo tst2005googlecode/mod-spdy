@@ -19,6 +19,7 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/string_piece.h"
 #include "net/spdy/spdy_framer.h"  // for SpdyHeaderBlock typedef
 
 namespace mod_spdy {
@@ -33,8 +34,8 @@ class HeaderPopulatorInterface {
   virtual void Populate(net::SpdyHeaderBlock* headers) const = 0;
 
   // Add a header to a header table, merging if necessary.
-  static void MergeInHeader(const std::string& key,
-                            const std::string& value,
+  static void MergeInHeader(const base::StringPiece& key,
+                            const base::StringPiece& value,
                             net::SpdyHeaderBlock* headers);
 
  private:

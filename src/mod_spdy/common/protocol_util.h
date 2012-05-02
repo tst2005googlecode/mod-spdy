@@ -30,6 +30,7 @@ extern const char* const kContentLength;
 extern const char* const kContentType;
 extern const char* const kHost;
 extern const char* const kKeepAlive;
+extern const char* const kProxyConnection;
 extern const char* const kTransferEncoding;
 extern const char* const kXModSpdy;
 
@@ -59,6 +60,9 @@ extern const char* const kSpdy3Version;
 
 // Return a view of the raw bytes of the frame.
 base::StringPiece FrameData(const net::SpdyFrame& frame);
+
+// Return true if this header is forbidden in SPDY responses.
+bool IsInvalidSpdyResponseHeader(base::StringPiece key);
 
 }  // namespace mod_spdy
 

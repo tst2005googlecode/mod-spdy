@@ -14,6 +14,8 @@
 
 #include "mod_spdy/common/spdy_stream.h"
 
+#include <string>
+
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/string_piece.h"
@@ -237,6 +239,61 @@ TEST(SpdyStreamTest, NegativeWindowSize) {
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectSetWithinMillis(100);
   EXPECT_EQ(787, stream.current_window_size());
+}
+
+// Test that we handle sending empty DATA frames correctly in SPDY v2.
+TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy2) {
+  net::BufferedSpdyFramer framer(2);
+  mod_spdy::SpdyFramePriorityQueue output_queue;
+  mod_spdy::SpdyStream stream(kStreamId, kAssocStreamId, kPriority,
+                              net::kSpdyStreamInitialWindowSize,
+                              &output_queue, &framer);
+
+  // Try to send an empty data frame without FLAG_FIN.  It should be
+  // suppressed.
+  stream.SendOutputDataFrame("", false);
+  EXPECT_TRUE(output_queue.IsEmpty());
+
+  // Now send an empty data frame _with_ FLAG_FIN.  It should _not_ be
+  // suppressed.
+  stream.SendOutputDataFrame("", true);
+  ExpectDataFrame(&output_queue, "", true);
+  EXPECT_TRUE(output_queue.IsEmpty());
+}
+
+// Test that we handle sending empty DATA frames correctly in SPDY v3.
+TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy3) {
+  net::BufferedSpdyFramer framer(3);
+  mod_spdy::SpdyFramePriorityQueue output_queue;
+  const int32 initial_window_size = 10;
+  mod_spdy::SpdyStream stream(kStreamId, kAssocStreamId, kPriority,
+                              initial_window_size, &output_queue, &framer);
+
+  // Try to send an empty data frame without FLAG_FIN.  It should be
+  // suppressed.
+  stream.SendOutputDataFrame("", false);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(initial_window_size, stream.current_window_size());
+
+  // Send one window's worth of data.  It should get sent successfully.
+  const std::string data(initial_window_size, 'x');
+  stream.SendOutputDataFrame(data, false);
+  ExpectDataFrame(&output_queue, data, false);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(0, stream.current_window_size());
+
+  // Try to send another empty data frame without FLAG_FIN.  It should be
+  // suppressed, and we shouldn't block, even though the window size is zero.
+  stream.SendOutputDataFrame("", false);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(0, stream.current_window_size());
+
+  // Now send an empty data frame _with_ FLAG_FIN.  It should _not_ be
+  // suppressed, and we still shouldn't block.
+  stream.SendOutputDataFrame("", true);
+  ExpectDataFrame(&output_queue, "", true);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(0, stream.current_window_size());
 }
 
 }  // namespace

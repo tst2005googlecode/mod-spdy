@@ -196,12 +196,16 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
   }
 
   // Flow control only exists for SPDY v3 and up; for SPDY v2, we can just send
-  // the data without regard to the window size.
-  if (spdy_version() < 3) {
-    const net::SpdyDataFlags flags =
-        flag_fin ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
-    SendOutputFrame(framer_->CreateDataFrame(
-        stream_id_, data.data(), data.size(), flags));
+  // the data without regard to the window size.  Even with flow control, we
+  // can of course send empty DATA frames at will.
+  if (spdy_version() < 3 || data.empty()) {
+    // Suppress empty DATA frames (unless we're setting FLAG_FIN).
+    if (!data.empty() || flag_fin) {
+      const net::SpdyDataFlags flags =
+          flag_fin ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
+      SendOutputFrame(framer_->CreateDataFrame(
+          stream_id_, data.data(), data.size(), flags));
+    }
     return;
   }
 

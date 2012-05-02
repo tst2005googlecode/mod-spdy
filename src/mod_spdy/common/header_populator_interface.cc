@@ -18,18 +18,20 @@
 
 namespace mod_spdy {
 
-void HeaderPopulatorInterface::MergeInHeader(const std::string& key,
-                                             const std::string& value,
+void HeaderPopulatorInterface::MergeInHeader(const base::StringPiece& key,
+                                             const base::StringPiece& value,
                                              net::SpdyHeaderBlock* headers) {
   // The SPDY spec requires that header names be lowercase, so forcibly
   // lowercase the key here.
-  const std::string lower_key(StringToLowerASCII(key));
+  std::string lower_key(key.as_string());
+  StringToLowerASCII(&lower_key);
+
   net::SpdyHeaderBlock::iterator iter = headers->find(lower_key);
   if (iter == headers->end()) {
-    (*headers)[lower_key] = value;
+    (*headers)[lower_key] = value.as_string();
   } else {
     iter->second.push_back('\0');
-    iter->second.append(value);
+    value.AppendToString(&iter->second);
   }
 }
 

@@ -40,16 +40,14 @@ class HttpResponseVisitorInterface {
 
   // Called after the leading HTTP headers have been visited.  This will be
   // called exactly once when the leading headers are done (even if there were
-  // no leading headers).
-  virtual void OnLeadingHeadersComplete() = 0;
+  // no leading headers).  If the `fin` argument is true, the response is now
+  // complete (i.e. it has no body) and no more methods will be called.
+  virtual void OnLeadingHeadersComplete(bool fin) = 0;
 
-  // Called zero or more times, after OnLeadingHeadersComplete.
-  virtual void OnData(const base::StringPiece& data) = 0;
-
-  // Called once when the HTTP response is totally done.  This is called
-  // immediately after one of OnLeadingHeadersComplete or OnData.  After this,
-  // no more methods will be called.
-  virtual void OnComplete() = 0;
+  // Called zero or more times, after OnLeadingHeadersComplete.  If the `fin`
+  // argument is true, the response is now complete and no more methods will be
+  // called.
+  virtual void OnData(const base::StringPiece& data, bool fin) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(HttpResponseVisitorInterface);
