@@ -143,8 +143,7 @@ void ApacheStreamTask::Run() {
     // a slave.  Our pre-connection and process-connection hooks will notice
     // this, and act accordingly, when they are called for the slave
     // connection.
-    ConnectionContext* context = CreateSlaveConnectionContext(
-        slave_connection_, using_ssl_, stream_);
+    CreateSlaveConnectionContext(slave_connection_, using_ssl_, stream_);
 
     // Normally, the core pre-connection hook sets the core module's connection
     // context to the socket passed to ap_process_connection; certain other

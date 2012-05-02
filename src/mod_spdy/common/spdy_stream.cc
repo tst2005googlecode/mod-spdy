@@ -175,7 +175,7 @@ void SpdyStream::SendOutputWindowUpdate(size_t delta) {
   DCHECK_GE(spdy_version(), 3);
   // The SPDY spec forbids sending WINDOW_UPDATE frames with a non-positive
   // delta-window-size (SPDY draft 3 section 2.6.8).
-  DCHECK_GT(delta, 0);
+  DCHECK_GT(delta, 0u);
   // Make sure there won't be any overflow shenanigans.
   COMPILE_ASSERT(sizeof(size_t) >= sizeof(net::kSpdyStreamMaximumWindowSize),
                  size_t_is_at_least_32_bits);

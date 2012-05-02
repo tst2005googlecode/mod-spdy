@@ -39,7 +39,7 @@ class ThreadPool {
  public:
   // Create a new thread pool that uses at least min_threads threads, and at
   // most max_threads threads, at a time.  min_threads must be no greater than
-  // max_threads.
+  // max_threads, and both must be positive.
   ThreadPool(int min_threads, int max_threads);
 
   // As above, but specify the amount of time after which to kill idle threads,
@@ -91,8 +91,11 @@ class ThreadPool {
   // workers.  Otherwise, do nothing.  Must be holding lock_ when calling this.
   void StartNewWorkerIfNeeded();
 
-  const int min_threads_;
-  const int max_threads_;
+  // The min and max number of threads passed to the constructor.  Although the
+  // constructor takes signed ints (for convenience), we store these unsigned
+  // to avoid the need for static_casts when comparing against workers_.size().
+  const unsigned int min_threads_;
+  const unsigned int max_threads_;
   const base::TimeDelta max_thread_idle_time_;
   // This single master lock protects all of the below fields, as well as any
   // mutable data and condition variables in the worker threads and executors.
@@ -105,7 +108,7 @@ class ThreadPool {
   // join the threads on shutdown.
   std::set<WorkerThread*> workers_;
   // How many workers do we have that are actually executing tasks?
-  int num_busy_workers_;
+  unsigned int num_busy_workers_;
   // We set this to true to tell the worker threads to terminate.
   bool shutting_down_;
   // The priority queue of pending tasks.  Invariant: all Function objects in

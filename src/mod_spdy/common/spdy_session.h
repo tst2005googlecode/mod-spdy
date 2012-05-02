@@ -52,7 +52,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   // What SPDY version is being used for this session?
   // TODO(mdsteele): This method should be const, but it isn't beacuse
   //   BufferedSpdyFramer::protocol_version() isn't const, for no reason.
-  int spdy_version() { framer_.protocol_version(); }
+  int spdy_version() { return framer_.protocol_version(); }
 
   // Process the session; don't return until the session is finished.
   void Run();

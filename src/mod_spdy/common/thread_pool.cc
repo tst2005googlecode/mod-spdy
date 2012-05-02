@@ -213,7 +213,7 @@ bool ThreadPool::WorkerThread::ThreadMainImpl() {
         continue;
       }
       // Remove this thread from the pool and exit.
-      DCHECK_EQ(1, master_->workers_.count(this));
+      DCHECK_EQ(1u, master_->workers_.count(this));
       master_->workers_.erase(this);
       return true;  // true = the worker should delete itself
     }
@@ -244,7 +244,7 @@ bool ThreadPool::WorkerThread::ThreadMainImpl() {
       task.function->CallRun();
     }
     --(master_->num_busy_workers_);
-    DCHECK_GE(master_->num_busy_workers_, 0);
+    DCHECK_GE(master_->num_busy_workers_, 0u);
 
     // We've completed the task and reaquired the lock, so decrement the count
     // of active tasks for this owner.
@@ -271,6 +271,10 @@ ThreadPool::ThreadPool(int min_threads, int max_threads)
       num_busy_workers_(0),
       shutting_down_(false) {
   DCHECK_GE(max_thread_idle_time_.InSecondsF(), 0.0);
+  // Note that we check e.g. min_threads rather than min_threads_ (which is
+  // unsigned), in order to catch negative numbers.
+  DCHECK_GE(min_threads, 1);
+  DCHECK_GE(max_threads, 1);
   DCHECK_LE(min_threads_, max_threads_);
 }
 
@@ -283,6 +287,8 @@ ThreadPool::ThreadPool(int min_threads, int max_threads,
       num_busy_workers_(0),
       shutting_down_(false) {
   DCHECK_GE(max_thread_idle_time_.InSecondsF(), 0.0);
+  DCHECK_GE(min_threads, 1);
+  DCHECK_GE(max_threads, 1);
   DCHECK_LE(min_threads_, max_threads_);
 }
 
@@ -320,7 +326,7 @@ bool ThreadPool::Start() {
   DCHECK(workers_.empty());
   // Start up min_threads_ workers; if any of the worker threads fail to start,
   // then this method fails and the ThreadPool should be deleted.
-  for (int i = 0; i < min_threads_; ++i) {
+  for (unsigned int i = 0; i < min_threads_; ++i) {
     scoped_ptr<WorkerThread> worker(new WorkerThread(this));
     if (!worker->Start()) {
       return false;
@@ -342,7 +348,7 @@ int ThreadPool::GetNumWorkersForTest() {
 
 int ThreadPool::GetNumIdleWorkersForTest() {
   base::AutoLock autolock(lock_);
-  DCHECK_GE(num_busy_workers_, 0);
+  DCHECK_GE(num_busy_workers_, 0u);
   DCHECK_LE(num_busy_workers_, workers_.size());
   return workers_.size() - num_busy_workers_;
 }
@@ -350,7 +356,7 @@ int ThreadPool::GetNumIdleWorkersForTest() {
 // This method is called each time we add a new task to the thread pool.
 void ThreadPool::StartNewWorkerIfNeeded() {
   lock_.AssertAcquired();
-  DCHECK_GE(num_busy_workers_, 0);
+  DCHECK_GE(num_busy_workers_, 0u);
   DCHECK_LE(num_busy_workers_, workers_.size());
   DCHECK_GE(workers_.size(), min_threads_);
   DCHECK_LE(workers_.size(), max_threads_);

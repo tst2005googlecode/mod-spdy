@@ -161,7 +161,7 @@ TEST_P(HttpToSpdyFilterTest, ClientRequest) {
         syn_reply_frame.header_block(),
         syn_reply_frame.header_block_len(),
         &block));
-    EXPECT_EQ(5, block.size());
+    EXPECT_EQ(5u, block.size());
     EXPECT_EQ("text/html", block[mod_spdy::http::kContentType]);
     EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
     EXPECT_EQ("200", block[status_header_name()]);
@@ -330,7 +330,7 @@ TEST_P(HttpToSpdyFilterTest, ServerPush) {
         syn_stream_frame.header_block(),
         syn_stream_frame.header_block_len(),
         &block));
-    EXPECT_EQ(5, block.size());
+    EXPECT_EQ(5u, block.size());
     EXPECT_EQ("text/css", block[mod_spdy::http::kContentType]);
     EXPECT_EQ("www.example.com", block[mod_spdy::http::kHost]);
     EXPECT_EQ("200", block[status_header_name()]);

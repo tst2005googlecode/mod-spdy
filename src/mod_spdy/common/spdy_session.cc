@@ -301,7 +301,8 @@ void SpdySession::OnSynStream(
 
     // Limit the number of simultaneous open streams; refuse the stream if
     // there are too many currently active streams.
-    if (stream_map_.size() >= config_->max_streams_per_connection()) {
+    if (static_cast<int>(stream_map_.size()) >=
+        config_->max_streams_per_connection()) {
       SendRstStreamFrame(stream_id, net::REFUSED_STREAM);
       return;
     }
@@ -628,7 +629,7 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   base::AutoLock autolock(stream_map_lock_);
   const net::SpdyStreamId stream_id = task_wrapper->stream()->stream_id();
   VLOG(2) << "Closing stream " << stream_id;
-  DCHECK_EQ(1, stream_map_.count(stream_id));
+  DCHECK_EQ(1u, stream_map_.count(stream_id));
   DCHECK_EQ(task_wrapper, stream_map_[stream_id]);
   stream_map_.erase(stream_id);
 }

@@ -21,53 +21,53 @@ using mod_spdy::HeaderPopulatorInterface;
 
 TEST(HeaderPopulatorInterfaceTest, MergeIntoEmpty) {
   net::SpdyHeaderBlock headers;
-  ASSERT_EQ(0, headers.size());
+  ASSERT_EQ(0u, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("content-length", "256", &headers);
-  ASSERT_EQ(1, headers.size());
+  ASSERT_EQ(1u, headers.size());
   ASSERT_EQ("256", headers["content-length"]);
 }
 
 TEST(HeaderPopulatorInterfaceTest, MakeLowerCase) {
   net::SpdyHeaderBlock headers;
-  ASSERT_EQ(0, headers.size());
+  ASSERT_EQ(0u, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("Content-Length", "256", &headers);
-  ASSERT_EQ(1, headers.size());
-  ASSERT_EQ(0, headers.count("Content-Length"));
+  ASSERT_EQ(1u, headers.size());
+  ASSERT_EQ(0u, headers.count("Content-Length"));
   ASSERT_EQ("256", headers["content-length"]);
 }
 
 TEST(HeaderPopulatorInterfaceTest, MergeDifferentHeaders) {
   net::SpdyHeaderBlock headers;
-  ASSERT_EQ(0, headers.size());
+  ASSERT_EQ(0u, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("x-foo", "bar", &headers);
-  ASSERT_EQ(1, headers.size());
+  ASSERT_EQ(1u, headers.size());
   ASSERT_EQ("bar", headers["x-foo"]);
 
   HeaderPopulatorInterface::MergeInHeader("x-baz", "quux", &headers);
-  ASSERT_EQ(2, headers.size());
+  ASSERT_EQ(2u, headers.size());
   ASSERT_EQ("bar", headers["x-foo"]);
   ASSERT_EQ("quux", headers["x-baz"]);
 }
 
 TEST(HeaderPopulatorInterfaceTest, MergeRepeatedHeader) {
   net::SpdyHeaderBlock headers;
-  ASSERT_EQ(0, headers.size());
+  ASSERT_EQ(0u, headers.size());
 
   HeaderPopulatorInterface::MergeInHeader("x-foo", "bar", &headers);
-  ASSERT_EQ(1, headers.size());
+  ASSERT_EQ(1u, headers.size());
   const std::string expected1("bar");
   ASSERT_EQ(expected1, headers["x-foo"]);
 
   HeaderPopulatorInterface::MergeInHeader("x-foo", "baz", &headers);
-  ASSERT_EQ(1, headers.size());
+  ASSERT_EQ(1u, headers.size());
   const std::string expected2("bar\0baz", 7);
   ASSERT_EQ(expected2, headers["x-foo"]);
 
   HeaderPopulatorInterface::MergeInHeader("x-foo", "quux", &headers);
-  ASSERT_EQ(1, headers.size());
+  ASSERT_EQ(1u, headers.size());
   const std::string expected3("bar\0baz\0quux", 12);
   ASSERT_EQ(expected3, headers["x-foo"]);
 }

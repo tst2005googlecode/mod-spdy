@@ -78,7 +78,8 @@ void HttpStringBuilder::OnDataChunk(const base::StringPiece& data) {
   state_ = DATA_CHUNKS;
   // Encode the data as an HTTP data chunk.  See RFC 2616 section 3.6.1 for
   // details.
-  base::StringAppendF(string_, "%X\r\n", data.size());
+  base::StringAppendF(string_, "%lX\r\n",
+                      static_cast<unsigned long>(data.size()));
   data.AppendToString(string_);
   string_->append("\r\n");
 }

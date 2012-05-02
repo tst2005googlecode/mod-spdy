@@ -222,7 +222,7 @@ TEST(ThreadPoolTest, SamePriorityTasksAreFIFO) {
   // Start us off, then wait for all tasks to finish.
   start.Set();
   base::AutoLock autolock(lock);
-  while (ids.size() < total_num_tasks) {
+  while (static_cast<int>(ids.size()) < total_num_tasks) {
     condvar.Wait();
   }
 
@@ -242,7 +242,8 @@ void ExpectWorkersWithinTimeout(int expected_num_workers,
   int millis_remaining = timeout_millis;
   while (true) {
     const int actual_num_workers = thread_pool->GetNumWorkersForTest();
-    const int actual_num_idle_workers = thread_pool->GetNumIdleWorkersForTest();
+    const int actual_num_idle_workers =
+        thread_pool->GetNumIdleWorkersForTest();
     if (actual_num_workers == expected_num_workers &&
         actual_num_idle_workers == expected_num_idle_workers) {
       return;

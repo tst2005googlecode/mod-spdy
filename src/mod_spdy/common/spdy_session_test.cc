@@ -315,7 +315,7 @@ TEST_P(SpdySessionTest, SingleStream) {
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
-            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0)),
+            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
       .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
   EXPECT_CALL(session_io_, SendFrameRaw(
@@ -460,7 +460,7 @@ TEST_P(SpdySessionTest, SendGoawayForDuplicateStreamId) {
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
-            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0)),
+            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
       .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
   EXPECT_CALL(session_io_, IsConnectionAborted());
@@ -583,7 +583,7 @@ TEST_P(SpdySessionFlowControlTest, SingleStreamWithFlowControl) {
       .InSequence(s1);
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
-            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0)),
+            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
       .InSequence(s1)
       .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));

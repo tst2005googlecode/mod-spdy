@@ -13,6 +13,11 @@
 # limitations under the License.
 
 {
+  'variables': {
+    # Turning on chromium_code mode enables extra compiler warnings.  See
+    # src/build/common.gypi.
+    'chromium_code': 1,
+  },
   'targets': [
     {
       'target_name': 'spdy_common',
