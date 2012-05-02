@@ -19,14 +19,7 @@
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-// spdy_protocol.h defines only SPDY_PRIORITY_LOWEST and HIGHEST.  Define the
-// others here:
-#define SPDY_PRIORITY_MIDHIGH 1
-#define SPDY_PRIORITY_MIDLOW 2
-
 namespace {
-
-const int kSpdyVersion = 2;
 
 net::SpdyStreamId GetPingId(net::SpdyFrame* frame) {
   if (!frame->is_control_frame() ||
@@ -55,21 +48,24 @@ void ExpectEmpty(mod_spdy::SpdyFramePriorityQueue* queue) {
   EXPECT_TRUE(frame == NULL);
 }
 
-TEST(SpdyFramePriorityQueueTest, Simple) {
-  net::SpdyFramer framer(kSpdyVersion);
+TEST(SpdyFramePriorityQueueTest, InsertSpdy2) {
+  net::SpdyFramer framer(2);
   mod_spdy::SpdyFramePriorityQueue queue;
   ExpectEmpty(&queue);
 
-  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(4));
-  queue.Insert(SPDY_PRIORITY_HIGHEST, framer.CreatePingFrame(1));
-  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(3));
+  EXPECT_EQ(3u, framer.GetLowestPriority());
+  EXPECT_EQ(0u, framer.GetHighestPriority());
+
+  queue.Insert(3, framer.CreatePingFrame(4));
+  queue.Insert(0, framer.CreatePingFrame(1));
+  queue.Insert(3, framer.CreatePingFrame(3));
 
   ExpectPop(1, &queue);
   ExpectPop(4, &queue);
 
-  queue.Insert(SPDY_PRIORITY_MIDLOW, framer.CreatePingFrame(2));
-  queue.Insert(SPDY_PRIORITY_MIDHIGH, framer.CreatePingFrame(6));
-  queue.Insert(SPDY_PRIORITY_MIDHIGH, framer.CreatePingFrame(5));
+  queue.Insert(2, framer.CreatePingFrame(2));
+  queue.Insert(1, framer.CreatePingFrame(6));
+  queue.Insert(1, framer.CreatePingFrame(5));
 
   ExpectPop(6, &queue);
   ExpectPop(5, &queue);
@@ -78,23 +74,52 @@ TEST(SpdyFramePriorityQueueTest, Simple) {
   ExpectEmpty(&queue);
 }
 
-TEST(SpdyFramePriorityQueueTest, InsertFront) {
-  net::SpdyFramer framer(kSpdyVersion);
+TEST(SpdyFramePriorityQueueTest, InsertSpdy3) {
+  net::SpdyFramer framer(3);
   mod_spdy::SpdyFramePriorityQueue queue;
   ExpectEmpty(&queue);
 
-  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(4));
-  queue.InsertFront(framer.CreatePingFrame(2));
-  queue.InsertFront(framer.CreatePingFrame(6));
-  queue.Insert(SPDY_PRIORITY_HIGHEST, framer.CreatePingFrame(1));
-  queue.Insert(SPDY_PRIORITY_LOWEST, framer.CreatePingFrame(3));
+  EXPECT_EQ(7u, framer.GetLowestPriority());
+  EXPECT_EQ(0u, framer.GetHighestPriority());
 
-  ExpectPop(6, &queue);
-  ExpectPop(2, &queue);
+  queue.Insert(7, framer.CreatePingFrame(4));
+  queue.Insert(0, framer.CreatePingFrame(1));
+  queue.Insert(7, framer.CreatePingFrame(3));
+
   ExpectPop(1, &queue);
   ExpectPop(4, &queue);
 
-  queue.InsertFront(framer.CreatePingFrame(5));
+  queue.Insert(6, framer.CreatePingFrame(2));
+  queue.Insert(1, framer.CreatePingFrame(6));
+  queue.Insert(5, framer.CreatePingFrame(5));
+
+  ExpectPop(6, &queue);
+  ExpectPop(5, &queue);
+  ExpectPop(2, &queue);
+  ExpectPop(3, &queue);
+  ExpectEmpty(&queue);
+}
+
+TEST(SpdyFramePriorityQueueTest, InsertTopPriority) {
+  net::SpdyFramer framer(2);
+  mod_spdy::SpdyFramePriorityQueue queue;
+  ExpectEmpty(&queue);
+
+  queue.Insert(3, framer.CreatePingFrame(4));
+  queue.Insert(mod_spdy::SpdyFramePriorityQueue::kTopPriority,
+               framer.CreatePingFrame(2));
+  queue.Insert(mod_spdy::SpdyFramePriorityQueue::kTopPriority,
+               framer.CreatePingFrame(6));
+  queue.Insert(0, framer.CreatePingFrame(1));
+  queue.Insert(3, framer.CreatePingFrame(3));
+
+  ExpectPop(2, &queue);
+  ExpectPop(6, &queue);
+  ExpectPop(1, &queue);
+  ExpectPop(4, &queue);
+
+  queue.Insert(mod_spdy::SpdyFramePriorityQueue::kTopPriority,
+               framer.CreatePingFrame(5));
 
   ExpectPop(5, &queue);
   ExpectPop(3, &queue);

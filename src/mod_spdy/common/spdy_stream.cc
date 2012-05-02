@@ -40,6 +40,9 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
   DCHECK(output_queue_);
   DCHECK(framer_);
   DCHECK_GT(window_size_, 0);
+  // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
+  DCHECK_GE(priority, 0u);
+  DCHECK_LE(priority, framer_->protocol_version() < 3 ? 3u : 7u);
 }
 
 SpdyStream::~SpdyStream() {}
@@ -242,7 +245,7 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
 void SpdyStream::SendOutputFrame(net::SpdyFrame* frame) {
   lock_.AssertAcquired();
   DCHECK(!aborted_);
-  output_queue_->Insert(priority_, frame);
+  output_queue_->Insert(static_cast<int>(priority_), frame);
 }
 
 void SpdyStream::InternalAbortSilently() {
@@ -254,7 +257,8 @@ void SpdyStream::InternalAbortSilently() {
 
 void SpdyStream::InternalAbortWithRstStream(net::SpdyStatusCodes status) {
   lock_.AssertAcquired();
-  output_queue_->InsertFront(framer_->CreateRstStream(stream_id_, status));
+  output_queue_->Insert(SpdyFramePriorityQueue::kTopPriority,
+                        framer_->CreateRstStream(stream_id_, status));
   // InternalAbortSilently will set aborted_ to true, which will prevent the
   // stream thread from sending any more frames on this stream after the
   // RST_STREAM.

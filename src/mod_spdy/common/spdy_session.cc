@@ -567,7 +567,8 @@ void SpdySession::SendGoAwayFrame(net::SpdyGoAwayStatus status) {
 
 void SpdySession::SendRstStreamFrame(net::SpdyStreamId stream_id,
                                      net::SpdyStatusCodes status) {
-  output_queue_.InsertFront(framer_.CreateRstStream(stream_id, status));
+  output_queue_.Insert(SpdyFramePriorityQueue::kTopPriority,
+                       framer_.CreateRstStream(stream_id, status));
 }
 
 void SpdySession::SendSettingsFrame() {

@@ -76,7 +76,6 @@
       'sources': [
         'apache/apache_spdy_session_io.cc',
         'apache/apache_spdy_stream_task_factory.cc',
-        'apache/apr_thread_pool_executor.cc',
         'apache/config_commands.cc',
         'apache/config_util.cc',
         'apache/filters/http_to_spdy_filter.cc',
@@ -173,7 +172,6 @@
         '<(DEPTH)',
       ],
       'sources': [
-        'apache/apr_thread_pool_executor_test.cc',
         'apache/filters/http_to_spdy_filter_test.cc',
         'apache/filters/spdy_to_http_filter_test.cc',
         'apache/pool_util_test.cc',

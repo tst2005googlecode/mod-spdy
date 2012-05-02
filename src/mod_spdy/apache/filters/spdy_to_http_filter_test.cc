@@ -42,9 +42,9 @@ namespace {
 class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
  public:
   SpdyToHttpFilterTest()
-      : stream_id_(1),
-        priority_(SPDY_PRIORITY_HIGHEST),
-        framer_(GetParam()),
+      : framer_(GetParam()),
+        stream_id_(1),
+        priority_(framer_.GetHighestPriority()),
         stream_(stream_id_, 0, priority_, net::kSpdyStreamInitialWindowSize,
                 &output_queue_, &framer_),
         spdy_to_http_filter_(&stream_) {
@@ -168,9 +168,9 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
             mod_spdy::spdy::kSpdy3Version);
   }
 
+  net::BufferedSpdyFramer framer_;
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
-  net::BufferedSpdyFramer framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
   mod_spdy::SpdyStream stream_;
   mod_spdy::SpdyToHttpFilter spdy_to_http_filter_;

@@ -379,7 +379,7 @@ TEST_P(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
   net::SpdyHeaderBlock headers;
   headers["foobar"] = "Foo is to bar as bar is to baz.";
   scoped_ptr<net::SpdyFrame> frame(framer_.CreateSynStream(
-      1, 0, SPDY_PRIORITY_HIGHEST, 0, net::CONTROL_FLAG_FIN,
+      1, 0, framer_.GetHighestPriority(), 0, net::CONTROL_FLAG_FIN,
       false,  // false = no compression
       &headers));
   PushFrame(*frame);
@@ -406,7 +406,8 @@ TEST_P(SpdySessionTest, SendGoawayForSynStreamIdZero) {
   // SpdyFramer DCHECKS that the stream_id isn't zero, so just create the frame
   // with a stream_id of 1, and then set the stream_id on the next line.
   scoped_ptr<net::SpdySynStreamControlFrame> frame(framer_.CreateSynStream(
-      1, 0, SPDY_PRIORITY_HIGHEST, 0, net::CONTROL_FLAG_FIN, true, &headers));
+      1, 0, framer_.GetHighestPriority(), 0, net::CONTROL_FLAG_FIN, true,
+      &headers));
   frame->set_stream_id(0);
   PushFrame(*frame);
 
@@ -429,7 +430,8 @@ TEST_P(SpdySessionTest, SendGoawayForSynStreamWithInvalidFlags) {
   // SpdyFramer DCHECKS that the flags are valid, so just create the frame
   // with no flags, and then set the flags on the next line.
   scoped_ptr<net::SpdySynStreamControlFrame> frame(framer_.CreateSynStream(
-      1, 0, SPDY_PRIORITY_HIGHEST, 0, net::CONTROL_FLAG_NONE, true, &headers));
+      1, 0, framer_.GetHighestPriority(), 0, net::CONTROL_FLAG_NONE, true,
+      &headers));
   frame->set_flags(0x47);
   PushFrame(*frame);
 

@@ -15,25 +15,14 @@
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 
 #include <list>
+#include <map>
 
+#include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/time.h"
-
-namespace {
-
-bool TryPopFrom(std::list<net::SpdyFrame*>* queue, net::SpdyFrame** frame) {
-  DCHECK(frame);
-  if (queue->empty()) {
-    return false;
-  }
-  *frame = queue->front();
-  queue->pop_front();
-  return true;
-}
-
-}  // namespace
+#include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
 
@@ -41,58 +30,46 @@ SpdyFramePriorityQueue::SpdyFramePriorityQueue()
     : condvar_(&lock_) {}
 
 SpdyFramePriorityQueue::~SpdyFramePriorityQueue() {
-  STLDeleteContainerPointers(p0_queue_.begin(), p0_queue_.end());
-  STLDeleteContainerPointers(p1_queue_.begin(), p1_queue_.end());
-  STLDeleteContainerPointers(p2_queue_.begin(), p2_queue_.end());
-  STLDeleteContainerPointers(p3_queue_.begin(), p3_queue_.end());
+  for (QueueMap::iterator iter = queue_map_.begin();
+       iter != queue_map_.end(); ++iter) {
+    FrameList* list = iter->second;
+    STLDeleteContainerPointers(list->begin(), list->end());
+    delete list;
+  }
 }
 
 bool SpdyFramePriorityQueue::IsEmpty() const {
   base::AutoLock autolock(lock_);
-  return (p0_queue_.empty() && p1_queue_.empty() &&
-          p2_queue_.empty() && p3_queue_.empty());
+  return queue_map_.empty();
 }
 
-void SpdyFramePriorityQueue::Insert(net::SpdyPriority priority,
-                                    net::SpdyFrame* frame) {
+const int SpdyFramePriorityQueue::kTopPriority = -1;
+
+void SpdyFramePriorityQueue::Insert(int priority, net::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
-  switch (priority) {
-    case 0:
-      p0_queue_.push_back(frame);
-      break;
-    case 1:
-      p1_queue_.push_back(frame);
-      break;
-    case 2:
-      p2_queue_.push_back(frame);
-      break;
-    case 3:
-      p3_queue_.push_back(frame);
-      break;
-    default:
-      LOG(DFATAL) << "Invalid priority value: " << priority;
-      p3_queue_.push_back(frame);
+
+  // Get the frame list for the given priority; if it doesn't currently exist,
+  // create it in the map.
+  FrameList* list = NULL;
+  QueueMap::iterator iter = queue_map_.find(priority);
+  if (iter == queue_map_.end()) {
+    list = new FrameList;
+    queue_map_[priority] = list;
+  } else {
+    list = iter->second;
   }
-  condvar_.Signal();
-}
+  DCHECK(list);
 
-void SpdyFramePriorityQueue::InsertFront(net::SpdyFrame* frame) {
-  base::AutoLock autolock(lock_);
-  DCHECK(frame);
-  // To ensure that this frame is at the very front of the queue, we push it at
-  // the front of the highest-priority internal queue.
-  p0_queue_.push_front(frame);
+  // Add the frame to the end of the list, and wake up at most one thread
+  // sleeping on a BlockingPop.
+  list->push_back(frame);
   condvar_.Signal();
 }
 
 bool SpdyFramePriorityQueue::Pop(net::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
-  DCHECK(frame);
-  return (TryPopFrom(&p0_queue_, frame) ||
-          TryPopFrom(&p1_queue_, frame) ||
-          TryPopFrom(&p2_queue_, frame) ||
-          TryPopFrom(&p3_queue_, frame));
+  return InternalPop(frame);
 }
 
 bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
@@ -102,9 +79,7 @@ bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
 
   const base::TimeDelta zero = base::TimeDelta();
   base::TimeDelta time_remaining = max_time;
-  while (time_remaining > zero &&
-         p0_queue_.empty() && p1_queue_.empty() &&
-         p2_queue_.empty() && p3_queue_.empty()) {
+  while (time_remaining > zero && queue_map_.empty()) {
     // TODO(mdsteele): It appears from looking at the Chromium source code that
     // HighResNow() is "expensive" on Windows (how expensive, I am not sure);
     // however, the other options for getting a "now" time either don't
@@ -116,10 +91,30 @@ bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
     time_remaining -= base::TimeTicks::HighResNow() - start;
   }
 
-  return (TryPopFrom(&p0_queue_, frame) ||
-          TryPopFrom(&p1_queue_, frame) ||
-          TryPopFrom(&p2_queue_, frame) ||
-          TryPopFrom(&p3_queue_, frame));
+  return InternalPop(frame);
+}
+
+bool SpdyFramePriorityQueue::InternalPop(net::SpdyFrame** frame) {
+  lock_.AssertAcquired();
+  DCHECK(frame);
+  if (queue_map_.empty()) {
+    return false;
+  }
+  // As an invariant, the lists in the queue map are never empty.  So get the
+  // list of highest priority (smallest priority number) and pop the first
+  // frame from it.
+  QueueMap::iterator iter = queue_map_.begin();
+  FrameList* list = iter->second;
+  DCHECK(!list->empty());
+  *frame = list->front();
+  list->pop_front();
+  // If the list is now empty, we have to delete it from the map to maintain
+  // the invariant.
+  if (list->empty()) {
+    queue_map_.erase(iter);
+    delete list;
+  }
+  return true;
 }
 
 }  // namespace mod_spdy

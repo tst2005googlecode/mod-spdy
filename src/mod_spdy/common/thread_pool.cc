@@ -220,11 +220,9 @@ bool ThreadPool::WorkerThread::ThreadMainImpl() {
 
     // Otherwise, there must be at least one task available now, so pop the
     // highest-priority task from the queue.  Note that smaller values
-    // correspond to higher priorities, so task_queue_.begin() gets us the
-    // highest-priority pending task.
+    // correspond to higher priorities (SPDY draft 3 section 2.3.3), so
+    // task_queue_.begin() gets us the highest-priority pending task.
     DCHECK(!master_->task_queue_.empty());
-    COMPILE_ASSERT(SPDY_PRIORITY_HIGHEST < SPDY_PRIORITY_LOWEST,
-                   lower_numbers_are_higher_priority);
     TaskQueue::iterator task_iter = master_->task_queue_.begin();
     const Task task = task_iter->second;
     master_->task_queue_.erase(task_iter);

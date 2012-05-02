@@ -130,7 +130,7 @@ TEST_P(HttpToSpdyFilterTest, ClientRequest) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyStreamId associated_stream_id = 0;
-  const net::SpdyPriority priority = SPDY_PRIORITY_HIGHEST;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               net::kSpdyStreamInitialWindowSize,
                               &output_queue_, &buffered_framer_);

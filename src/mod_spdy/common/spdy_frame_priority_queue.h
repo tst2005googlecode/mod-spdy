@@ -16,13 +16,15 @@
 #define MOD_SPDY_COMMON_SPDY_FRAME_PRIORITY_QUEUE_H_
 
 #include <list>
+#include <map>
 
 #include "base/basictypes.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "net/spdy/spdy_protocol.h"
 
 namespace base { class TimeDelta; }
+
+namespace net { class SpdyFrame; }
 
 namespace mod_spdy {
 
@@ -42,16 +44,15 @@ class SpdyFramePriorityQueue {
   // returns.)
   bool IsEmpty() const;
 
+  // A priority value that is more important than any priority normally used
+  // for sending SPDY frames.
+  static const int kTopPriority;
+
   // Insert a frame into the queue at the specified priority.  The queue takes
   // ownership of the frame, and will delete it if the queue is deleted before
-  // the frame is removed from the queue by the Pop method.
-  void Insert(net::SpdyPriority priority, net::SpdyFrame* frame);
-
-  // Insert a frame at the *front* of the queue; it will be popped out before
-  // any other frame currently in the queue, regardless of priority.  The queue
-  // takes ownership of the frame, and will delete it if the queue is deleted
-  // before the frame is removed from the queue by the Pop method.
-  void InsertFront(net::SpdyFrame* frame);
+  // the frame is removed from the queue by the Pop method.  Note that smaller
+  // numbers indicate higher priorities.
+  void Insert(int priority, net::SpdyFrame* frame);
 
   // Remove and provide a frame from the queue and return true, or return false
   // if the queue is empty.  The caller gains ownership of the provided frame
@@ -68,12 +69,23 @@ class SpdyFramePriorityQueue {
   bool BlockingPop(const base::TimeDelta& max_time, net::SpdyFrame** frame);
 
  private:
+  // Same as Pop(), but requires lock_ to be held.
+  bool InternalPop(net::SpdyFrame** frame);
+
   mutable base::Lock lock_;
   base::ConditionVariable condvar_;
-  std::list<net::SpdyFrame*> p0_queue_;
-  std::list<net::SpdyFrame*> p1_queue_;
-  std::list<net::SpdyFrame*> p2_queue_;
-  std::list<net::SpdyFrame*> p3_queue_;
+  // We use a map of lists to store frames, to guarantee that frames of the
+  // same priority are stored in FIFO order.  A simpler implementation would be
+  // to just use a multimap, which in practice is nearly always implemented
+  // with the FIFO behavior that we want, but the spec doesn't actually
+  // guarantee that behavior.
+  //
+  // Each list stores frames of a particular priority.  Invariant: the lists in
+  // the QueueMap are never empty; if one of the lists becomes empty, that
+  // key/value pair is immediately removed from the map.
+  typedef std::list<net::SpdyFrame*> FrameList;
+  typedef std::map<int, FrameList*> QueueMap;
+  QueueMap queue_map_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyFramePriorityQueue);
 };
