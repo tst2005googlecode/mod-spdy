@@ -121,14 +121,23 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   // connection turns out to be closed.
   void SendFrameRaw(const net::SpdyFrame& frame);
 
-  // Convenience methods to send specific types of control frames:
+  // Immediately send a GOAWAY frame to the client with the given status,
+  // unless we've already sent one.  This also prevents us from creating any
+  // new streams, so calling this is the best way to shut the session down
+  // gracefully; once all streams have finished normally and no new ones can be
+  // created, the session will shut itself down.
   void SendGoAwayFrame(net::SpdyGoAwayStatus status);
+  // Enqueue a RST_STREAM frame for the given stream ID.  Note that this does
+  // not abort the stream if it exists; for that, use AbortStream().
   void SendRstStreamFrame(net::SpdyStreamId stream_id,
                           net::SpdyStatusCodes status);
+  // Immediately send our SETTINGS frame, with values based on our
+  // SpdyServerConfig object.  This should be done exactly once, at session
+  // start.
   void SendSettingsFrame();
 
-  // Close down the whole session, post-haste.  Block until all stream threads
-  // have shut down.
+  // Close down the whole session immediately.  Abort all active streams, and
+  // then block until all stream threads have shut down.
   void StopSession();
   // Abort the stream without sending anything to the client.
   void AbortStreamSilently(net::SpdyStreamId stream_id);
@@ -151,7 +160,6 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   SpdyStreamTaskFactory* const task_factory_;
   Executor* const executor_;
   net::BufferedSpdyFramer framer_;
-  bool no_more_reading_;  // don't read any more input from connection
   bool session_stopped_;  // StopSession() has been called
   bool already_sent_goaway_;  // GOAWAY frame has been sent
   net::SpdyStreamId last_client_stream_id_;

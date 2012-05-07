@@ -41,7 +41,6 @@ SpdySession::SpdySession(int spdy_version,
       task_factory_(task_factory),
       executor_(executor),
       framer_(spdy_version),
-      no_more_reading_(false),
       session_stopped_(false),
       already_sent_goaway_(false),
       last_client_stream_id_(0),
@@ -83,12 +82,20 @@ void SpdySession::Run() {
     }
 
     // Step 1: Read input from the client.
-    if (!no_more_reading_) {
+    {
       // Determine whether we should block until more input data is available.
       // For now, our policy is to block only if there is no pending output and
       // there are no currently-active streams (which might produce new
       // output).
       const bool should_block = StreamMapIsEmpty() && output_queue_.IsEmpty();
+
+      // If there's no current output, and we can't create new streams (so
+      // there will be no future output), then we should just shut down the
+      // connection.
+      if (should_block && already_sent_goaway_) {
+        StopSession();
+        break;
+      }
 
       // Read available input data.  The SpdySessionIO will grab any
       // available data and push it into the SpdyFramer that we pass to it
@@ -103,20 +110,28 @@ void SpdySession::Run() {
         output_block_time = kInitOutputBlockTime;
       } else if (status == SpdySessionIO::READ_CONNECTION_CLOSED) {
         // The reading side of the connection has closed, so we won't be
-        // reading anything more.
-        no_more_reading_ = true;
-        // In case the writing side is still open, let's try to send a GOAWAY
-        // to let the client know we're shutting down gracefully.
+        // reading anything more.  SPDY is transport-layer agnostic and not
+        // TCP-specific; apparently, this means that there is no expectation
+        // that we behave any differently for a half-closed connection than for
+        // a fully-closed connection.  So if the reading side of the connection
+        // closes, we're just going to shut down completely.
+        //
+        // But just in case the writing side is still open, let's try to send a
+        // GOAWAY to let the client know we're shutting down gracefully.
         SendGoAwayFrame(net::GOAWAY_OK);
+        // Now, shut everything down.
+        StopSession();
       } else if (status == SpdySessionIO::READ_ERROR) {
         // There was an error during reading, so the session is corrupted and
         // we have no chance of reading anything more.
-        no_more_reading_ = true;
+        //
         // We've probably already sent a GOAWAY with a PROTOCOL_ERROR by this
         // point, but if we haven't (perhaps the error was our fault?) then
         // send a GOAWAY now.  (If we've already sent a GOAWAY, then
         // SendGoAwayFrame is a no-op.)
         SendGoAwayFrame(net::GOAWAY_INTERNAL_ERROR);
+        // Now, shut everything down.
+        StopSession();
       } else {
         // Otherwise, there's simply no data available at the moment.
         DCHECK_EQ(SpdySessionIO::READ_NO_DATA, status);
@@ -124,7 +139,7 @@ void SpdySession::Run() {
     }
 
     // Step 2: Send output to the client.
-    {
+    if (!session_stopped_) {
       // If there are no active streams, then no new output can be getting
       // created right now, so we shouldn't block on output waiting for more.
       const bool no_active_streams = StreamMapIsEmpty();
@@ -137,11 +152,6 @@ void SpdySession::Run() {
       if (no_active_streams ? output_queue_.Pop(&frame) :
           output_queue_.BlockingPop(output_block_time, &frame)) {
         do {
-          // Each invocation of SendFrame will flush that one frame down the
-          // wire.  Might it be better to batch them together?  Actually, maybe
-          // not -- we already try to make sure that each data frame is
-          // nicely-sized (~4k), so flushing them one at a time might be
-          // reasonable.  But we may want to revisit this.
           SendFrame(frame);
         } while (!session_stopped_ && output_queue_.Pop(&frame));
 
@@ -150,7 +160,7 @@ void SpdySession::Run() {
       } else {
         // The queue is currently empty; if no more streams can be created and
         // no more remain, we're done.
-        if ((already_sent_goaway_ || no_more_reading_) && no_active_streams) {
+        if (already_sent_goaway_ && no_active_streams) {
           StopSession();
         } else {
           // There were no output frames within the timeout; so do an
@@ -527,8 +537,7 @@ void SpdySession::SendFrame(const net::SpdyFrame* frame) {
   DCHECK(compressed_frame != NULL);
   if (framer_.IsCompressible(*frame)) {
     // IsCompressible will return true for SYN_STREAM, SYN_REPLY, and HEADERS
-    // frames, but _not_ for our DATA frames.  DATA frame compression is not
-    // part of the SPDY v2 spec (and may be getting removed from the v3 spec).
+    // frames, and false for everything else.
     DCHECK(frame->is_control_frame());
     // First compress the original frame into a new frame object...
     const net::SpdyFrame* compressed = framer_.CompressControlFrame(
