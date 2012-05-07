@@ -50,7 +50,6 @@
 
 #include "base/logging.h"
 #include "mod_spdy/apache/pool_util.h"  // for AprStatusString
-#include "mod_spdy/apache/response_header_populator.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/version.h"
@@ -60,23 +59,14 @@ namespace {
 
 const char* kModSpdyVersion = MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
 
-// This is the number of bytes we want to send per data frame.  We never send
-// data frames larger than this, but we might send smaller ones if we have to
-// flush early.
-// TODO The SPDY folks say that smallish (~4kB) data frames are good; however,
-//      we should experiment later on to see what value here performs the best.
-const size_t kTargetDataFrameBytes = 4096;
-
 }  // namespace
 
 namespace mod_spdy {
 
 HttpToSpdyFilter::HttpToSpdyFilter(SpdyStream* stream)
-    : stream_(stream),
-      headers_have_been_sent_(false),
-      end_of_stream_reached_(false) {
-  DCHECK(stream_ != NULL);
-}
+    : receiver_(stream),
+      converter_(stream->spdy_version(), &receiver_),
+      eos_bucket_received_(false) {}
 
 HttpToSpdyFilter::~HttpToSpdyFilter() {}
 
@@ -84,34 +74,20 @@ HttpToSpdyFilter::~HttpToSpdyFilter() {}
 // as having been aborted and return APR_ECONNABORTED.  Hopefully, this will
 // convince Apache to shut down processing for this (slave) connection, thus
 // allowing this stream's thread to complete and exit.
-#define RETURN_IF_STREAM_ABORT(filter)                       \
-  do {                                                       \
-    if ((filter)->c->aborted || stream_->is_aborted()) {     \
-      (filter)->c->aborted = true;                           \
-      return APR_ECONNABORTED;                               \
-    }                                                        \
+#define RETURN_IF_STREAM_ABORT(filter)                                 \
+  do {                                                                 \
+    if ((filter)->c->aborted || receiver_.stream_->is_aborted()) {     \
+      (filter)->c->aborted = true;                                     \
+      return APR_ECONNABORTED;                                         \
+    }                                                                  \
   } while (false)
 
 apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
                                      apr_bucket_brigade* input_brigade) {
+  // This is a NETWORK-level filter, so there shouldn't be any filter after us.
   if (filter->next != NULL) {
-    // Our expectation is that this output filter will be the last filter in
-    // the chain -- this is a TRANSCODE filter, so the only filters likely to
-    // come after this one are SSL (a CONNECTION filter) and core (a NETWORK
-    // filter), both of which we have carefully disabled for the slave
-    // connection.  We never pass data onto the next filter if there is one --
-    // instead we just push SPDY frames onto the thread-safe queue that carries
-    // them back to the master connection.  If there _are_ filters after this
-    // one, they'll be ignored, but let's log a warning here so that we'll know
-    // that something unexpected is going on.
-    //
-    // We do allow mod_logio ("log_input_output") to run after us
-    // without generating a warning, since it is a passive filter that
-    // doesn't modify the stream.
-    if (apr_strnatcasecmp("log_input_output", filter->next->frec->name) != 0) {
-      LOG(WARNING) << "HttpToSpdyFilter is not the last filter in the chain "
-                   << "(it is followed by " << filter->next->frec->name << ")";
-    }
+    LOG(WARNING) << "HttpToSpdyFilter is not the last filter in the chain "
+                 << "(it is followed by " << filter->next->frec->name << ")";
   }
 
   // According to the page at
@@ -119,18 +95,9 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
   // we should never pass an empty brigade down the chain, but to be safe, we
   // should be prepared to accept one and do nothing.
   if (APR_BRIGADE_EMPTY(input_brigade)) {
-    LOG(WARNING) << "HttpToSpdyFilter::Write received an empty brigade.";
+    LOG(INFO) << "HttpToSpdyFilter received an empty brigade.";
     return APR_SUCCESS;
   }
-
-  // We shouldn't be getting any more buckets after an EOS, but if we do, we're
-  // supposed to ignore them.
-  if (end_of_stream_reached_) {
-    LOG(ERROR) << "HttpToSpdyFilter::Write was called after EOS";
-    return APR_SUCCESS;
-  }
-
-  request_rec* const request = filter->r;
 
   // Loop through the brigade, reading and sending data.  We delete each bucket
   // once we have successfully consumed it, before moving on to the next
@@ -152,32 +119,25 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
 
     if (APR_BUCKET_IS_METADATA(bucket)) {
       if (APR_BUCKET_IS_EOS(bucket)) {
-        // EOS bucket -- there should be no more buckets in this stream.
-        if (APR_BUCKET_NEXT(bucket) != APR_BRIGADE_SENTINEL(input_brigade)) {
-          LOG(ERROR) << "HttpToSpdyFilter::Write saw buckets after an EOS";
-        }
-        end_of_stream_reached_ = true;
+        // EOS bucket -- there should be no more data buckets in this stream.
+        eos_bucket_received_ = true;
         RETURN_IF_STREAM_ABORT(filter);
-        Send(filter, false);
-        // We consumed the EOS bucket successfully, so delete it before
-        // returning.
-        apr_bucket_delete(bucket);
-        return APR_SUCCESS;
+        converter_.Flush();
       } else if (APR_BUCKET_IS_FLUSH(bucket)) {
         // FLUSH bucket -- call Send() immediately and flush the data buffer.
         RETURN_IF_STREAM_ABORT(filter);
-        Send(filter, true);
+        converter_.Flush();
       } else {
         // Unknown metadata bucket.  This bucket has no meaning to us, and
         // there's no further filter to pass it to, so we just ignore it.
       }
-    }
-    // Ignore data buckets that represent HTTP headers.
-    // N.B. The sent_bodyct field is not really documented (it seems to be
-    // reserved for the use of core filters) but it seems to do what we want.
-    // It starts out as 0, and is set to 1 by the core HTTP_HEADER filter to
-    // indicate when body data has begun to be sent.
-    else if (request->sent_bodyct) {
+    } else if (eos_bucket_received_) {
+      // We shouldn't be getting any data buckets after an EOS (since this is a
+      // connection-level filter, we do sometimes see other metadata buckets
+      // after the EOS).  If we do get them, ignore them.
+      LOG(INFO) << "HttpToSpdyFilter received " << bucket->type->name
+                << " bucket after an EOS (and ignored it).";
+    } else {
       // Data bucket -- get ready to read.
       const char* data = NULL;
       apr_size_t data_length = 0;
@@ -186,12 +146,16 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
       apr_status_t status = apr_bucket_read(bucket, &data, &data_length,
                                             APR_NONBLOCK_READ);
       if (status == APR_SUCCESS) {
-        data_buffer_.append(data, static_cast<size_t>(data_length));
+        RETURN_IF_STREAM_ABORT(filter);
+        if (!converter_.ProcessInput(data, static_cast<size_t>(data_length))) {
+          // Parse failure.  The parser will have already logged an error.
+          return APR_EGENERAL;
+        }
       } else if (APR_STATUS_IS_EAGAIN(status)) {
         // Non-blocking read failed with EAGAIN, so try again with a blocking
         // read (but flush first, in case we block for a long time).
         RETURN_IF_STREAM_ABORT(filter);
-        Send(filter, true);
+        converter_.Flush();
         status = apr_bucket_read(bucket, &data, &data_length, APR_BLOCK_READ);
         if (status != APR_SUCCESS) {
           LOG(ERROR) << "Blocking read failed with status " << status << ": "
@@ -200,18 +164,15 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
           // rather, leave it (and any remaining buckets) in the brigade.
           return status;  // failure
         }
-        data_buffer_.append(data, static_cast<size_t>(data_length));
+        RETURN_IF_STREAM_ABORT(filter);
+        if (!converter_.ProcessInput(data, static_cast<size_t>(data_length))) {
+          // Parse failure.  The parser will have already logged an error.
+          return APR_EGENERAL;
+        }
       } else {
         // Since we didn't successfully consume this bucket, don't delete it;
         // rather, leave it (and any remaining buckets) in the brigade.
         return status;  // failure
-      }
-
-      // If we've buffered enough data to be worth sending one or more SPDY
-      // data frames, do so.
-      if (data_buffer_.size() >= kTargetDataFrameBytes) {
-        RETURN_IF_STREAM_ABORT(filter);
-        Send(filter, false);
       }
     }
 
@@ -220,81 +181,29 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
     apr_bucket_delete(bucket);
   }
 
-  // If we haven't sent the headers yet (because we've never called Send()),
-  // then go ahead and do that now; otherwise, we're done.
-  if (!headers_have_been_sent_) {
-    RETURN_IF_STREAM_ABORT(filter);
-    Send(filter, false);
-  }
-
   // We went through the whole brigade successfully, so it must be empty when
   // we return (see http://code.google.com/p/mod-spdy/issues/detail?id=17).
   DCHECK(APR_BRIGADE_EMPTY(input_brigade));
   return APR_SUCCESS;
 }
 
-void HttpToSpdyFilter::Send(ap_filter_t* filter, bool flush) {
-  // We'll set this to true if we send a SYN_REPLY frame with FLAG_FIN:
-  bool headers_fin = false;
-
-  // Send headers if we haven't yet.
-  if (!headers_have_been_sent_) {
-    ResponseHeaderPopulator populator(stream_->spdy_version(), filter->r);
-    headers_fin = end_of_stream_reached_ && data_buffer_.empty();
-    SendHeaders(populator, headers_fin);
-    headers_have_been_sent_ = true;
-    data_buffer_.clear();
-  }
-
-  // If we have (strictly) more than one frame's worth of data waiting, send it
-  // down the filter chain, kTargetDataFrameBytes bytes at a time.  If we are
-  // left with _exactly_ kTargetDataFrameBytes bytes of data, we'll deal with
-  // that in the next code block (see the comment there to explain why).
-  if (data_buffer_.size() > kTargetDataFrameBytes) {
-    const char* start = data_buffer_.data();
-    size_t size = data_buffer_.size();
-    while (size > kTargetDataFrameBytes) {
-      SendData(start, kTargetDataFrameBytes, false);
-      start += kTargetDataFrameBytes;
-      size -= kTargetDataFrameBytes;
-    }
-    data_buffer_.erase(0, data_buffer_.size() - size);
-  }
-
-  // We may still have some leftover data.  We need to send another data frame
-  // now (rather than waiting for a full kTargetDataFrameBytes) if:
-  //   1) we're at the end of the stream and haven't yet sent a FLAG_FIN,
-  //   2) we're supposed to flush and the buffer is nonempty, or
-  //   3) we still have a full data frame's worth in the buffer.
-  //
-  // Note that because of the previous code block, condition (3) will only be
-  // true if we have exactly kTargetDataFrameBytes of data.  However, dealing
-  // with that case here instead of in the above block makes it easier to make
-  // sure we correctly set FLAG_FIN on the final data frame, which is why the
-  // above block uses a strict, > comparison rather than a non-strict, >=
-  // comparison.
-  if ((end_of_stream_reached_ && !headers_fin) ||
-      (flush && !data_buffer_.empty()) ||
-      data_buffer_.size() >= kTargetDataFrameBytes) {
-    SendData(data_buffer_.data(), data_buffer_.size(), end_of_stream_reached_);
-    data_buffer_.clear();
-  }
+HttpToSpdyFilter::ReceiverImpl::ReceiverImpl(SpdyStream* stream)
+    : stream_(stream) {
+  DCHECK(stream_);
 }
 
-void HttpToSpdyFilter::SendHeaders(const HeaderPopulatorInterface& populator,
-                                   bool flag_fin) {
-  net::SpdyHeaderBlock headers;
-  populator.Populate(&headers);
-  headers[http::kXModSpdy] = kModSpdyVersion;
-  if (stream_->is_server_push()) {
-    stream_->SendOutputSynStream(headers, flag_fin);
-  } else {
-    stream_->SendOutputSynReply(headers, flag_fin);
-  }
+HttpToSpdyFilter::ReceiverImpl::~ReceiverImpl() {}
+
+void HttpToSpdyFilter::ReceiverImpl::ReceiveSynReply(
+    net::SpdyHeaderBlock* headers, bool flag_fin) {
+  DCHECK(headers);
+  (*headers)[http::kXModSpdy] = kModSpdyVersion;
+  stream_->SendOutputSynReply(*headers, flag_fin);
 }
 
-void HttpToSpdyFilter::SendData(const char* data, size_t size, bool flag_fin) {
-  stream_->SendOutputDataFrame(base::StringPiece(data, size), flag_fin);
+void HttpToSpdyFilter::ReceiverImpl::ReceiveData(
+    base::StringPiece data, bool flag_fin) {
+  stream_->SendOutputDataFrame(data, flag_fin);
 }
 
 }  // namespace mod_spdy

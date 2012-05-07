@@ -21,16 +21,29 @@
 #include "util_filter.h"
 
 #include "base/basictypes.h"
-#include "net/spdy/spdy_framer.h"
+#include "mod_spdy/common/http_to_spdy_converter.h"
+
+namespace spdy { class SpdyFrame; }
 
 namespace mod_spdy {
 
-class HeaderPopulatorInterface;
 class SpdyStream;
 
 // An Apache filter for converting HTTP data into SPDY frames and sending them
-// to the output queue of a SpdyStream object.  This is intended to be the last
-// filter in the output chain of one of our slave connections.
+// to the output queue of a SpdyStream object.  This is intended to be the
+// outermost filter in the output chain of one of our slave connections,
+// essentially taking the place of the network socket.
+//
+// In a previous implementation of this filter, we made this a TRANSCODE-level
+// filter rather than a NETWORK-level filter; this had the advantage that we
+// could pull HTTP header data directly from the Apache request object, rather
+// than having to parse the headers.  However, it had the disadvantage of being
+// fragile -- for example, we had an additional output filter whose sole job
+// was to deceive Apache into not chunking the response body, and several
+// different hooks to try to make sure our output filters stayed in place even
+// in the face of Apache's weird error-handling paths.  Also, using a
+// NETWORK-level filter decreases the likelihood that we'll break other modules
+// that try to use connection-level filters.
 class HttpToSpdyFilter {
  public:
   explicit HttpToSpdyFilter(SpdyStream* stream);
@@ -42,18 +55,23 @@ class HttpToSpdyFilter {
   apr_status_t Write(ap_filter_t* filter, apr_bucket_brigade* input_brigade);
 
  private:
-  // Send SPDY frames for headers and/or data, as necessary.  If the flush
-  // argument is true (or if the end-of-stream has been reached), send _all_
-  // data from the buffer rather than waiting for a "full" data frame.
-  void Send(ap_filter_t* filter, bool flush);
+  class ReceiverImpl : public HttpToSpdyConverter::SpdyReceiver {
+   public:
+    explicit ReceiverImpl(SpdyStream* stream);
+    virtual ~ReceiverImpl();
+    virtual void ReceiveSynReply(net::SpdyHeaderBlock* headers, bool flag_fin);
+    virtual void ReceiveData(base::StringPiece data, bool flag_fin);
 
-  void SendHeaders(const HeaderPopulatorInterface& populator, bool flag_fin);
-  void SendData(const char* data, size_t size, bool flag_fin);
+   private:
+    friend class HttpToSpdyFilter;
+    SpdyStream* const stream_;
 
-  SpdyStream* const stream_;
-  std::string data_buffer_;
-  bool headers_have_been_sent_;
-  bool end_of_stream_reached_;
+    DISALLOW_COPY_AND_ASSIGN(ReceiverImpl);
+  };
+
+  ReceiverImpl receiver_;
+  HttpToSpdyConverter converter_;
+  bool eos_bucket_received_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpToSpdyFilter);
 };

@@ -52,8 +52,6 @@ class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
         buffered_framer_(GetParam()),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
-        request_(static_cast<request_rec*>(
-            apr_pcalloc(local_.pool(), sizeof(request_rec)))),
         ap_filter_(static_cast<ap_filter_t*>(
             apr_pcalloc(local_.pool(), sizeof(ap_filter_t)))),
         bucket_alloc_(apr_bucket_alloc_create(local_.pool())),
@@ -62,13 +60,7 @@ class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
     // the bare minimum of necessary fields, and rely on apr_pcalloc to zero
     // all others.
     connection_->pool = local_.pool();
-    request_->pool = local_.pool();
-    request_->connection = connection_;
-    request_->protocol = const_cast<char*>("HTTP/1.1");
-    request_->status = 200;
-    request_->headers_out = apr_table_make(local_.pool(), 3);
     ap_filter_->c = connection_;
-    ap_filter_->r = request_;
   }
 
  protected:
@@ -137,13 +129,12 @@ class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
   mod_spdy::SpdyFramePriorityQueue output_queue_;
   mod_spdy::LocalPool local_;
   conn_rec* const connection_;
-  request_rec* const request_;
   ap_filter_t* const ap_filter_;
   apr_bucket_alloc_t* const bucket_alloc_;
   apr_bucket_brigade* const brigade_;
 };
 
-TEST_P(HttpToSpdyFilterTest, ClientRequest) {
+TEST_P(HttpToSpdyFilterTest, ResponseWithContentLength) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyStreamId associated_stream_id = 0;
@@ -153,20 +144,24 @@ TEST_P(HttpToSpdyFilterTest, ClientRequest) {
                               &output_queue_, &buffered_framer_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
-  // Set the response headers of the request:
-  apr_table_setn(request_->headers_out, "Connection", "close");
-  apr_table_setn(request_->headers_out, "Content-Length", "12000");
-  apr_table_setn(request_->headers_out, "Content-Type", "text/html");
-  apr_table_setn(request_->headers_out, "Host", "www.example.com");
-
   // Send part of the header data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
                     "Connection: close\r\n");
   ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
   EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
 
-  // Expect to get a single SYN_REPLY frame out with all the headers (read
-  // from request->headers_out rather than the data we put in):
+  // Expect to get nothing out yet:
+  ExpectOutputQueueEmpty();
+
+  // Send the rest of the header data into the filter:
+  AddImmortalBucket("Content-Length: 12000\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Host: www.example.com\r\n"
+                    "\r\n");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get a single SYN_REPLY frame out with all the headers:
   net::SpdyHeaderBlock expected_headers;
   expected_headers[mod_spdy::http::kContentLength] = "12000";
   expected_headers[mod_spdy::http::kContentType] = "text/html";
@@ -178,19 +173,7 @@ TEST_P(HttpToSpdyFilterTest, ClientRequest) {
   ExpectSynReply(stream_id, expected_headers, false);
   ExpectOutputQueueEmpty();
 
-  // Send the rest of the header data into the filter:
-  AddImmortalBucket("Content-Length: 12000\r\n"
-                    "Content-Type: text/html\r\n"
-                    "Host: www.example.com\r\n"
-                    "\r\n");
-  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
-  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
-
-  // Expect to get nothing more out yet:
-  ExpectOutputQueueEmpty();
-
   // Now send in some body data, with a FLUSH bucket:
-  request_->sent_bodyct = 1;
   AddHeapBucket(std::string(1000, 'a'));
   AddFlushBucket();
   ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
@@ -233,6 +216,113 @@ TEST_P(HttpToSpdyFilterTest, ClientRequest) {
   ExpectOutputQueueEmpty();
 }
 
+TEST_P(HttpToSpdyFilterTest, ChunkedResponse) {
+  // Set up our data structures that we're testing:
+  const net::SpdyStreamId stream_id = 3;
+  const net::SpdyStreamId associated_stream_id = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
+  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
+                              net::kSpdyStreamInitialWindowSize,
+                              &output_queue_, &buffered_framer_);
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+
+  // Send part of the header data into the filter:
+  AddImmortalBucket("HTTP/1.1 200 OK\r\n"
+                    "Keep-Alive: timeout=120\r\n");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get nothing out yet:
+  ExpectOutputQueueEmpty();
+
+  // Send the rest of the header data into the filter:
+  AddImmortalBucket("Content-Type: text/html\r\n"
+                    "Transfer-Encoding: chunked\r\n"
+                    "Host: www.example.com\r\n"
+                    "\r\n");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get a single SYN_REPLY frame out with all the headers:
+  net::SpdyHeaderBlock expected_headers;
+  expected_headers[mod_spdy::http::kContentType] = "text/html";
+  expected_headers[mod_spdy::http::kHost] = "www.example.com";
+  expected_headers[status_header_name()] = "200";
+  expected_headers[version_header_name()] = "HTTP/1.1";
+  expected_headers[mod_spdy::http::kXModSpdy] =
+      MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
+  ExpectSynReply(stream_id, expected_headers, false);
+  ExpectOutputQueueEmpty();
+
+  // Now send in some body data, with a FLUSH bucket:
+  AddImmortalBucket("1B\r\n");
+  AddImmortalBucket("abcdefghijklmnopqrstuvwxyz\n\r\n");
+  AddImmortalBucket("17\r\n");
+  AddImmortalBucket("That was ");
+  AddFlushBucket();
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get a single data frame out, containing the data we just sent:
+  ExpectDataFrame(stream_id, "abcdefghijklmnopqrstuvwxyz\nThat was ", false);
+  ExpectOutputQueueEmpty();
+
+  // Send in some more body data, this time with no FLUSH bucket:
+  AddImmortalBucket("the alphabet.\n\r\n");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get nothing more out yet (because there's too little data to be
+  // worth sending a frame):
+  ExpectOutputQueueEmpty();
+
+  // Finally, terminate the response:
+  AddImmortalBucket("0\r\n\r\n");
+  AddEosBucket();
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // We should get the last data frame, with FLAG_FIN set.
+  ExpectDataFrame(stream_id, "the alphabet.\n", true);
+  ExpectOutputQueueEmpty();
+}
+
+TEST_P(HttpToSpdyFilterTest, RedirectResponse) {
+  // Set up our data structures that we're testing:
+  const net::SpdyStreamId stream_id = 5;
+  const net::SpdyStreamId associated_stream_id = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
+  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
+                              net::kSpdyStreamInitialWindowSize,
+                              &output_queue_, &buffered_framer_);
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+
+  // Send part of the header data into the filter:
+  AddImmortalBucket("HTTP/1.1 301 Moved Permanently\r\n"
+                    "Location: http://www.example.net/\r\n");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get nothing out yet:
+  ExpectOutputQueueEmpty();
+
+  // Signal the end of the leading headers:
+  AddImmortalBucket("\r\n");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get a single SYN_REPLY frame out.  This response has no body, so
+  // FLAG_FIN should be set.
+  net::SpdyHeaderBlock expected_headers;
+  expected_headers["location"] = "http://www.example.net/";
+  expected_headers[status_header_name()] = "301";
+  expected_headers[version_header_name()] = "HTTP/1.1";
+  expected_headers[mod_spdy::http::kXModSpdy] =
+      MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
+  ExpectSynReply(stream_id, expected_headers, true);
+  ExpectOutputQueueEmpty();
+}
+
 // Test that the filter accepts empty brigades.
 TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   // Set up our data structures that we're testing:
@@ -243,10 +333,6 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
                               net::kSpdyStreamInitialWindowSize,
                               &output_queue_, &buffered_framer_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
-
-  // Set the response headers of the request:
-  apr_table_setn(request_->headers_out, "Content-Length", "6");
-  apr_table_setn(request_->headers_out, "Content-Type", "text/plain");
 
   // Send the header data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
@@ -265,7 +351,6 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   ExpectOutputQueueEmpty();
 
   // Send in some body data:
-  request_->sent_bodyct = 1;
   AddImmortalBucket("foo");
   ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
   EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
@@ -278,7 +363,6 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   ExpectOutputQueueEmpty();
 
   // Send in the rest of the body data.
-  request_->sent_bodyct = 1;
   AddImmortalBucket("bar");
   AddEosBucket();
   ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
@@ -299,10 +383,6 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
                               &output_queue_, &buffered_framer_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
-  // Set the response headers of the request:
-  apr_table_setn(request_->headers_out, "Content-Length", "6");
-  apr_table_setn(request_->headers_out, "Content-Type", "text/plain");
-
   // Send the header data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
                     "Content-Length: 6\r\n"
@@ -320,7 +400,6 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   ExpectOutputQueueEmpty();
 
   // Send in some body data:
-  request_->sent_bodyct = 1;
   AddImmortalBucket("foo");
   ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
   EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));

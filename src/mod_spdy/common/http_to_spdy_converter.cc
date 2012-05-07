@@ -129,7 +129,7 @@ void HttpToSpdyConverter::ConverterImpl::OnLeadingHeadersComplete(bool fin) {
   if (fin) {
     sent_flag_fin_ = true;
   }
-  receiver_->ReceiveSynReply(headers_, fin);
+  receiver_->ReceiveSynReply(&headers_, fin);
   headers_.clear();
 }
 

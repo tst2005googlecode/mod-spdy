@@ -34,9 +34,17 @@ class HttpToSpdyConverter {
    public:
     SpdyReceiver();
     virtual ~SpdyReceiver();
-    virtual void ReceiveSynReply(const net::SpdyHeaderBlock& headers,
+
+    // Receive a SYN_REPLY frame with the given headers.  The callee is free to
+    // mutate the headers map (e.g. to add an extra header) before forwarding
+    // it on, but the pointer will not remain valid after this method returns.
+    virtual void ReceiveSynReply(net::SpdyHeaderBlock* headers,
                                  bool flag_fin) = 0;
+
+    // Receive a DATA frame with the given payload.  The data pointer will not
+    // remain valid after this method returns.
     virtual void ReceiveData(base::StringPiece data, bool flag_fin) = 0;
+
    private:
     DISALLOW_COPY_AND_ASSIGN(SpdyReceiver);
   };

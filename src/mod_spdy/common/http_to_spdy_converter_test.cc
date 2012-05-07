@@ -24,12 +24,13 @@ using testing::_;
 using testing::DeleteArg;
 using testing::Eq;
 using testing::InSequence;
+using testing::Pointee;
 
 namespace {
 
 class MockSpdyReceiver : public mod_spdy::HttpToSpdyConverter::SpdyReceiver {
  public:
-  MOCK_METHOD2(ReceiveSynReply, void(const net::SpdyHeaderBlock& headers,
+  MOCK_METHOD2(ReceiveSynReply, void(net::SpdyHeaderBlock* headers,
                                      bool flag_fin));
   MOCK_METHOD2(ReceiveData, void(base::StringPiece data, bool flag_fin));
 };
@@ -63,7 +64,8 @@ TEST_P(HttpToSpdyConverterTest, SimpleWithContentLength) {
   expected_headers_["x-whatever"] = "foobar";
 
   InSequence seq;
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(false)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(false)));
   EXPECT_CALL(receiver_, ReceiveData(Eq("Hello, world!\n"), Eq(true)));
 
   ASSERT_TRUE(converter_.ProcessInput(
@@ -84,7 +86,8 @@ TEST_P(HttpToSpdyConverterTest, SimpleWithChunking) {
   expected_headers_[mod_spdy::http::kContentType] = "text/plain";
 
   InSequence seq;
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(false)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(false)));
   EXPECT_CALL(receiver_, ReceiveData(Eq("Hello, world!\n"), Eq(true)));
 
   ASSERT_TRUE(converter_.ProcessInput(
@@ -110,7 +113,8 @@ TEST_P(HttpToSpdyConverterTest, ChunkedEncodingWithTrailingGarbage) {
   expected_headers_[mod_spdy::http::kContentType] = "text/plain";
 
   InSequence seq;
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(false)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(false)));
   EXPECT_CALL(receiver_, ReceiveData(Eq("Hello, world!\n"), Eq(true)));
 
   ASSERT_TRUE(converter_.ProcessInput(
@@ -133,7 +137,8 @@ TEST_P(HttpToSpdyConverterTest, NoResponseBody) {
   expected_headers_["location"] = "https://www.example.com/";
 
   InSequence seq;
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(true)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(true)));
 
   ASSERT_TRUE(converter_.ProcessInput(
       "HTTP/1.1 301 Moved permenantly\r\n"
@@ -150,7 +155,8 @@ TEST_P(HttpToSpdyConverterTest, BreakUpLargeDataIntoMultipleFrames) {
   expected_headers_[mod_spdy::http::kContentType] = "text/plain";
 
   InSequence seq;
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(false)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(false)));
   EXPECT_CALL(receiver_, ReceiveData(Eq(std::string(4096, 'x')), Eq(false)));
   EXPECT_CALL(receiver_, ReceiveData(Eq(std::string(4096, 'x')), Eq(false)));
   EXPECT_CALL(receiver_, ReceiveData(Eq(std::string(1808, 'x')), Eq(true)));
@@ -178,7 +184,8 @@ TEST_P(HttpToSpdyConverterTest, BufferUntilWeHaveACompleteFrame) {
       "Content-Length: 4096\r\n"));
   // Send the rest of the headers, and some of the data.  We should get the
   // SYN_REPLY now, but no data yet.
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(false)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(false)));
   ASSERT_TRUE(converter_.ProcessInput(
       "Content-Type: text/plain\r\n"
       "\r\n" +
@@ -200,7 +207,8 @@ TEST_P(HttpToSpdyConverterTest, RespectFlushes) {
   InSequence seq;
   // Send the headers and some of the data (not enough for a full frame).  We
   // should get the headers out, but no data yet.
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(false)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(false)));
   ASSERT_TRUE(converter_.ProcessInput(
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: 4096\r\n"
@@ -224,7 +232,8 @@ TEST_P(HttpToSpdyConverterTest, FlushAfterEndDoesNothing) {
   expected_headers_[mod_spdy::http::kContentType] = "text/plain";
 
   InSequence seq;
-  EXPECT_CALL(receiver_, ReceiveSynReply(Eq(expected_headers_), Eq(false)));
+  EXPECT_CALL(receiver_, ReceiveSynReply(Pointee(Eq(expected_headers_)),
+                                         Eq(false)));
   EXPECT_CALL(receiver_, ReceiveData(Eq("foobar"), Eq(true)));
   ASSERT_TRUE(converter_.ProcessInput(
       "HTTP/1.1 200 OK\r\n"
