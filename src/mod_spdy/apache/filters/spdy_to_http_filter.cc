@@ -77,9 +77,10 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   // non-negative value first.
   const size_t max_bytes = std::max(static_cast<apr_off_t>(0), readbytes);
 
+  // This is a NETWORK-level filter, so there shouldn't be any filter after us.
   if (filter->next != NULL) {
-    LOG(WARNING) << "SpdyToHttpFilter is not the last filter in the chain: "
-                 << filter->next->frec->name;
+    LOG(WARNING) << "SpdyToHttpFilter is not the last filter in the chain "
+                 << "(it is followed by " << filter->next->frec->name << ")";
   }
 
   // Clear any buffer data that was already returned on a previous invocation

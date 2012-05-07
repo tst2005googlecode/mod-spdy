@@ -22,6 +22,25 @@
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
+namespace {
+
+std::string HeadersString(const net::SpdyHeaderBlock& headers) {
+  std::string ret = "{ ";
+  bool comma = false;
+  for (net::SpdyHeaderBlock::const_iterator iter = headers.begin();
+       iter != headers.end(); ++iter) {
+    if (comma) {
+      ret += ", ";
+    }
+    ret += "'" + iter->first + "': '" + iter->second + "'";
+    comma = true;
+  }
+  ret += " }";
+  return ret;
+}
+
+}  // namespace
+
 namespace mod_spdy {
 
 namespace testing {
@@ -268,6 +287,65 @@ void StreamIdIsMatcher::DescribeTo(std::ostream* out) const {
 
 void StreamIdIsMatcher::DescribeNegationTo(std::ostream* out) const {
   *out << "doesn't have stream ID " << stream_id_;
+}
+
+bool UncompressedHeadersAreMatcher::MatchAndExplain(
+    const net::SpdyFrame& frame,
+    ::testing::MatchResultListener* listener) const {
+  if (!frame.is_control_frame()) {
+    *listener << "is a data frame";
+    return false;
+  }
+  const net::SpdyControlFrame* ctrl_frame =
+      static_cast<const net::SpdyControlFrame*>(&frame);
+  const char* header_block;
+  size_t header_block_len;
+  net::SpdyControlType type = ctrl_frame->type();
+  switch (type) {
+    case net::SYN_STREAM:
+      header_block = static_cast<const net::SpdySynStreamControlFrame*>(
+          ctrl_frame)->header_block();
+      header_block_len = static_cast<const net::SpdySynStreamControlFrame*>(
+          ctrl_frame)->header_block_len();
+      break;
+    case net::SYN_REPLY:
+      header_block = static_cast<const net::SpdySynReplyControlFrame*>(
+          ctrl_frame)->header_block();
+      header_block_len = static_cast<const net::SpdySynReplyControlFrame*>(
+          ctrl_frame)->header_block_len();
+      break;
+    case net::HEADERS:
+      header_block = static_cast<const net::SpdyHeadersControlFrame*>(
+          ctrl_frame)->header_block();
+      header_block_len = static_cast<const net::SpdyHeadersControlFrame*>(
+          ctrl_frame)->header_block_len();
+      break;
+    default:
+      *listener << "is a " << net::SpdyFramer::ControlTypeToString(type)
+                << " frame";
+      return false;
+  }
+  net::SpdyFramer framer(ctrl_frame->version());
+  net::SpdyHeaderBlock actual_headers;
+  if (!framer.ParseHeaderBlockInBuffer(header_block, header_block_len,
+                                       &actual_headers)) {
+    *listener << "headers data is compressed/corrupted";
+    return false;
+  }
+  if (actual_headers != headers_) {
+    *listener << "has uncompressed headers " << HeadersString(actual_headers);
+    return false;
+  }
+  return true;
+}
+
+void UncompressedHeadersAreMatcher::DescribeTo(std::ostream* out) const {
+  *out << "has uncompressed headers " << HeadersString(headers_);
+}
+
+void UncompressedHeadersAreMatcher::DescribeNegationTo(
+    std::ostream* out) const {
+  *out << "doesn't have uncompressed headers " << HeadersString(headers_);
 }
 
 }  // namespace testing

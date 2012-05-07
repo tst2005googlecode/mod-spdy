@@ -109,8 +109,8 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
     // without generating a warning, since it is a passive filter that
     // doesn't modify the stream.
     if (apr_strnatcasecmp("log_input_output", filter->next->frec->name) != 0) {
-      LOG(WARNING) << "HttpToSpdyFilter is not the last filter in the chain: "
-                   << filter->next->frec->name;
+      LOG(WARNING) << "HttpToSpdyFilter is not the last filter in the chain "
+                   << "(it is followed by " << filter->next->frec->name << ")";
     }
   }
 

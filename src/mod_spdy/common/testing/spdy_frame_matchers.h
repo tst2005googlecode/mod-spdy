@@ -16,9 +16,11 @@
 #define MOD_SPDY_TESTING_SPDY_FRAME_MATCHERS_H_
 
 #include <iostream>
+#include <string>
 
 #include "base/basictypes.h"
 #include "base/string_piece.h"
+#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -70,14 +72,14 @@ class IsDataFrameWithMatcher :
       public ::testing::MatcherInterface<const net::SpdyFrame&> {
  public:
   explicit IsDataFrameWithMatcher(base::StringPiece payload)
-      : payload_(payload) {}
+      : payload_(payload.as_string()) {}
   virtual ~IsDataFrameWithMatcher() {}
   virtual bool MatchAndExplain(const net::SpdyFrame& frame,
                                ::testing::MatchResultListener* listener) const;
   virtual void DescribeTo(std::ostream* out) const;
   virtual void DescribeNegationTo(std::ostream* out) const;
  private:
-  const base::StringPiece payload_;
+  const std::string payload_;
   DISALLOW_COPY_AND_ASSIGN(IsDataFrameWithMatcher);
 };
 
@@ -183,9 +185,32 @@ class StreamIdIsMatcher :
   DISALLOW_COPY_AND_ASSIGN(StreamIdIsMatcher);
 };
 
-// Make a matcher that requires the frame to have the given FLAG_FIN value.
-inline ::testing::Matcher<const net::SpdyFrame&> StreamIdIs(bool fin) {
-  return ::testing::MakeMatcher(new StreamIdIsMatcher(fin));
+// Make a matcher that requires the frame to have the given stream ID.
+inline ::testing::Matcher<const net::SpdyFrame&> StreamIdIs(
+    net::SpdyStreamId stream_id) {
+  return ::testing::MakeMatcher(new StreamIdIsMatcher(stream_id));
+}
+
+class UncompressedHeadersAreMatcher :
+      public ::testing::MatcherInterface<const net::SpdyFrame&> {
+ public:
+  UncompressedHeadersAreMatcher(const net::SpdyHeaderBlock& headers)
+      : headers_(headers) {}
+  virtual ~UncompressedHeadersAreMatcher() {}
+  virtual bool MatchAndExplain(const net::SpdyFrame& frame,
+                               ::testing::MatchResultListener* listener) const;
+  virtual void DescribeTo(std::ostream* out) const;
+  virtual void DescribeNegationTo(std::ostream* out) const;
+ private:
+  const net::SpdyHeaderBlock headers_;
+  DISALLOW_COPY_AND_ASSIGN(UncompressedHeadersAreMatcher);
+};
+
+// Make a matcher that requires the frame to be uncompressed and have exactly
+// the given headers.
+inline ::testing::Matcher<const net::SpdyFrame&> UncompressedHeadersAre(
+    const net::SpdyHeaderBlock& headers) {
+  return ::testing::MakeMatcher(new UncompressedHeadersAreMatcher(headers));
 }
 
 }  // namespace testing
