@@ -48,17 +48,24 @@
 #include "mod_spdy/common/thread_pool.h"
 
 extern "C" {
-  // Declaring modified mod_ssl's optional hooks here (so that we don't need to
-  // #include "mod_ssl.h").
-  APR_DECLARE_OPTIONAL_FN(int, ssl_engine_disable, (conn_rec *));
-  APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec *));
-  APR_DECLARE_EXTERNAL_HOOK(
-      ssl, AP, int, npn_advertise_protos_hook,
-      (conn_rec* connection, apr_array_header_t* protos));
-  APR_DECLARE_EXTERNAL_HOOK(
-      ssl, AP, int, npn_proto_negotiated_hook,
-      (conn_rec* connection, const char* proto_name,
-       apr_size_t proto_name_len));
+
+// Declaring mod_so's optional hooks here (so that we don't need to
+// #include "mod_so.h").
+APR_DECLARE_OPTIONAL_FN(module*, ap_find_loaded_module_symbol,
+                        (server_rec*, const char*));
+
+// Declaring modified mod_ssl's optional hooks here (so that we don't need to
+// #include "mod_ssl.h").
+APR_DECLARE_OPTIONAL_FN(int, ssl_engine_disable, (conn_rec*));
+APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec*));
+APR_DECLARE_EXTERNAL_HOOK(
+    ssl, AP, int, npn_advertise_protos_hook,
+    (conn_rec* connection, apr_array_header_t* protos));
+APR_DECLARE_EXTERNAL_HOOK(
+    ssl, AP, int, npn_proto_negotiated_hook,
+    (conn_rec* connection, const char* proto_name,
+     apr_size_t proto_name_len));
+
 }  // extern "C"
 
 namespace {
@@ -67,6 +74,15 @@ const char* const kHttpProtocolName = "http/1.1";
 const char* const kSpdy2ProtocolName = "spdy/2";
 const char* const kSpdy3ProtocolName = "spdy/3";
 const char* const kSpdyVersionEnvironmentVariable = "SPDY_VERSION";
+
+const char* const kPhpModuleNames[] = {
+  "php_module",
+  "php2_module",
+  "php3_module",
+  "php4_module",
+  "php5_module",
+  "php6_module"
+};
 
 // These global variables store the filter handles for our filters.  Normally,
 // global variables would be very dangerous in a concurrent environment like
@@ -176,6 +192,26 @@ int PostConfig(apr_pool_t* pconf, apr_pool_t* plog, apr_pool_t* ptemp,
                  << "Apache config. SPDY will not be used by this server.  "
                  << "See http://code.google.com/p/mod-spdy/wiki/ConfigOptions "
                  << "for how to enable.";
+  }
+
+
+  // Modules which may not be thread-safe shouldn't be used with mod_spdy.
+  // That mainly seems to be mod_php.  If mod_php is installed, log a warning
+  // pointing the user to docs on how to use PHP safely with mod_spdy.
+  if (any_enabled) {
+    module* (*get_module)(server_rec*, const char*) =
+        APR_RETRIEVE_OPTIONAL_FN(ap_find_loaded_module_symbol);
+    if (get_module != NULL) {
+      for (size_t i = 0; i < arraysize(kPhpModuleNames); ++i) {
+        if (get_module(server_list, kPhpModuleNames[i]) != NULL) {
+          LOG(WARNING)
+              << kPhpModuleNames[i] << " may not be thread-safe, and "
+              << "should not be used with mod_spdy.  Instead, see "
+              << "https://developers.google.com/speed/spdy/mod_spdy/php for "
+              << "how to configure your server to use PHP safely.";
+        }
+      }
+    }
   }
 
   return OK;
