@@ -29,6 +29,7 @@
 #include "apr_optional_hooks.h"
 #include "apr_tables.h"
 
+#include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/string_number_conversions.h"  // for IntToString
 #include "base/string_piece.h"
@@ -46,6 +47,7 @@
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session.h"
 #include "mod_spdy/common/thread_pool.h"
+#include "mod_spdy/common/version.h"
 
 extern "C" {
 
@@ -69,6 +71,11 @@ APR_DECLARE_EXTERNAL_HOOK(
 }  // extern "C"
 
 namespace {
+
+const char kFakeModSpdyProtocolName[] =
+    "x-mod-spdy/" MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
+COMPILE_ASSERT(arraysize(kFakeModSpdyProtocolName) <= 255,
+               fake_protocol_name_is_not_too_long_for_npn);
 
 const char* const kHttpProtocolName = "http/1.1";
 const char* const kSpdy2ProtocolName = "spdy/2";
@@ -536,14 +543,22 @@ int AdvertiseHttp(conn_rec* connection, apr_array_header_t* protos) {
   // during NPN.  However, the Apache core HTTP module doesn't yet know about
   // this hook, so we advertise HTTP/1.1 for them.  But to be future-proof, we
   // don't add "http/1.1" to the list if it's already there.
+  bool http_not_advertised = true;
   for (int i = 0; i < protos->nelts; ++i) {
     if (!strcmp(APR_ARRAY_IDX(protos, i, const char*), kHttpProtocolName)) {
-      return DECLINED;
+      http_not_advertised = false;
+      break;
     }
   }
+  if (http_not_advertised) {
+    // No one's advertised HTTP/1.1 yet, so let's do it now.
+    APR_ARRAY_PUSH(protos, const char*) = kHttpProtocolName;
+  }
 
-  // No one's advertised HTTP/1.1 yet, so let's do it now.
-  APR_ARRAY_PUSH(protos, const char*) = kHttpProtocolName;
+  // Advertise a fake protocol, indicating the mod_spdy version in use.  We
+  // push this last, so the client doesn't think we prefer it to HTTP.
+  APR_ARRAY_PUSH(protos, const char*) = kFakeModSpdyProtocolName;
+
   return OK;
 }
 

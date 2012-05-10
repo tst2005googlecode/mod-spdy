@@ -91,6 +91,7 @@
       'dependencies': [
         'spdy_apache',
         '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/build/build_util.gyp:mod_spdy_version_header',
         '<(DEPTH)/net/net.gyp:spdy',
         '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
       ],
