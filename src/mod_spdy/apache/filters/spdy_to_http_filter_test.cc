@@ -238,6 +238,7 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
   ExpectTransientBucket("user-agent: ModSpdyUnitTest/1.0\r\n"
                         "x-do-not-track: 1\r\n"
+                        "accept-encoding: gzip,deflate\r\n"
                         "\r\n");
   ExpectEosBucket();
   ExpectEndOfBrigade();
@@ -283,6 +284,9 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   // Now read in the data a bit at a time.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
   ExpectTransientBucket("transfer-encoding: chunked\r\n");
+  ExpectEndOfBrigade();
+  ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
+  ExpectTransientBucket("accept-encoding: gzip,deflate\r\n");
   ExpectEndOfBrigade();
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
   ExpectTransientBucket("\r\n");
@@ -352,6 +356,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
                         "referer: https://www.example.net/index.html\r\n"
                         "user-agent: ModSpdyUnitTest/1.0\r\n"
                         "transfer-encoding: chunked\r\n"
+                        "accept-encoding: gzip,deflate\r\n"
                         "\r\n"
                         "D\r\n"
                         "Please erase \r\n"
@@ -438,6 +443,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
                         "x-zzzz: 4Z\r\n"
                         "user-agent: ModSpdyUnitTest/1.0\r\n"
                         "transfer-encoding: chunked\r\n"
+                        "accept-encoding: gzip,deflate\r\n"
                         "\r\n"
                         "23\r\n"
                         "Please erase everything immediately\r\n"
@@ -476,6 +482,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
                         "host: www.example.org\r\n"
                         "referer: https://www.example.org/index.html\r\n"
                         "transfer-encoding: chunked\r\n"
+                        "accept-encoding: gzip,deflate\r\n"
                         "\r\n"
                         "9\r\n"
                         "Please do\r\n"
@@ -517,6 +524,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
                         "host: www.example.org\r\n"
                         "referer: https://www.example.org/index.html\r\n"
                         "transfer-encoding: chunked\r\n"
+                        "accept-encoding: gzip,deflate\r\n"
                         "\r\n"
                         "9\r\n"
                         "Please do\r\n"
@@ -565,6 +573,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLength) {
                         "referer: https://www.example.org/index.html\r\n"
                         "content-length: 22\r\n"
                         "user-agent: ModSpdyUnitTest/1.0\r\n"
+                        "accept-encoding: gzip,deflate\r\n"
                         "\r\n"
                         "Please do some stuff.\n");
   ExpectEosBucket();
@@ -613,6 +622,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
                           "content-length: 22\r\n"
                           "host: www.example.org\r\n"
                           "referer: https://www.example.org/index.html\r\n"
+                          "accept-encoding: gzip,deflate\r\n"
                           "\r\n"
                           "Please do some stuff.\n");
   } else {
@@ -620,6 +630,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
                           "host: www.example.org\r\n"
                           "content-length: 22\r\n"
                           "referer: https://www.example.org/index.html\r\n"
+                          "accept-encoding: gzip,deflate\r\n"
                           "\r\n"
                           "Please do some stuff.\n");
   }

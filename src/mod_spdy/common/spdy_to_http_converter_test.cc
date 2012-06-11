@@ -94,6 +94,8 @@ TEST_P(SpdyToHttpConverterTest, MultiFrameStream) {
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("host"), Eq(kHost)));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("transfer-encoding"),
                                         Eq("chunked")));
+  EXPECT_CALL(visitor_, OnLeadingHeader(Eq(mod_spdy::http::kAcceptEncoding),
+                                        Eq(mod_spdy::http::kGzipDeflate)));
   EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
   scoped_ptr<net::SpdySynStreamControlFrame> syn_stream_frame(
       framer_.CreateSynStream(
@@ -134,7 +136,7 @@ TEST_P(SpdyToHttpConverterTest, MultiFrameStream) {
 TEST_P(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   AddRequiredHeaders();
   headers_["foo"] = "bar";
-  headers_["spdy"] = "spdy";
+  headers_[mod_spdy::http::kAcceptEncoding] = "deflate, gzip, lzma";
 
   // Create a multi-valued header to verify that it's processed
   // properly.
@@ -166,7 +168,8 @@ TEST_P(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("foo"), Eq("bar")))
       .InSequence(s1);
 
-  EXPECT_CALL(visitor_, OnLeadingHeader(Eq("spdy"), Eq("spdy")))
+  EXPECT_CALL(visitor_, OnLeadingHeader(Eq(mod_spdy::http::kAcceptEncoding),
+                                        Eq("deflate, gzip, lzma")))
       .InSequence(s2);
 
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("multi"), Eq("this")))
@@ -218,9 +221,9 @@ TEST_P(SpdyToHttpConverterTest, TrailingHeaders) {
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
             converter_.ConvertSynStreamFrame(*syn_frame));
 
-  // Next, send a DATA frame.  This should trigger a "transfer-encoding:
-  // chunked" header, and the end of the leading headers (along with the data
-  // itself, of course).
+  // Next, send a DATA frame.  This should trigger the accept-encoding and
+  // transfer-encoding headers, and the end of the leading headers (along with
+  // the data itself, of course).
   scoped_ptr<net::SpdyDataFrame> data_frame(framer_.CreateDataFrame(
       1,  // stream ID
       "Hello, world!\n",  // data
@@ -229,6 +232,9 @@ TEST_P(SpdyToHttpConverterTest, TrailingHeaders) {
 
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("transfer-encoding"),
                                         Eq("chunked"))).InSequence(s1, s2);
+  EXPECT_CALL(visitor_, OnLeadingHeader(
+      Eq(mod_spdy::http::kAcceptEncoding),
+      Eq(mod_spdy::http::kGzipDeflate))).InSequence(s1, s2);
   EXPECT_CALL(visitor_, OnLeadingHeadersComplete()).InSequence(s1, s2);
   EXPECT_CALL(visitor_, OnDataChunk(Eq("Hello, world!\n"))).InSequence(s1, s2);
 
@@ -293,6 +299,9 @@ TEST_P(SpdyToHttpConverterTest, WithContentLength) {
       11, // data length
       net::DATA_FLAG_NONE));  // flags
 
+  EXPECT_CALL(visitor_, OnLeadingHeader(
+      Eq(mod_spdy::http::kAcceptEncoding),
+      Eq(mod_spdy::http::kGzipDeflate))).InSequence(s1, s2);
   EXPECT_CALL(visitor_, OnLeadingHeadersComplete()).InSequence(s1, s2);
   EXPECT_CALL(visitor_, OnRawData(Eq("foobar=quux"))).InSequence(s1, s2);
 
@@ -331,6 +340,9 @@ TEST_P(SpdyToHttpConverterTest, DoubleSynStreamFrame) {
   InSequence seq;
   EXPECT_CALL(visitor_, OnRequestLine(Eq(kMethod), Eq(kPath), Eq(kVersion)));
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("host"), Eq(kHost)));
+  EXPECT_CALL(visitor_, OnLeadingHeader(
+      Eq(mod_spdy::http::kAcceptEncoding),
+      Eq(mod_spdy::http::kGzipDeflate)));
   EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
   EXPECT_CALL(visitor_, OnComplete());
 

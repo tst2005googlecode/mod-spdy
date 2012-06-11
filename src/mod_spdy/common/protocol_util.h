@@ -25,6 +25,7 @@ namespace http {
 
 // HTTP header names.  These values are all lower-case, so they can be used
 // directly in SPDY header blocks.
+extern const char* const kAcceptEncoding;
 extern const char* const kConnection;
 extern const char* const kContentLength;
 extern const char* const kContentType;
@@ -36,6 +37,7 @@ extern const char* const kXModSpdy;
 
 // HTTP header values.
 extern const char* const kChunked;
+extern const char* const kGzipDeflate;
 
 }  // namespace http
 

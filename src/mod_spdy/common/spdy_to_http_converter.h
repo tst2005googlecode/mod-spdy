@@ -55,6 +55,10 @@ class SpdyToHttpConverter {
 private:
   // Called to generate leading headers from a SYN_STREAM or HEADERS frame.
   void GenerateLeadingHeaders(const net::SpdyHeaderBlock& block);
+  // Called when there are no more leading headers, because we've received
+  // either data or a FLAG_FIN.  This adds any last-minute needed headers
+  // before closing the leading headers section.
+  void EndOfLeadingHeaders();
   // Called when we see a FLAG_FIN.  This terminates the request and appends
   // whatever trailing headers (if any) we have buffered.
   void FinishRequest();
@@ -71,6 +75,7 @@ private:
   net::SpdyHeaderBlock trailing_headers_;
   State state_;
   bool use_chunking_;
+  bool seen_accept_encoding_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyToHttpConverter);
 };

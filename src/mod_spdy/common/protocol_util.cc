@@ -27,6 +27,7 @@ namespace mod_spdy {
 
 namespace http {
 
+extern const char* const kAcceptEncoding = "accept-encoding";
 extern const char* const kConnection = "connection";
 extern const char* const kContentLength = "content-length";
 extern const char* const kContentType = "content-type";
@@ -37,6 +38,7 @@ extern const char* const kTransferEncoding = "transfer-encoding";
 extern const char* const kXModSpdy = "x-mod-spdy";
 
 extern const char* const kChunked = "chunked";
+extern const char* const kGzipDeflate = "gzip,deflate";
 
 }  // namespace http
 
