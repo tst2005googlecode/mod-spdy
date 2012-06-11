@@ -63,8 +63,12 @@ extern const char* const kSpdy3Version;
 // Return a view of the raw bytes of the frame.
 base::StringPiece FrameData(const net::SpdyFrame& frame);
 
-// Return true if this header is forbidden in SPDY responses.
+// Return true if this header is forbidden in SPDY responses, ignoring case.
 bool IsInvalidSpdyResponseHeader(base::StringPiece key);
+
+// Add a header to a header table, lower-casing and merging if necessary.
+void MergeInHeader(base::StringPiece key, base::StringPiece value,
+                   net::SpdyHeaderBlock* headers);
 
 }  // namespace mod_spdy
 

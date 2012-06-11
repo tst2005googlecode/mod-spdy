@@ -38,7 +38,6 @@
       'sources': [
         'common/connection_context.cc',
         'common/executor.cc',
-        'common/header_populator_interface.cc',
         'common/http_request_visitor_interface.cc',
         'common/http_response_parser.cc',
         'common/http_response_visitor_interface.cc',
@@ -82,7 +81,6 @@
         'apache/filters/spdy_to_http_filter.cc',
         'apache/log_message_handler.cc',
         'apache/pool_util.cc',
-        'apache/response_header_populator.cc',
       ],
     },
     {
@@ -147,9 +145,9 @@
         '<(DEPTH)',
       ],
       'sources': [
-        'common/header_populator_interface_test.cc',
         'common/http_response_parser_test.cc',
         'common/http_to_spdy_converter_test.cc',
+        'common/protocol_util_test.cc',
         'common/spdy_frame_priority_queue_test.cc',
         'common/spdy_frame_queue_test.cc',
         'common/spdy_session_test.cc',
