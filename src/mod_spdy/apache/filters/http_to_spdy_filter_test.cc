@@ -99,6 +99,19 @@ class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
                               FlagFinIs(flag_fin)));
   }
 
+  void ExpectHeaders(net::SpdyStreamId stream_id,
+                     const net::SpdyHeaderBlock& headers,
+                     bool flag_fin) {
+    net::SpdyFrame* raw_frame = NULL;
+    ASSERT_TRUE(output_queue_.Pop(&raw_frame));
+    ASSERT_TRUE(raw_frame != NULL);
+    scoped_ptr<net::SpdyFrame> frame(raw_frame);
+    EXPECT_THAT(*frame, AllOf(IsControlFrameOfType(net::HEADERS),
+                              StreamIdIs(stream_id),
+                              UncompressedHeadersAre(headers),
+                              FlagFinIs(flag_fin)));
+  }
+
   void ExpectDataFrame(net::SpdyStreamId stream_id, base::StringPiece data,
                        bool flag_fin) {
     net::SpdyFrame* raw_frame = NULL;
@@ -416,6 +429,41 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   EXPECT_FALSE(APR_BRIGADE_EMPTY(brigade_));
   ExpectOutputQueueEmpty();
   ASSERT_TRUE(connection_->aborted);
+}
+
+TEST_P(HttpToSpdyFilterTest, ServerPush) {
+  // Set up our data structures that we're testing:
+  const net::SpdyStreamId stream_id = 4;
+  const net::SpdyStreamId associated_stream_id = 3;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
+  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
+                              net::kSpdyStreamInitialWindowSize,
+                              &output_queue_, &buffered_framer_);
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+
+  // Send the response data into the filter:
+  AddImmortalBucket("HTTP/1.1 200 OK\r\n"
+                    "Content-Length: 20\r\n"
+                    "Content-Type: text/css\r\n"
+                    "\r\n"
+                    "BODY { color: red; }");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Since this is a server push stream, the SpdySession should have earlier
+  // sent a SYN_STREAM with FLAG_UNIDIRECTIONAL, and we now expect to see a
+  // HEADERS frame from the filter (rather than a SYN_REPLY):
+  net::SpdyHeaderBlock expected_headers;
+  expected_headers[mod_spdy::http::kContentLength] = "20";
+  expected_headers[mod_spdy::http::kContentType] = "text/css";
+  expected_headers[status_header_name()] = "200";
+  expected_headers[version_header_name()] = "HTTP/1.1";
+  expected_headers[mod_spdy::http::kXModSpdy] =
+      MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
+  ExpectHeaders(stream_id, expected_headers, false);
+  // And also the pushed data:
+  ExpectDataFrame(stream_id, "BODY { color: red; }", true);
+  ExpectOutputQueueEmpty();
 }
 
 // Run each test over both SPDY v2 and SPDY v3.

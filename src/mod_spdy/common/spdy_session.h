@@ -75,6 +75,39 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
                                  const char* data, size_t len);
   virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value);
 
+  enum PushStatus {
+    // PUSH_STARTED: The server push was started successfully.
+    PUSH_STARTED,
+    // INVALID_REQUEST_HEADERS: The given request headers were invalid for a
+    // server push (e.g. because required headers were missing).
+    INVALID_REQUEST_HEADERS,
+    // ASSOCIATED_STREAM_INACTIVE: The push could not be started because the
+    // associated stream is not currently active.
+    ASSOCIATED_STREAM_INACTIVE,
+    // CANNOT_PUSH_EVER_AGAIN: We can't do any more pushes on this session,
+    // either because the client has already sent us a GOAWAY frame, or the
+    // session has been open so long that we've run out of stream IDs.
+    CANNOT_PUSH_EVER_AGAIN,
+    // TOO_MANY_CONCURRENT_PUSHES: The push could not be started right now
+    // because there are too many currently active push streams.
+    TOO_MANY_CONCURRENT_PUSHES,
+    // PUSH_INTERNAL_ERROR: There was an internal error in the SpdySession
+    // (typically something that caused a LOG(DFATAL).
+    PUSH_INTERNAL_ERROR,
+  };
+
+  // Initiate a SPDY server push, roughly by pretending that the client sent a
+  // SYN_STREAM with the given headers.  To repeat: the headers argument is
+  // _not_ the headers that the server will send to the client, but rather the
+  // headers to _pretend_ that the client sent to the server.  Requires that
+  // spdy_version() >= 3.
+  // Note that unlike most other methods of this class, StartServerPush may be
+  // called by stream threads, not just by the connection thread.
+  PushStatus StartServerPush(
+      net::SpdyStreamId associated_stream_id,
+      net::SpdyPriority priority,
+      const net::SpdyHeaderBlock& request_headers);
+
  private:
   // A helper class for wrapping tasks returned by
   // SpdyStreamTaskFactory::NewStreamTask().  Running or cancelling this task
@@ -145,9 +178,9 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   void AbortStream(net::SpdyStreamId stream_id, net::SpdyStatusCodes status);
 
   // Remove the given StreamTaskWrapper object from the stream map.  This is
-  // the method of this class that might be called from another thread.
-  // (Specifically, it is called by the StreamTaskWrapper destructor, which is
-  // called by the executor).
+  // the only other method of this class, aside from StartServerPush, that
+  // might be called from another thread.  (Specifically, it is called by the
+  // StreamTaskWrapper destructor, which is called by the executor).
   void RemoveStreamTask(StreamTaskWrapper* stream_data);
 
   // Grab the stream_map_lock_ and check if stream_map_ is empty.
@@ -175,6 +208,12 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   // block for a long time.
   base::Lock stream_map_lock_;
   SpdyStreamMap stream_map_;
+  // These fields are also protected by the stream_map_lock_; they are used for
+  // controlling server pushes, which can be initiated by stream threads as
+  // well as by the connection thread.  We could use a separate lock for these,
+  // but right now we probably don't need that much locking granularity.
+  net::SpdyStreamId last_server_push_stream_id_;
+  bool received_goaway_;  // we've received a GOAWAY frame from the client
 
   // The output queue is also shared between all stream threads, but its class
   // is thread-safe, so it doesn't need additional synchronization.

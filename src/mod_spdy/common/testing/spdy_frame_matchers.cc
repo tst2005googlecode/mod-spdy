@@ -238,6 +238,33 @@ void FlagFinIsMatcher::DescribeNegationTo(std::ostream* out) const {
   *out << (fin_ ? "doesn't have FLAG_FIN set" : "has FLAG_FIN set");
 }
 
+bool FlagUnidirectionalIsMatcher::MatchAndExplain(
+    const net::SpdyFrame& frame,
+    ::testing::MatchResultListener* listener) const {
+  if (!frame.is_control_frame()) {
+    *listener << "is a data frame";
+    return false;
+  }
+  const bool unidirectional =
+      (frame.flags() & net::CONTROL_FLAG_UNIDIRECTIONAL);
+  if (unidirectional != unidirectional_) {
+    *listener << (unidirectional ? "has FLAG_UNIDIRECTIONAL set" :
+                  "doesn't have FLAG_UNIDIRECTIONAL set");
+    return false;
+  }
+  return true;
+}
+
+void FlagUnidirectionalIsMatcher::DescribeTo(std::ostream* out) const {
+  *out << (unidirectional_ ? "has FLAG_UNIDIRECTIONAL set" :
+           "doesn't have FLAG_UNIDIRECTIONAL set");
+}
+
+void FlagUnidirectionalIsMatcher::DescribeNegationTo(std::ostream* out) const {
+  *out << (unidirectional_ ? "doesn't have FLAG_UNIDIRECTIONAL set" :
+           "has FLAG_UNIDIRECTIONAL set");
+}
+
 bool StreamIdIsMatcher::MatchAndExplain(
     const net::SpdyFrame& frame,
     ::testing::MatchResultListener* listener) const {
@@ -287,6 +314,38 @@ void StreamIdIsMatcher::DescribeTo(std::ostream* out) const {
 
 void StreamIdIsMatcher::DescribeNegationTo(std::ostream* out) const {
   *out << "doesn't have stream ID " << stream_id_;
+}
+
+bool AssociatedStreamIdIsMatcher::MatchAndExplain(
+    const net::SpdyFrame& frame,
+    ::testing::MatchResultListener* listener) const {
+  if (!frame.is_control_frame()) {
+    *listener << "is a data frame";
+    return false;
+  }
+  const net::SpdyControlType type =
+      static_cast<const net::SpdyControlFrame*>(&frame)->type();
+  if (type != net::SYN_STREAM) {
+    *listener << "is a " << net::SpdyFramer::ControlTypeToString(type)
+              << " frame";
+    return false;
+  }
+  const net::SpdyStreamId id =
+      static_cast<const net::SpdySynStreamControlFrame*>(
+          &frame)->associated_stream_id();
+  if (id != associated_stream_id_) {
+    *listener << "has associated stream ID " << id;
+    return false;
+  }
+  return true;
+}
+
+void AssociatedStreamIdIsMatcher::DescribeTo(std::ostream* out) const {
+  *out << "has associated stream ID " << associated_stream_id_;
+}
+
+void AssociatedStreamIdIsMatcher::DescribeNegationTo(std::ostream* out) const {
+  *out << "doesn't have associated stream ID " << associated_stream_id_;
 }
 
 bool UncompressedHeadersAreMatcher::MatchAndExplain(

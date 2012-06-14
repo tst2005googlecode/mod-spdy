@@ -29,6 +29,15 @@
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/spdy/spdy_protocol.h"
 
+namespace {
+
+// Server push stream IDs must be even, and must fit in 31 bits (SPDY draft 3
+// section 2.3.2).  Thus, this is the largest stream ID we can ever use for a
+// pushed stream.
+const net::SpdyStreamId kMaxServerPushStreamId = 0x7FFFFFFEu;
+
+}  // namespace
+
 namespace mod_spdy {
 
 SpdySession::SpdySession(int spdy_version,
@@ -43,8 +52,10 @@ SpdySession::SpdySession(int spdy_version,
       framer_(spdy_version),
       session_stopped_(false),
       already_sent_goaway_(false),
-      last_client_stream_id_(0),
-      initial_window_size_(net::kSpdyStreamInitialWindowSize) {
+      last_client_stream_id_(0u),
+      initial_window_size_(net::kSpdyStreamInitialWindowSize),
+      last_server_push_stream_id_(0u),
+      received_goaway_(false) {
   framer_.set_visitor(this);
 }
 
@@ -179,6 +190,103 @@ void SpdySession::Run() {
     // nonempty (obviously we would abstract that away in SpdySessionIO),
     // but there's not even a nice way to do that (that I know of).
   }
+}
+
+SpdySession::PushStatus SpdySession::StartServerPush(
+    net::SpdyStreamId associated_stream_id,
+    net::SpdyPriority priority,
+    const net::SpdyHeaderBlock& request_headers) {
+  // Server push is pretty ill-defined in SPDY v2, so we require v3 or higher.
+  DCHECK_GE(spdy_version(), 3);
+
+  // Grab the headers that we are required to send with the initial SYN_STREAM.
+  const net::SpdyHeaderBlock::const_iterator host_iter =
+      request_headers.find(spdy::kSpdy3Host);
+  const net::SpdyHeaderBlock::const_iterator path_iter =
+      request_headers.find(spdy::kSpdy3Path);
+  const net::SpdyHeaderBlock::const_iterator scheme_iter =
+      request_headers.find(spdy::kSpdy3Scheme);
+  if (host_iter == request_headers.end() ||
+      path_iter == request_headers.end() ||
+      scheme_iter == request_headers.end()) {
+    return INVALID_REQUEST_HEADERS;
+  }
+  const std::string& host_header = host_iter->second;
+  const std::string& path_header = path_iter->second;
+  const std::string& scheme_header = scheme_iter->second;
+
+  StreamTaskWrapper* task_wrapper = NULL;
+  {
+    base::AutoLock autolock(stream_map_lock_);
+
+    // If we've received a GOAWAY frame the client, we shouldn't create any new
+    // streams on this session (SPDY draft 3 section 2.6.6).
+    if (received_goaway_) {
+      return CANNOT_PUSH_EVER_AGAIN;
+    }
+
+    // The associated stream must be active (SPDY draft 3 section 3.3.1).
+    if (stream_map_.count(associated_stream_id) == 0u) {
+      return ASSOCIATED_STREAM_INACTIVE;
+    }
+
+    // TODO(mdsteele): Check if we're allowed to create new push streams right
+    //   now (based on the client SETTINGS_MAX_CONCURRENT_STREAMS); return a
+    //   TOO_MANY_CONCURRENT_PUSHES error if not.
+
+    // In the unlikely event that the session stays open so long that we run
+    // out of server push stream IDs, we may do any more pushes on this session
+    // (SPDY draft 3 section 2.3.2).
+    DCHECK_LE(last_server_push_stream_id_, kMaxServerPushStreamId);
+    if (last_server_push_stream_id_ >= kMaxServerPushStreamId) {
+      return CANNOT_PUSH_EVER_AGAIN;
+    }
+    // Server push stream IDs must be even (SPDY draft 3 section 2.3.2).  So
+    // each time we do a push, we increment last_server_push_stream_id_ by two.
+    DCHECK_EQ(last_server_push_stream_id_ % 2u, 0u);
+    last_server_push_stream_id_ += 2u;
+    const net::SpdyStreamId stream_id = last_server_push_stream_id_;
+    // Only the server can create even stream IDs, and we never use the same
+    // one twice, so our chosen stream_id should definitely not be in use.
+    if (stream_map_.count(stream_id) > 0u) {
+      LOG(DFATAL) << "Next server push stream ID already in use: "
+                  << stream_id;
+      return PUSH_INTERNAL_ERROR;
+    }
+
+    // Create task and add it to the stream map.
+    task_wrapper = new StreamTaskWrapper(
+        this, stream_id, associated_stream_id, priority);
+    stream_map_[stream_id] = task_wrapper;
+    // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
+    //   stream, which the stream task will then have to re-parse.  This is
+    //   wasteful.  We should probably refactor such that we can send the
+    //   header map itself, and avoid the extra parsing.
+    task_wrapper->stream()->PostInputFrame(framer_.CreateSynStream(
+        stream_id, associated_stream_id, priority,
+        0,  // 0 = no credential slot
+        net::CONTROL_FLAG_FIN,
+        false,  // false = uncompressed
+        &request_headers));
+
+    // Send initial SYN_STREAM to the client.  It only needs to contain the
+    // ":host", ":path", and ":scheme" headers; the rest can follow in a later
+    // HEADERS frame (SPDY draft 3 section 3.3.1).
+    net::SpdyHeaderBlock initial_response_headers;
+    initial_response_headers[spdy::kSpdy3Host] = host_header;
+    initial_response_headers[spdy::kSpdy3Path] = path_header;
+    initial_response_headers[spdy::kSpdy3Scheme] = scheme_header;
+    task_wrapper->stream()->SendOutputSynStream(
+        initial_response_headers, false);
+
+    VLOG(2) << "Starting server push; opening stream " << stream_id;
+  }
+  if (task_wrapper == NULL) {
+    LOG(DFATAL) << "Can't happen: task_wrapper is NULL";
+    return PUSH_INTERNAL_ERROR;
+  }
+  executor_->AddTask(task_wrapper, priority);
+  return PUSH_STARTED;
 }
 
 void SpdySession::OnError(net::SpdyFramer::SpdyError error_code) {
@@ -438,8 +546,10 @@ void SpdySession::OnPing(const net::SpdyPingControlFrame& frame) {
 void SpdySession::OnGoAway(const net::SpdyGoAwayControlFrame& frame) {
   VLOG(4) << "Received GOAWAY frame (last_accepted_stream_id="
           << frame.last_accepted_stream_id() << ")";
-  // TODO(mdsteele): For now I think we can mostly ignore GOAWAY frames, but
-  // once we implement server-push we definitely need to take note of them.
+  // Take note that we have received a GOAWAY frame; we should not start any
+  // new server push streams on this session.
+  base::AutoLock autolock(stream_map_lock_);
+  received_goaway_ = true;
 }
 
 void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,

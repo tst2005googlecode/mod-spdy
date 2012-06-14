@@ -198,7 +198,15 @@ void HttpToSpdyFilter::ReceiverImpl::ReceiveSynReply(
     net::SpdyHeaderBlock* headers, bool flag_fin) {
   DCHECK(headers);
   (*headers)[http::kXModSpdy] = kModSpdyVersion;
-  stream_->SendOutputSynReply(*headers, flag_fin);
+  // For client-requested streams, we should send a SYN_REPLY.  For
+  // server-pushed streams, the SpdySession has already sent an initial
+  // SYN_STREAM with FLAG_UNIDIRECTIONAL and minimal server push headers, so we
+  // now follow up with a HEADERS frame with the response headers.
+  if (stream_->is_server_push()) {
+    stream_->SendOutputHeaders(*headers, flag_fin);
+  } else {
+    stream_->SendOutputSynReply(*headers, flag_fin);
+  }
 }
 
 void HttpToSpdyFilter::ReceiverImpl::ReceiveData(

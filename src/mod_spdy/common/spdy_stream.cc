@@ -125,13 +125,17 @@ void SpdyStream::SendOutputSynStream(const net::SpdyHeaderBlock& headers,
       net::CONTROL_FLAG_UNIDIRECTIONAL);
   // Don't compress the headers in the frame here; it will be compressed later
   // by the master connection (which maintains the shared header compression
-  // state for all streams).
-  SendOutputFrame(framer_->CreateSynStream(
-      stream_id_, associated_stream_id_, priority_,
-      0,  // 0 = no credential slot
-      flags,
-      false,  // false = uncompressed
-      &headers));
+  // state for all streams).  We need to send this SYN_STREAM right away,
+  // before any more frames on the associated stream are sent, to ensure that
+  // the pushed stream gets started while the associated stream is still open,
+  // so we insert this frame with kTopPriority.
+  output_queue_->Insert(
+      SpdyFramePriorityQueue::kTopPriority, framer_->CreateSynStream(
+          stream_id_, associated_stream_id_, priority_,
+          0,  // 0 = no credential slot
+          flags,
+          false,  // false = uncompressed
+          &headers));
 }
 
 void SpdyStream::SendOutputSynReply(const net::SpdyHeaderBlock& headers,
