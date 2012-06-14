@@ -23,6 +23,7 @@
 #include "base/synchronization/lock.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
+#include "mod_spdy/common/spdy_server_push_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/buffered_spdy_framer.h"
@@ -39,7 +40,8 @@ class SpdyStreamTaskFactory;
 // individual SPDY streams, and a SpdySessionIO for communicating with the
 // client (sending and receiving frames), this class takes care of implementing
 // the SPDY protocol and responding correctly to various situations.
-class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
+class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
+                    public SpdyServerPushInterface {
  public:
   // The SpdySession does _not_ take ownership of any of these arguments.
   SpdySession(int spdy_version,
@@ -75,27 +77,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
                                  const char* data, size_t len);
   virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value);
 
-  enum PushStatus {
-    // PUSH_STARTED: The server push was started successfully.
-    PUSH_STARTED,
-    // INVALID_REQUEST_HEADERS: The given request headers were invalid for a
-    // server push (e.g. because required headers were missing).
-    INVALID_REQUEST_HEADERS,
-    // ASSOCIATED_STREAM_INACTIVE: The push could not be started because the
-    // associated stream is not currently active.
-    ASSOCIATED_STREAM_INACTIVE,
-    // CANNOT_PUSH_EVER_AGAIN: We can't do any more pushes on this session,
-    // either because the client has already sent us a GOAWAY frame, or the
-    // session has been open so long that we've run out of stream IDs.
-    CANNOT_PUSH_EVER_AGAIN,
-    // TOO_MANY_CONCURRENT_PUSHES: The push could not be started right now
-    // because there are too many currently active push streams.
-    TOO_MANY_CONCURRENT_PUSHES,
-    // PUSH_INTERNAL_ERROR: There was an internal error in the SpdySession
-    // (typically something that caused a LOG(DFATAL).
-    PUSH_INTERNAL_ERROR,
-  };
-
+  // SpdyServerPushInterface methods:
   // Initiate a SPDY server push, roughly by pretending that the client sent a
   // SYN_STREAM with the given headers.  To repeat: the headers argument is
   // _not_ the headers that the server will send to the client, but rather the
@@ -103,7 +85,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   // spdy_version() >= 3.
   // Note that unlike most other methods of this class, StartServerPush may be
   // called by stream threads, not just by the connection thread.
-  PushStatus StartServerPush(
+  virtual SpdyServerPushInterface::PushStatus StartServerPush(
       net::SpdyStreamId associated_stream_id,
       net::SpdyPriority priority,
       const net::SpdyHeaderBlock& request_headers);

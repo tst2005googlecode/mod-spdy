@@ -45,6 +45,15 @@ using testing::Pointee;
 
 namespace {
 
+class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
+ public:
+    MOCK_METHOD3(StartServerPush,
+                 mod_spdy::SpdyServerPushInterface::PushStatus(
+                     net::SpdyStreamId associated_stream_id,
+                     net::SpdyPriority priority,
+                     const net::SpdyHeaderBlock& request_headers));
+};
+
 class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
  public:
   HttpToSpdyFilterTest()
@@ -140,6 +149,7 @@ class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
   net::SpdyFramer framer_;
   net::BufferedSpdyFramer buffered_framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
+  MockSpdyServerPushInterface pusher_;
   mod_spdy::LocalPool local_;
   conn_rec* const connection_;
   ap_filter_t* const ap_filter_;
@@ -154,7 +164,7 @@ TEST_P(HttpToSpdyFilterTest, ResponseWithContentLength) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_);
+                              &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send part of the header data into the filter:
@@ -236,7 +246,7 @@ TEST_P(HttpToSpdyFilterTest, ChunkedResponse) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_);
+                              &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send part of the header data into the filter:
@@ -307,7 +317,7 @@ TEST_P(HttpToSpdyFilterTest, RedirectResponse) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_);
+                              &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send part of the header data into the filter:
@@ -344,7 +354,7 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_);
+                              &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send the header data into the filter:
@@ -393,7 +403,7 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   const net::SpdyPriority priority = framer_.GetLowestPriority();
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_);
+                              &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send the header data into the filter:
@@ -431,14 +441,14 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   ASSERT_TRUE(connection_->aborted);
 }
 
-TEST_P(HttpToSpdyFilterTest, ServerPush) {
+TEST_P(HttpToSpdyFilterTest, ServerPushedStream) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 4;
   const net::SpdyStreamId associated_stream_id = 3;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
                               net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_);
+                              &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send the response data into the filter:

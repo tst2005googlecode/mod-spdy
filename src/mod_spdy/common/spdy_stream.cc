@@ -28,17 +28,20 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
                        net::SpdyPriority priority,
                        int32 initial_window_size,
                        SpdyFramePriorityQueue* output_queue,
-                       net::BufferedSpdyFramer* framer)
+                       net::BufferedSpdyFramer* framer,
+                       SpdyServerPushInterface* pusher)
     : stream_id_(stream_id),
       associated_stream_id_(associated_stream_id),
       priority_(priority),
       output_queue_(output_queue),
       framer_(framer),
+      pusher_(pusher),
       condvar_(&lock_),
       window_size_(initial_window_size),
       aborted_(false) {
   DCHECK(output_queue_);
   DCHECK(framer_);
+  DCHECK(pusher_);
   DCHECK_GT(window_size_, 0);
   // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
   DCHECK_GE(priority, 0u);
@@ -244,6 +247,13 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
     window_size_ -= length;
     DCHECK_GE(window_size_, 0);
   }
+}
+
+SpdyServerPushInterface::PushStatus SpdyStream::StartServerPush(
+    net::SpdyPriority priority,
+    const net::SpdyHeaderBlock& request_headers) {
+  DCHECK_GE(spdy_version(), 3);
+  return pusher_->StartServerPush(stream_id_, priority, request_headers);
 }
 
 void SpdyStream::SendOutputFrame(net::SpdyFrame* frame) {

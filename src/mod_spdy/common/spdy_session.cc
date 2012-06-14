@@ -192,7 +192,7 @@ void SpdySession::Run() {
   }
 }
 
-SpdySession::PushStatus SpdySession::StartServerPush(
+SpdyServerPushInterface::PushStatus SpdySession::StartServerPush(
     net::SpdyStreamId associated_stream_id,
     net::SpdyPriority priority,
     const net::SpdyHeaderBlock& request_headers) {
@@ -209,7 +209,7 @@ SpdySession::PushStatus SpdySession::StartServerPush(
   if (host_iter == request_headers.end() ||
       path_iter == request_headers.end() ||
       scheme_iter == request_headers.end()) {
-    return INVALID_REQUEST_HEADERS;
+    return SpdyServerPushInterface::INVALID_REQUEST_HEADERS;
   }
   const std::string& host_header = host_iter->second;
   const std::string& path_header = path_iter->second;
@@ -222,12 +222,12 @@ SpdySession::PushStatus SpdySession::StartServerPush(
     // If we've received a GOAWAY frame the client, we shouldn't create any new
     // streams on this session (SPDY draft 3 section 2.6.6).
     if (received_goaway_) {
-      return CANNOT_PUSH_EVER_AGAIN;
+      return SpdyServerPushInterface::CANNOT_PUSH_EVER_AGAIN;
     }
 
     // The associated stream must be active (SPDY draft 3 section 3.3.1).
     if (stream_map_.count(associated_stream_id) == 0u) {
-      return ASSOCIATED_STREAM_INACTIVE;
+      return SpdyServerPushInterface::ASSOCIATED_STREAM_INACTIVE;
     }
 
     // TODO(mdsteele): Check if we're allowed to create new push streams right
@@ -239,7 +239,7 @@ SpdySession::PushStatus SpdySession::StartServerPush(
     // (SPDY draft 3 section 2.3.2).
     DCHECK_LE(last_server_push_stream_id_, kMaxServerPushStreamId);
     if (last_server_push_stream_id_ >= kMaxServerPushStreamId) {
-      return CANNOT_PUSH_EVER_AGAIN;
+      return SpdyServerPushInterface::CANNOT_PUSH_EVER_AGAIN;
     }
     // Server push stream IDs must be even (SPDY draft 3 section 2.3.2).  So
     // each time we do a push, we increment last_server_push_stream_id_ by two.
@@ -283,10 +283,10 @@ SpdySession::PushStatus SpdySession::StartServerPush(
   }
   if (task_wrapper == NULL) {
     LOG(DFATAL) << "Can't happen: task_wrapper is NULL";
-    return PUSH_INTERNAL_ERROR;
+    return SpdyServerPushInterface::PUSH_INTERNAL_ERROR;
   }
   executor_->AddTask(task_wrapper, priority);
-  return PUSH_STARTED;
+  return SpdyServerPushInterface::PUSH_STARTED;
 }
 
 void SpdySession::OnError(net::SpdyFramer::SpdyError error_code) {
@@ -345,9 +345,8 @@ void SpdySession::OnStreamFrameData(net::SpdyStreamId stream_id,
   }
 
   // If the client sends data for a nonexistant stream, we must send a
-  // RST_STREAM frame with error code INVALID_STREAM.  See
-  // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-Data-frames
-  // Note that we release the mutex *before* sending the frame.
+  // RST_STREAM frame with error code INVALID_STREAM (SPDY draft 2 section
+  // 2.4).  Note that we release the mutex *before* sending the frame.
   LOG(WARNING) << "Client sent DATA (length=" << length
                << ") for nonexistant stream " << stream_id;
   SendRstStreamFrame(stream_id, net::INVALID_STREAM);
@@ -381,7 +380,8 @@ void SpdySession::OnSynStream(
     return;
   }
 
-  // Client stream IDs must be strictly increasing.
+  // Client stream IDs must be strictly increasing (SPDY draft 2 section
+  // 2.5.1).
   if (stream_id <= last_client_stream_id_) {
     LOG(WARNING) << "Client sent SYN_STREAM for non-increasing stream ID ("
                  << stream_id << " after " << last_client_stream_id_
@@ -539,7 +539,7 @@ void SpdySession::OnPing(const net::SpdyPingControlFrame& frame) {
   }
 
   // Any odd-numbered PING frame we receive was initiated by the client, and
-  // should thus be echoed back, as per the SPDY spec.
+  // should be echoed back _immediately_ (SPDY draft 2 section 2.7.6).
   SendFrameRaw(frame);
 }
 
@@ -771,8 +771,11 @@ SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     : spdy_session_(spdy_session),
       stream_(stream_id, associated_stream_id, priority,
               spdy_session_->initial_window_size_,
-              &spdy_session_->output_queue_, &spdy_session_->framer_),
-      subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {}
+              &spdy_session_->output_queue_, &spdy_session_->framer_,
+              spdy_session_),
+      subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {
+  CHECK(subtask_);
+}
 
 SpdySession::StreamTaskWrapper::~StreamTaskWrapper() {
   // Remove this object from the SpdySession's stream map.

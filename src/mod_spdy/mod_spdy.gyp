@@ -47,6 +47,7 @@
         'common/spdy_frame_priority_queue.cc',
         'common/spdy_frame_queue.cc',
         'common/spdy_server_config.cc',
+        'common/spdy_server_push_interface.cc',
         'common/spdy_session.cc',
         'common/spdy_session_io.cc',
         'common/spdy_stream.cc',

@@ -39,6 +39,15 @@ using testing::AllOf;
 
 namespace {
 
+class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
+ public:
+    MOCK_METHOD3(StartServerPush,
+                 mod_spdy::SpdyServerPushInterface::PushStatus(
+                     net::SpdyStreamId associated_stream_id,
+                     net::SpdyPriority priority,
+                     const net::SpdyHeaderBlock& request_headers));
+};
+
 class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
  public:
   SpdyToHttpFilterTest()
@@ -46,7 +55,7 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
         stream_id_(1),
         priority_(framer_.GetHighestPriority()),
         stream_(stream_id_, 0, priority_, net::kSpdyStreamInitialWindowSize,
-                &output_queue_, &framer_),
+                &output_queue_, &framer_, &pusher_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
     connection_ = static_cast<conn_rec*>(
@@ -172,6 +181,7 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
+  MockSpdyServerPushInterface pusher_;
   mod_spdy::SpdyStream stream_;
   mod_spdy::SpdyToHttpFilter spdy_to_http_filter_;
 

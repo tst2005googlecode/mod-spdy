@@ -22,6 +22,7 @@
 #include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
+#include "mod_spdy/common/spdy_server_push_interface.h"
 
 namespace mod_spdy {
 
@@ -44,7 +45,8 @@ class SpdyStream {
              net::SpdyPriority priority,
              int32 initial_window_size,
              SpdyFramePriorityQueue* output_queue,
-             net::BufferedSpdyFramer* framer);
+             net::BufferedSpdyFramer* framer,
+             SpdyServerPushInterface* pusher);
   ~SpdyStream();
 
   // What version of SPDY is being used for this connection?
@@ -123,6 +125,15 @@ class SpdyStream {
   // Send a SPDY data frame to the client on this stream.
   void SendOutputDataFrame(base::StringPiece data, bool flag_fin);
 
+  // Initiate a SPDY server push associated with this stream, roughly by
+  // pretending that the client sent a SYN_STREAM with the given headers.  To
+  // repeat: the headers argument is _not_ the headers that the server will
+  // send to the client, but rather the headers to _pretend_ that the client
+  // sent to the server.  Requires that spdy_version() >= 3.
+  SpdyServerPushInterface::PushStatus StartServerPush(
+      net::SpdyPriority priority,
+      const net::SpdyHeaderBlock& request_headers);
+
  private:
   // Send a SPDY frame to the client.  This is to be called from the stream
   // thread.  This method takes ownership of the frame object.  Must be holding
@@ -143,6 +154,7 @@ class SpdyStream {
   SpdyFrameQueue input_queue_;
   SpdyFramePriorityQueue* const output_queue_;
   net::BufferedSpdyFramer* const framer_;
+  SpdyServerPushInterface* const pusher_;
 
   // The lock protects the fields below.  The above fields do not require
   // additional synchronization.
