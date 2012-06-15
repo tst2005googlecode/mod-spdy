@@ -32,7 +32,9 @@ extern const char* const kContentType;
 extern const char* const kHost;
 extern const char* const kKeepAlive;
 extern const char* const kProxyConnection;
+extern const char* const kReferer;
 extern const char* const kTransferEncoding;
+extern const char* const kXAssociatedContent;
 extern const char* const kXModSpdy;
 
 // HTTP header values.

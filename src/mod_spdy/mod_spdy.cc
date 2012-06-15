@@ -38,6 +38,7 @@
 #include "mod_spdy/apache/config_commands.h"
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/filters/http_to_spdy_filter.h"
+#include "mod_spdy/apache/filters/server_push_filter.h"
 #include "mod_spdy/apache/filters/spdy_to_http_filter.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
@@ -97,6 +98,7 @@ const char* const kPhpModuleNames[] = {
 // start-up (during which Apache is running single-threaded; see TAMB 2.2.1),
 // and are read-only thereafter.
 ap_filter_rec_t* gHttpToSpdyFilterHandle = NULL;
+ap_filter_rec_t* gServerPushFilterHandle = NULL;
 ap_filter_rec_t* gSpdyToHttpFilterHandle = NULL;
 
 // These global variables store pointers to "optional functions" defined in
@@ -144,6 +146,13 @@ apr_status_t HttpToSpdyFilter(ap_filter_t* filter,
   mod_spdy::HttpToSpdyFilter* http_to_spdy_filter =
       static_cast<mod_spdy::HttpToSpdyFilter*>(filter->ctx);
   return http_to_spdy_filter->Write(filter, input_brigade);
+}
+
+apr_status_t ServerPushFilter(ap_filter_t* filter,
+                              apr_bucket_brigade* input_brigade) {
+  mod_spdy::ServerPushFilter* server_push_filter =
+      static_cast<mod_spdy::ServerPushFilter*>(filter->ctx);
+  return server_push_filter->Write(filter, input_brigade);
 }
 
 // Called on server startup, after all modules have loaded.
@@ -362,10 +371,7 @@ int PreConnection(conn_rec* connection, void* csd) {
     DCHECK(context->is_slave());
     DCHECK(mod_spdy::GetServerConfig(connection)->spdy_enabled());
 
-    // Instantiate and add our SPDY-to-HTTP filter for the slave connection.
-    // This is an Apache connection-level filter, so we add it here.  The
-    // corresponding HTTP-to-SPDY filter is request-level, so we add that one
-    // in InsertRequestFilters().
+    // Instantiate and add our SPDY-to-HTTP filter.
     mod_spdy::SpdyToHttpFilter* spdy_to_http_filter =
         new mod_spdy::SpdyToHttpFilter(context->slave_stream());
     mod_spdy::PoolRegisterDelete(connection->pool, spdy_to_http_filter);
@@ -375,6 +381,7 @@ int PreConnection(conn_rec* connection, void* csd) {
         NULL,                     // request object
         connection);              // connection object
 
+    // Instantiate and add our HTTP-to-SPDY filter.
     mod_spdy::HttpToSpdyFilter* http_to_spdy_filter =
         new mod_spdy::HttpToSpdyFilter(context->slave_stream());
     PoolRegisterDelete(connection->pool, http_to_spdy_filter);
@@ -653,6 +660,34 @@ int SetUpSubprocessEnv(request_rec* request) {
   return OK;
 }
 
+void InsertRequestFilters(request_rec* request) {
+  conn_rec* const connection = request->connection;
+  mod_spdy::ScopedConnectionLogHandler log_handler(connection);
+
+  // If mod_spdy is disabled on this server, then don't do anything.
+  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+    return;
+  }
+
+  // Don't do anything unless this is a slave connection.
+  mod_spdy::ConnectionContext* context =
+      mod_spdy::GetConnectionContext(connection);
+  if (context == NULL || !context->is_slave()) {
+    return;
+  }
+
+  // Insert a filter that will initiate server pushes when so instructed (such
+  // as by an X-Associated-Content header).
+  mod_spdy::ServerPushFilter* server_push_filter =
+      new mod_spdy::ServerPushFilter(context->slave_stream());
+  PoolRegisterDelete(request->pool, server_push_filter);
+  ap_add_output_filter_handle(
+      gServerPushFilterHandle,  // filter handle
+      server_push_filter,       // context (any void* we want)
+      request,                  // request object
+      connection);              // connection object
+}
+
 // Called when the module is loaded to register all of our hook functions.
 void RegisterHooks(apr_pool_t* pool) {
   mod_spdy::InstallLogMessageHandler(pool);
@@ -722,6 +757,10 @@ void RegisterHooks(apr_pool_t* pool) {
   // mod_ssl uses for setting its subprocess environment variables.
   ap_hook_fixups(SetUpSubprocessEnv, NULL, NULL, APR_HOOK_MIDDLE);
 
+  // Our server push filter is a request-level filter, so we insert it with the
+  // insert-filter hook.
+  ap_hook_insert_filter(InsertRequestFilters, NULL, NULL, APR_HOOK_MIDDLE);
+
   // Register a hook with mod_ssl to be called when deciding what protocols to
   // advertise during Next Protocol Negotiatiation (NPN); we'll use this
   // opportunity to advertise that we support SPDY.  This hook is declared in
@@ -766,12 +805,20 @@ void RegisterHooks(apr_pool_t* pool) {
       NULL,                       // init function (n/a in our case)
       AP_FTYPE_NETWORK);          // filter type
 
-  // Now register our output filter, analogously to the input filter above.
+  // Now register our output filters, analogously to the input filter above.
   gHttpToSpdyFilterHandle = ap_register_output_filter(
       "HTTP_TO_SPDY",             // name
       HttpToSpdyFilter,           // filter function
       NULL,                       // init function (n/a in our case)
       AP_FTYPE_NETWORK);          // filter type
+  gServerPushFilterHandle = ap_register_output_filter(
+      "SPDY_SERVER_PUSH",         // name
+      ServerPushFilter,           // filter function
+      NULL,                       // init function (n/a in our case)
+      // We use CONTENT_SET+1 so that we come in just after mod_headers (which
+      // uses CONTENT_SET).  That way, a user can set an X-Associated-Content
+      // header with mod_headers and have it get picked up by this filter.
+      static_cast<ap_filter_type>(AP_FTYPE_CONTENT_SET + 1));
 
   // Register our optional functions, so that other modules can retrieve and
   // use them.  See TAMB 10.1.2.

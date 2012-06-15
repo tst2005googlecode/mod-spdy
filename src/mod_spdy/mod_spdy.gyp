@@ -79,6 +79,7 @@
         'apache/config_commands.cc',
         'apache/config_util.cc',
         'apache/filters/http_to_spdy_filter.cc',
+        'apache/filters/server_push_filter.cc',
         'apache/filters/spdy_to_http_filter.cc',
         'apache/log_message_handler.cc',
         'apache/pool_util.cc',
@@ -173,8 +174,10 @@
       ],
       'sources': [
         'apache/filters/http_to_spdy_filter_test.cc',
+        'apache/filters/server_push_filter_test.cc',
         'apache/filters/spdy_to_http_filter_test.cc',
         'apache/pool_util_test.cc',
+        'apache/testing/dummy_util_filter.cc',
         'apache/testing/spdy_apache_test_main.cc',
       ],
     },

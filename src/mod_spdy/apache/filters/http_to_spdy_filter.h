@@ -23,8 +23,6 @@
 #include "base/basictypes.h"
 #include "mod_spdy/common/http_to_spdy_converter.h"
 
-namespace spdy { class SpdyFrame; }
-
 namespace mod_spdy {
 
 class SpdyStream;
