@@ -236,6 +236,26 @@ inline ::testing::Matcher<const net::SpdyFrame&> AssociatedStreamIdIs(
   return ::testing::MakeMatcher(new AssociatedStreamIdIsMatcher(stream_id));
 }
 
+class PriorityIsMatcher :
+      public ::testing::MatcherInterface<const net::SpdyFrame&> {
+ public:
+  PriorityIsMatcher(net::SpdyPriority priority) : priority_(priority) {}
+  virtual ~PriorityIsMatcher() {}
+  virtual bool MatchAndExplain(const net::SpdyFrame& frame,
+                               ::testing::MatchResultListener* listener) const;
+  virtual void DescribeTo(std::ostream* out) const;
+  virtual void DescribeNegationTo(std::ostream* out) const;
+ private:
+  const net::SpdyPriority priority_;
+  DISALLOW_COPY_AND_ASSIGN(PriorityIsMatcher);
+};
+
+// Make a matcher that requires the frame to have the given priority.
+inline ::testing::Matcher<const net::SpdyFrame&> PriorityIs(
+    net::SpdyPriority priority) {
+  return ::testing::MakeMatcher(new PriorityIsMatcher(priority));
+}
+
 class UncompressedHeadersAreMatcher :
       public ::testing::MatcherInterface<const net::SpdyFrame&> {
  public:

@@ -18,6 +18,7 @@
 #include "base/logging.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
 
@@ -45,7 +46,8 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
   DCHECK_GT(window_size_, 0);
   // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
   DCHECK_GE(priority, 0u);
-  DCHECK_LE(priority, framer_->protocol_version() < 3 ? 3u : 7u);
+  DCHECK_LE(priority,
+            LowestSpdyPriorityForVersion(framer_->protocol_version()));
 }
 
 SpdyStream::~SpdyStream() {}

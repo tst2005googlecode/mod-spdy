@@ -135,8 +135,7 @@ TEST_P(ServerPushFilterTest, SimpleXAssociatedContent) {
   headers2[mod_spdy::spdy::kSpdy3Scheme] = "https";
   headers2[mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
   headers2[mod_spdy::http::kReferer] = kRefererUrl;
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), Eq(priority),
-                                       Eq(headers2)));
+  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), Eq(7u), Eq(headers2)));
 
   net::SpdyHeaderBlock headers3;
   headers3[mod_spdy::spdy::kSpdy3Host] = "www.example.com";

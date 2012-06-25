@@ -16,8 +16,6 @@
 #define MOD_SPDY_COMMON_SPDY_SESSION_H_
 
 #include <map>
-#include <queue>
-#include <vector>
 
 #include "base/basictypes.h"
 #include "base/synchronization/lock.h"
@@ -122,7 +120,42 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
     DISALLOW_COPY_AND_ASSIGN(StreamTaskWrapper);
   };
 
-  typedef std::map<net::SpdyStreamId, StreamTaskWrapper*> SpdyStreamMap;
+  // Helper class for keeping track of active stream tasks, and separately
+  // tracking the number of active client/server-initiated streams.  This class
+  // is not thread-safe without external synchronization, so it is used below
+  // along with a separate mutex.
+  class SpdyStreamMap {
+   public:
+    SpdyStreamMap();
+    ~SpdyStreamMap();
+
+    // Determine whether there are no currently active streams.
+    bool IsEmpty();
+    // Get the number of currently active streams created by the client or
+    // server, respectively.
+    size_t NumActiveClientStreams();
+    size_t NumActivePushStreams();
+    // Determine if a particular stream ID is currently active.
+    bool IsStreamActive(net::SpdyStreamId stream_id);
+    // Get the specified stream object, or NULL if the stream is inactive.
+    SpdyStream* GetStream(net::SpdyStreamId stream_id);
+    // Add a new stream.  Requires that the stream ID is currently inactive.
+    void AddStreamTask(StreamTaskWrapper* task);
+    // Remove a stream task.  Requires that the stream is currently active.
+    void RemoveStreamTask(StreamTaskWrapper* task);
+    // Adjust the window size of all active streams by the same delta.
+    void AdjustAllWindowSizes(int32 delta);
+    // Abort all streams in the map.  Note that this won't immediately empty
+    // the map (the tasks still have to shut down).
+    void AbortAllSilently();
+
+   private:
+    typedef std::map<net::SpdyStreamId, StreamTaskWrapper*> TaskMap;
+    TaskMap tasks_;
+    size_t num_active_push_streams_;
+
+    DISALLOW_COPY_AND_ASSIGN(SpdyStreamMap);
+  };
 
   // Validate and set the per-stream initial flow-control window size to the
   // new value.  Must be using SPDY v3 or later to call this method.
@@ -179,6 +212,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   bool already_sent_goaway_;  // GOAWAY frame has been sent
   net::SpdyStreamId last_client_stream_id_;
   int32 initial_window_size_;  // per-stream initial flow-control window size
+  uint32 max_concurrent_pushes_;  // max number of active server pushes at once
 
   // The stream map must be protected by a lock, because each stream thread
   // will remove itself from the map (by calling RemoveStreamTask) when the

@@ -71,10 +71,14 @@ bool ParseSeparator(char c, base::StringPiece* source) {
 // number, store it in *out, and modify *source to skip past it.  Otherwise,
 // just leave *source unchanged.  See ParseAssociatedContent for the full
 // expected format of *source.
-void ParseOptionalPriority(base::StringPiece* source, net::SpdyPriority* out) {
+net::SpdyPriority ParseOptionalPriority(SpdyStream* spdy_stream,
+                                        base::StringPiece* source) {
+  const net::SpdyPriority lowest_priority =
+      LowestSpdyPriorityForVersion(spdy_stream->spdy_version());
   if (!ParseSeparator(':', source)) {
-    // It's okay for the ":priority" to not be there.
-    return;
+    // It's okay for the ":priority" to not be there.  In that case, we default
+    // to minimal priority.
+    return lowest_priority;
   }
   const size_t end = source->find_first_not_of("0123456789");
   const base::StringPiece number = source->substr(0, end);
@@ -82,11 +86,13 @@ void ParseOptionalPriority(base::StringPiece* source, net::SpdyPriority* out) {
   if (!StringToUint(number, &priority)) {
     LOG(INFO) << "Invalid priority value in X-Associated-Content: '"
               << number << "'";
-    return;
+    return lowest_priority;
   }
-  *out = std::min(priority, 7u);  // clamp the priority to a legal value
   *source = source->substr(end);
   AbsorbWhiteSpace(source);
+  // Clamp the priority to a legal value (larger numbers represent lower
+  // priorities, so we must not return a number greater than lowest_priority).
+  return (priority > lowest_priority ? lowest_priority : priority);
 }
 
 // Parse the value of an X-Associated-Content header, and initiate any
@@ -121,9 +127,8 @@ void ParseAssociatedContent(request_rec* request, SpdyStream* spdy_stream,
       return;
     }
     // The URL may optionally be followed by a priority.  If the priority is
-    // not there, use the priority of the associated stream.
-    net::SpdyPriority priority = spdy_stream->priority();
-    ParseOptionalPriority(&value, &priority);
+    // not there, use the lowest-importance priority by default.
+    net::SpdyPriority priority = ParseOptionalPriority(spdy_stream, &value);
 
     // Try to parse the URL string.  If it does not form a valid URL, log an
     // error and skip past this entry.

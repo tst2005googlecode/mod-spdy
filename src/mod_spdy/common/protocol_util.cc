@@ -77,6 +77,10 @@ bool IsInvalidSpdyResponseHeader(base::StringPiece key) {
                                http::kTransferEncoding));
 }
 
+net::SpdyPriority LowestSpdyPriorityForVersion(int spdy_version) {
+  return (spdy_version < 3 ? 3u : 7u);
+}
+
 void MergeInHeader(base::StringPiece key, base::StringPiece value,
                    net::SpdyHeaderBlock* headers) {
   // The SPDY spec requires that header names be lowercase, so forcibly

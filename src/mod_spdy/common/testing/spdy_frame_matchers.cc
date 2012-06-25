@@ -348,6 +348,38 @@ void AssociatedStreamIdIsMatcher::DescribeNegationTo(std::ostream* out) const {
   *out << "doesn't have associated stream ID " << associated_stream_id_;
 }
 
+bool PriorityIsMatcher::MatchAndExplain(
+    const net::SpdyFrame& frame,
+    ::testing::MatchResultListener* listener) const {
+  if (!frame.is_control_frame()) {
+    *listener << "is a data frame";
+    return false;
+  }
+  const net::SpdyControlType type =
+      static_cast<const net::SpdyControlFrame*>(&frame)->type();
+  if (type != net::SYN_STREAM) {
+    *listener << "is a " << net::SpdyFramer::ControlTypeToString(type)
+              << " frame";
+    return false;
+  }
+  const net::SpdyPriority pri =
+      static_cast<const net::SpdySynStreamControlFrame*>(
+          &frame)->priority();
+  if (pri != priority_) {
+    *listener << "has priority " << pri;
+    return false;
+  }
+  return true;
+}
+
+void PriorityIsMatcher::DescribeTo(std::ostream* out) const {
+  *out << "has priority " << priority_;
+}
+
+void PriorityIsMatcher::DescribeNegationTo(std::ostream* out) const {
+  *out << "doesn't have priority " << priority_;
+}
+
 bool UncompressedHeadersAreMatcher::MatchAndExplain(
     const net::SpdyFrame& frame,
     ::testing::MatchResultListener* listener) const {
