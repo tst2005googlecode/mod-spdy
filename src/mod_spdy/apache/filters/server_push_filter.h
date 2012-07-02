@@ -21,6 +21,7 @@
 #include "util_filter.h"
 
 #include "base/basictypes.h"
+#include "base/string_piece.h"
 
 namespace mod_spdy {
 
@@ -31,7 +32,8 @@ class SpdyStream;
 // or a CGI script.
 class ServerPushFilter {
  public:
-  explicit ServerPushFilter(SpdyStream* stream);
+  // Does not take ownership of either argument.
+  ServerPushFilter(SpdyStream* stream, request_rec* request);
   ~ServerPushFilter();
 
   // Read data from the given brigade and write the result through the given
@@ -40,7 +42,24 @@ class ServerPushFilter {
   apr_status_t Write(ap_filter_t* filter, apr_bucket_brigade* input_brigade);
 
  private:
-  SpdyStream* stream_;
+  // Parse the value of an X-Associated-Content header, and initiate any
+  // specified server pushes.  The expected format of the header value is a
+  // comma-separated list of quoted URLs, each of which may optionally be
+  // followed by colon and a SPDY priority value.  The URLs may be fully
+  // qualified URLs, or simply absolute paths (for the same scheme/host as the
+  // original request).  If the optional priority is omitted for a URL, then it
+  // uses the lowest possible priority.  Whitespace is permitted between
+  // tokens.  For example:
+  //
+  //   X-Associated-Content: "https://www.example.com/foo.css",
+  //       "/bar/baz.js?x=y" : 1, "https://www.example.com/quux.css":3
+  void ParseXAssociatedContentHeader(base::StringPiece value);
+  // Utility function passed to apr_table_do.  The first argument must point to
+  // a ServerPushFilter; this will call ParseXAssociatedContentHeader on it.
+  static int OnXAssociatedContent(void*, const char*, const char*);
+
+  SpdyStream* const stream_;
+  request_rec* const request_;
 
   DISALLOW_COPY_AND_ASSIGN(ServerPushFilter);
 };

@@ -27,9 +27,9 @@ namespace mod_spdy {
 namespace {
 
 // Utility function passed to apr_table_do:
-int AddOneHeader(void* ptr, const char* key, const char* value) {
-  net::SpdyHeaderBlock* headers = static_cast<net::SpdyHeaderBlock*>(ptr);
-  mod_spdy::MergeInHeader(key, value, headers);
+int AddOneHeader(void* headers, const char* key, const char* value) {
+  mod_spdy::MergeInHeader(
+      key, value, static_cast<net::SpdyHeaderBlock*>(headers));
   return 1;  // return zero to stop, or non-zero to continue iterating
 }
 
@@ -95,19 +95,43 @@ net::SpdyPriority ParseOptionalPriority(SpdyStream* spdy_stream,
   return (priority > lowest_priority ? lowest_priority : priority);
 }
 
-// Parse the value of an X-Associated-Content header, and initiate any
-// specified server pushes.  The expected format of the header value is a
-// comma-separated list of quoted URLs, each of which may optionally be
-// followed by colon and a SPDY priority value.  The URLs may be fully
-// qualified URLs, or simply absolute paths (for the same scheme/host as the
-// original request).  If the optional priority is omitted for a URL, then it
-// uses the same priority as the original request.  Whitespace is permitted
-// between tokens.  For example:
-//
-//   X-Associated-Content: "https://www.example.com/foo.css",
-//       "/bar/baz.js?x=y" : 1, "https://www.example.com/quux.css":3
-void ParseAssociatedContent(request_rec* request, SpdyStream* spdy_stream,
-                            base::StringPiece value) {
+}  // namespace
+
+ServerPushFilter::ServerPushFilter(SpdyStream* stream, request_rec* request)
+    : stream_(stream), request_(request) {
+  DCHECK(stream_);
+  DCHECK(request_);
+}
+
+ServerPushFilter::~ServerPushFilter() {}
+
+apr_status_t ServerPushFilter::Write(ap_filter_t* filter,
+                                     apr_bucket_brigade* input_brigade) {
+  DCHECK_EQ(request_, filter->r);
+  // We only do server pushes for SPDY v3 and later.  Also, to avoid infinite
+  // push loops, we don't allow a server-pushed stream to push more streams.
+  if (stream_->spdy_version() >= 3 && !stream_->is_server_push()) {
+    // Parse and start pushes for each X-Associated-Content header, if any.
+    // (Note that APR tables allow multiple entries with the same key, just
+    // like HTTP headers.)
+    apr_table_do(
+        OnXAssociatedContent,   // function to call on each key/value pair
+        this,                   // void* to be passed as first arg to function
+        request_->headers_out,  // the apr_table_t to iterate over
+        // Varargs: zero or more char* keys to iterate over, followed by NULL
+        http::kXAssociatedContent, NULL);
+  }
+  // Even in cases where we forbid pushes from this stream, we still purge the
+  // X-Associated-Content header.
+  apr_table_unset(request_->headers_out, http::kXAssociatedContent);
+
+  // Remove ourselves from the filter chain.
+  ap_remove_output_filter(filter);
+  // Pass the data through unchanged.
+  return ap_pass_brigade(filter->next, input_brigade);
+}
+
+void ServerPushFilter::ParseXAssociatedContentHeader(base::StringPiece value) {
   AbsorbWhiteSpace(&value);
   bool first_url = true;
   while (!value.empty()) {
@@ -128,14 +152,14 @@ void ParseAssociatedContent(request_rec* request, SpdyStream* spdy_stream,
     }
     // The URL may optionally be followed by a priority.  If the priority is
     // not there, use the lowest-importance priority by default.
-    net::SpdyPriority priority = ParseOptionalPriority(spdy_stream, &value);
+    net::SpdyPriority priority = ParseOptionalPriority(stream_, &value);
 
     // Try to parse the URL string.  If it does not form a valid URL, log an
     // error and skip past this entry.
     apr_uri_t parsed_url;
     {
       const apr_status_t status =
-          apr_uri_parse(request->pool, url.c_str(), &parsed_url);
+          apr_uri_parse(request_->pool, url.c_str(), &parsed_url);
       if (status != APR_SUCCESS) {
         LOG(ERROR) << "Invalid URL in X-Associated-Content: '" << url << "'";
         continue;
@@ -147,10 +171,10 @@ void ParseAssociatedContent(request_rec* request, SpdyStream* spdy_stream,
     // Start off by pulling in certain headers from the associated stream's
     // request headers.
     apr_table_do(
-        AddOneHeader,         // function to call on each key/value pair
-        &request_headers,     // void* to be passed as first arg to function
-        request->headers_in,  // the apr_table_t to iterate over
-        // Varargs: zero or more char* keys to iterate over, followed by NULL.
+        AddOneHeader,          // function to call on each key/value pair
+        &request_headers,      // void* to be passed as first arg to function
+        request_->headers_in,  // the apr_table_t to iterate over
+        // Varargs: zero or more char* keys to iterate over, followed by NULL
         "accept", "accept-charset", "accept-datetime",
         mod_spdy::http::kAcceptEncoding, "accept-language", "authorization",
         "user-agent", NULL);
@@ -160,15 +184,15 @@ void ParseAssociatedContent(request_rec* request, SpdyStream* spdy_stream,
       request_headers[spdy::kSpdy3Host] = parsed_url.hostinfo;
     } else {
       const char* host_header =
-          apr_table_get(request->headers_in, http::kHost);
+          apr_table_get(request_->headers_in, http::kHost);
       request_headers[spdy::kSpdy3Host] =
           (host_header != NULL ? host_header :
-           request->hostname != NULL ? request->hostname : "");
+           request_->hostname != NULL ? request_->hostname : "");
     }
     request_headers[spdy::kSpdy3Method] = "GET";
     request_headers[spdy::kSpdy3Scheme] =
         (parsed_url.scheme != NULL ? parsed_url.scheme : "https");
-    request_headers[spdy::kSpdy3Version] = request->protocol;
+    request_headers[spdy::kSpdy3Version] = request_->protocol;
     // Construct the path that we are pushing from the parsed URL.
     // TODO(mdsteele): It'd be nice to support relative URLs.
     {
@@ -186,11 +210,11 @@ void ParseAssociatedContent(request_rec* request, SpdyStream* spdy_stream,
       }
     }
     // Finally, we set the HTTP referrer to be the associated stream's URL.
-    request_headers[http::kReferer] = request->unparsed_uri;
+    request_headers[http::kReferer] = request_->unparsed_uri;
 
     // Try to perform the push.  If it succeeds, we'll continue with parsing.
     const SpdyServerPushInterface::PushStatus status =
-        spdy_stream->StartServerPush(priority, request_headers);
+        stream_->StartServerPush(priority, request_headers);
     switch (status) {
       case SpdyServerPushInterface::PUSH_STARTED:
         break;  // success
@@ -214,37 +238,12 @@ void ParseAssociatedContent(request_rec* request, SpdyStream* spdy_stream,
   }
 }
 
-}  // namespace
-
-ServerPushFilter::ServerPushFilter(SpdyStream* stream)
-    : stream_(stream) {
-  DCHECK(stream_);
-}
-
-ServerPushFilter::~ServerPushFilter() {}
-
-apr_status_t ServerPushFilter::Write(ap_filter_t* filter,
-                                     apr_bucket_brigade* input_brigade) {
-  request_rec* request = filter->r;
-  // We only do server pushes for SPDY v3 and later.  Also, to avoid infinite
-  // push loops, we don't allow a server-pushed stream to push more streams.
-  if (stream_->spdy_version() >= 3 && !stream_->is_server_push()) {
-    // Check for an X-Associated-Content header.  If there is one, start any
-    //  specified pushes.
-    const char* associated_content =
-        apr_table_get(request->headers_out, http::kXAssociatedContent);
-    if (associated_content != NULL) {
-      ParseAssociatedContent(request, stream_, associated_content);
-    }
-  }
-  // Even if we forbid pushes from this stream, we still purge the
-  // X-Associated-Content header.
-  apr_table_unset(request->headers_out, http::kXAssociatedContent);
-
-  // Remove ourselves from the filter chain.
-  ap_remove_output_filter(filter);
-  // Pass the data through unchanged.
-  return ap_pass_brigade(filter->next, input_brigade);
+// static
+int ServerPushFilter::OnXAssociatedContent(
+    void* server_push_filter, const char* key, const char* value) {
+  static_cast<ServerPushFilter*>(server_push_filter)->
+      ParseXAssociatedContentHeader(value);
+  return 1;  // return zero to stop, or non-zero to continue iterating
 }
 
 }  // namespace mod_spdy
