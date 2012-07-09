@@ -29,6 +29,7 @@
 #include "base/threading/thread_local.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/spdy_stream.h"
+#include "mod_spdy/common/version.h"
 
 // Make sure we don't attempt to use LOG macros here, since doing so
 // would cause us to go into an infinite log loop.
@@ -38,6 +39,9 @@
 namespace {
 
 class LogHandler;
+
+const char* const kLogMessagePrefix =
+    "[mod_spdy/" MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING "] ";
 
 apr_pool_t* log_pool = NULL;
 base::ThreadLocalPointer<LogHandler>* gThreadLocalLogHandler = NULL;
@@ -144,7 +148,8 @@ bool LogMessageHandler(int severity, const char* file, int line,
                        size_t message_start, const std::string& str) {
   const int this_log_level = GetApacheLogLevel(severity);
 
-  std::string message = str;
+  std::string message(kLogMessagePrefix);
+  message.append(str);
   if (severity == logging::LOG_FATAL) {
     if (base::debug::BeingDebugged()) {
       base::debug::BreakDebugger();
