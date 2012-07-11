@@ -40,6 +40,7 @@
 #include "mod_spdy/apache/filters/http_to_spdy_filter.h"
 #include "mod_spdy/apache/filters/server_push_filter.h"
 #include "mod_spdy/apache/filters/spdy_to_http_filter.h"
+#include "mod_spdy/apache/id_pool.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/connection_context.h"
@@ -688,9 +689,17 @@ void InsertRequestFilters(request_rec* request) {
       connection);              // connection object
 }
 
+apr_status_t InvokeIdPoolDestroyInstance(void*) {
+  mod_spdy::IdPool::DestroyInstance();
+  return APR_SUCCESS;
+}
+
 // Called when the module is loaded to register all of our hook functions.
 void RegisterHooks(apr_pool_t* pool) {
   mod_spdy::InstallLogMessageHandler(pool);
+  mod_spdy::IdPool::CreateInstance();
+  apr_pool_cleanup_register(pool, NULL, InvokeIdPoolDestroyInstance,
+                            apr_pool_cleanup_null /* no cleanup on fork*/);
 
   static const char* const modules_core[] = {"core.c", NULL};
   static const char* const modules_mod_ssl[] = {"mod_ssl.c", NULL};
