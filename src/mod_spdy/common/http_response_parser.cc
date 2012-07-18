@@ -334,9 +334,9 @@ bool HttpResponseParser::ParseLeadingHeader(const base::StringPiece& text) {
   } else if (body_type_ != CHUNKED_BODY &&
              LowerCaseEqualsASCII(key.begin(), key.end(),
                                   http::kContentLength)) {
-    int int_value = 0;
-    if (base::StringToInt(value, &int_value) && int_value > 0) {
-      remaining_bytes_ = static_cast<size_t>(int_value);
+    uint64 uint_value = 0u;
+    if (base::StringToUint64(value, &uint_value) && uint_value > 0u) {
+      remaining_bytes_ = uint_value;
       body_type_ = UNCHUNKED_BODY;
     } else {
       VLOG(1) << "Bad content-length: " << value;

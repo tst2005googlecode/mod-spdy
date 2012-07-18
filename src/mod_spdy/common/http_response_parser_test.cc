@@ -220,4 +220,54 @@ TEST_F(HttpResponseParserTest, DividedUpIntoPieces) {
   ASSERT_TRUE(parser_.ProcessInput("0\r\n\r\n"));
 }
 
+// Test that we gracefully handle bogus content-lengths.  We should effectively
+// ignore the header, assume that the response has no content, and ignore what
+// follows the headers.
+TEST_F(HttpResponseParserTest, BogusContentLength) {
+  EXPECT_CALL(visitor_, OnStatusLine(Eq("HTTP/1.1"), Eq("200"), Eq("OK")));
+  EXPECT_CALL(visitor_, OnLeadingHeader(Eq("Content-Length"), Eq("bogus")));
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(true)));
+
+  ASSERT_TRUE(parser_.ProcessInput(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Length: bogus\r\n"
+      "\r\n"
+      "bogus bogus bogus\r\n"));
+}
+
+// Test that we gracefully handle over-large content-lengths.  As with
+// unparsable Content-Length values, an overflow of the Content-Length value
+// should result in us ignoring it.
+TEST_F(HttpResponseParserTest, ContentLengthOverflow) {
+  EXPECT_CALL(visitor_, OnStatusLine(Eq("HTTP/1.1"), Eq("200"), Eq("OK")));
+  EXPECT_CALL(visitor_, OnLeadingHeader(
+      Eq("Content-Length"), Eq("9999999999999999999999999999999999999")));
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(true)));
+
+  ASSERT_TRUE(parser_.ProcessInput(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Length: 9999999999999999999999999999999999999\r\n"
+      "\r\n"
+      "bogus bogus bogus\r\n"));
+}
+
+// We should be able to handle pretty big content lengths without overflowing,
+// however!  Otherwise, downloads of extremely large files may fail.  Here, we
+// test (the beginning of) a response that will contain a 5TB of data.
+TEST_F(HttpResponseParserTest, LargeContentLength) {
+  EXPECT_CALL(visitor_, OnStatusLine(Eq("HTTP/1.1"), Eq("200"), Eq("OK")));
+  EXPECT_CALL(visitor_, OnLeadingHeader(
+      Eq("Content-Length"), Eq("5497558138880")));
+  EXPECT_CALL(visitor_, OnLeadingHeadersComplete(Eq(false)));
+  EXPECT_CALL(visitor_, OnData(Eq("This is the beginning of 5TB of data."),
+                               Eq(false)));
+
+  ASSERT_TRUE(parser_.ProcessInput(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Length: 5497558138880\r\n"
+      "\r\n"
+      "This is the beginning of 5TB of data."));
+  ASSERT_EQ(5497558138843uL, parser_.GetRemainingBytesForTest());
+}
+
 }  // namespace

@@ -42,6 +42,11 @@ class HttpResponseParser {
     return ProcessInput(base::StringPiece(data, size));
   }
 
+  // For unit testing only: Get the remaining number of bytes expected (in the
+  // whole response, if we used Content-Length, or just in the current chunk,
+  // if we used Transfer-Encoding: chunked).
+  uint64 GetRemainingBytesForTest() const { return remaining_bytes_; }
+
  private:
   enum ParserState {
     STATUS_LINE,
@@ -73,7 +78,7 @@ class HttpResponseParser {
   HttpResponseVisitorInterface* const visitor_;
   ParserState state_;
   BodyType body_type_;
-  size_t remaining_bytes_;
+  uint64 remaining_bytes_;
   std::string buffer_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpResponseParser);
