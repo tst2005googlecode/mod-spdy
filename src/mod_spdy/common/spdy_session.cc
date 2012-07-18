@@ -311,7 +311,8 @@ void SpdySession::OnStreamError(net::SpdyStreamId stream_id,
 }
 
 void SpdySession::OnStreamFrameData(net::SpdyStreamId stream_id,
-                                    const char* data, size_t length) {
+                                    const char* data, size_t length,
+                                    net::SpdyDataFlags flags) {
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
   // RemoveStreamTask() at any time.
@@ -323,8 +324,6 @@ void SpdySession::OnStreamFrameData(net::SpdyStreamId stream_id,
               << length << ")";
       // Copy the data into an _uncompressed_ SPDY data frame and post it to
       // the stream's input queue.
-      net::SpdyDataFlags flags =
-          length == 0 ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
       // Note that we must still be holding stream_map_lock_ when we call this
       // method -- otherwise the stream may be deleted out from under us by the
       // StreamTaskWrapper destructor.  That's okay -- PostInputFrame is a
@@ -361,24 +360,18 @@ void SpdySession::OnStreamFrameData(net::SpdyStreamId stream_id,
 }
 
 void SpdySession::OnSynStream(
-    const net::SpdySynStreamControlFrame& frame,
-    const linked_ptr<net::SpdyHeaderBlock>& headers) {
+    net::SpdyStreamId stream_id,
+    net::SpdyStreamId associated_stream_id,
+    net::SpdyPriority priority,
+    uint8 credential_slot,
+    bool fin,
+    bool unidirectional,
+    const net::SpdyHeaderBlock& headers) {
   // The SPDY spec requires us to ignore SYN_STREAM frames after sending a
   // GOAWAY frame (SPDY draft 3 section 2.6.6).
   if (already_sent_goaway_) {
     return;
   }
-
-  // If we see invalid flags, reject the frame.
-  if (0 != (frame.flags() & ~(net::CONTROL_FLAG_FIN |
-                              net::CONTROL_FLAG_UNIDIRECTIONAL))) {
-    LOG(WARNING) << "Client sent SYN_STREAM with invalid flags ("
-                 << frame.flags() << ").  Sending GOAWAY.";
-    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
-    return;
-  }
-
-  const net::SpdyStreamId stream_id = frame.stream_id();
 
   // Client stream IDs must be odd-numbered.
   if (stream_id % 2 == 0) {
@@ -437,18 +430,21 @@ void SpdySession::OnSynStream(
     // Initiate a new stream.
     last_client_stream_id_ = std::max(last_client_stream_id_, stream_id);
     task_wrapper = new StreamTaskWrapper(
-        this, stream_id, frame.associated_stream_id(), frame.priority());
+        this, stream_id, associated_stream_id, priority);
     stream_map_.AddStreamTask(task_wrapper);
+    const net::SpdyControlFlags flags = static_cast<net::SpdyControlFlags>(
+        (fin ? net::CONTROL_FLAG_FIN : 0) |
+        (unidirectional ? net::CONTROL_FLAG_UNIDIRECTIONAL : 0));
     // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
     //   stream, which the stream task will then have to re-parse.  This is
     //   wasteful.  We should probably refactor such that we can send the
     //   header map itself, and avoid the extra parsing.
     task_wrapper->stream()->PostInputFrame(framer_.CreateSynStream(
-        stream_id, frame.associated_stream_id(), frame.priority(),
-        frame.credential_slot(),
-        static_cast<net::SpdyControlFlags>(frame.flags()),
+        stream_id, associated_stream_id, priority,
+        credential_slot,
+        flags,
         false,  // false = uncompressed
-        headers.get()));
+        &headers));
   }
   DCHECK(task_wrapper);
   // Release the lock before adding the task to the executor.  This is mostly
@@ -458,28 +454,18 @@ void SpdySession::OnSynStream(
   // holding the lock, because the task won't get deleted before it's been
   // added to the executor.
   VLOG(2) << "Received SYN_STREAM; opening stream " << stream_id;
-  executor_->AddTask(task_wrapper, frame.priority());
+  executor_->AddTask(task_wrapper, priority);
 }
 
-void SpdySession::OnSynReply(const net::SpdySynReplyControlFrame& frame,
-                             const linked_ptr<net::SpdyHeaderBlock>& headers) {
+void SpdySession::OnSynReply(net::SpdyStreamId stream_id,
+                             bool fin,
+                             const net::SpdyHeaderBlock& headers) {
   // TODO(mdsteele)
 }
 
-void SpdySession::OnRstStream(
-    const net::SpdyRstStreamControlFrame& frame) {
-  // RST_STREAM does not define any flags (SPDY draft 2 section 2.7.3).  If we
-  // see invalid flags, tell the client to go away (but don't return from the
-  // method; we'll still go ahead and abort the stream that the RST_STREAM
-  // frame is asking us to terminate).
-  if (0 != frame.flags()) {
-    LOG(WARNING) << "Client sent RST_STREAM with invalid flags ("
-                 << frame.flags() << ").  Sending GOAWAY.";
-    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
-  }
-
-  const net::SpdyStreamId stream_id = frame.stream_id();
-  switch (frame.status()) {
+void SpdySession::OnRstStream(net::SpdyStreamId stream_id,
+                              net::SpdyStatusCodes status) {
+  switch (status) {
     // These are totally benign reasons to abort a stream, so just abort the
     // stream without a fuss.
     case net::REFUSED_STREAM:
@@ -499,8 +485,8 @@ void SpdySession::OnRstStream(
     // TODO(mdsteele): Should we have special behavior for any other kinds of
     // errors?
     default:
-      LOG(WARNING) << "Client sent RST_STREAM with status=" << frame.status()
-                   <<" for stream " << stream_id << ".  Aborting stream.";
+      LOG(WARNING) << "Client sent RST_STREAM with status=" << status
+                   << " for stream " << stream_id << ".  Aborting stream.";
       AbortStreamSilently(stream_id);
       break;
   }
@@ -539,32 +525,33 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
   }
 }
 
-void SpdySession::OnPing(const net::SpdyPingControlFrame& frame) {
+void SpdySession::OnPing(uint32 unique_id) {
   VLOG(4) << "Received PING frame";
   // The SPDY spec requires the server to ignore even-numbered PING frames that
   // it did not initiate (SPDY draft 3 section 2.6.5), and right now, we never
   // initiate pings.
-  if (frame.unique_id() % 2 == 0) {
+  if (unique_id % 2 == 0) {
     return;
   }
 
   // Any odd-numbered PING frame we receive was initiated by the client, and
   // should be echoed back _immediately_ (SPDY draft 2 section 2.7.6).
-  SendFrameRaw(frame);
+  SendFrame(framer_.CreatePingFrame(unique_id));
 }
 
-void SpdySession::OnGoAway(const net::SpdyGoAwayControlFrame& frame) {
+void SpdySession::OnGoAway(net::SpdyStreamId last_accepted_stream_id,
+                           net::SpdyGoAwayStatus status) {
   VLOG(4) << "Received GOAWAY frame (last_accepted_stream_id="
-          << frame.last_accepted_stream_id() << ")";
+          << last_accepted_stream_id << ")";
   // Take note that we have received a GOAWAY frame; we should not start any
   // new server push streams on this session.
   base::AutoLock autolock(stream_map_lock_);
   received_goaway_ = true;
 }
 
-void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,
-                            const linked_ptr<net::SpdyHeaderBlock>& headers) {
-  const net::SpdyStreamId stream_id = frame.stream_id();
+void SpdySession::OnHeaders(net::SpdyStreamId stream_id,
+                            bool fin,
+                            const net::SpdyHeaderBlock& headers) {
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
   // RemoveStreamTask() at any time.
@@ -575,14 +562,16 @@ void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,
     SpdyStream* stream = stream_map_.GetStream(stream_id);
     if (stream != NULL) {
       VLOG(4) << "[stream " << stream_id << "] Received HEADERS frame";
+      net::SpdyControlFlags flags =
+          (fin ? net::CONTROL_FLAG_FIN : net::CONTROL_FLAG_NONE);
       // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
       //   stream, which the stream task will then have to re-parse.  This is
       //   wasteful.  We should probably refactor such that we can send the
       //   header map itself, and avoid the extra parsing.
       stream->PostInputFrame(framer_.CreateHeaders(
-          stream_id, static_cast<net::SpdyControlFlags>(frame.flags()),
+          stream_id, flags,
           false,  // false = uncompressed
-          headers.get()));
+          &headers));
       return;
     }
   }
@@ -592,8 +581,15 @@ void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,
   SendRstStreamFrame(stream_id, net::INVALID_STREAM);
 }
 
-void SpdySession::OnWindowUpdate(
-    const net::SpdyWindowUpdateControlFrame& frame) {
+void SpdySession::OnControlFrameCompressed(
+    const net::SpdyControlFrame& uncompressed_frame,
+    const net::SpdyControlFrame& compressed_frame) {
+  // This method exists in case we want to collect compression statistics, but
+  // we're not interested in that right now, so just ignore it.
+}
+
+void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
+                                 int delta_window_size) {
   // Flow control only exists for SPDY v3 and up.
   if (spdy_version() < 3) {
     LOG(ERROR) << "Got a WINDOW_UPDATE frame over SPDY v" << spdy_version();
@@ -602,7 +598,6 @@ void SpdySession::OnWindowUpdate(
   }
 
   base::AutoLock autolock(stream_map_lock_);
-  const net::SpdyStreamId stream_id = frame.stream_id();
   SpdyStream* stream = stream_map_.GetStream(stream_id);
   if (stream == NULL) {
     // We must ignore WINDOW_UPDATE frames for closed streams (SPDY draft 3
@@ -611,8 +606,8 @@ void SpdySession::OnWindowUpdate(
   }
 
   VLOG(4) << "[stream " << stream_id << "] Received WINDOW_UPDATE("
-          << frame.delta_window_size() << ") frame";
-  stream->AdjustWindowSize(frame.delta_window_size());
+          << delta_window_size << ") frame";
+  stream->AdjustWindowSize(delta_window_size);
 }
 
 void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {

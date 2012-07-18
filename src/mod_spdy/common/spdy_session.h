@@ -61,19 +61,33 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   virtual void OnError(net::SpdyFramer::SpdyError error_code);
   virtual void OnStreamError(net::SpdyStreamId stream_id,
                              const std::string& description);
-  virtual void OnSynStream(const net::SpdySynStreamControlFrame& frame,
-                           const linked_ptr<net::SpdyHeaderBlock>& headers);
-  virtual void OnSynReply(const net::SpdySynReplyControlFrame& frame,
-                          const linked_ptr<net::SpdyHeaderBlock>& headers);
-  virtual void OnHeaders(const net::SpdyHeadersControlFrame& frame,
-                         const linked_ptr<net::SpdyHeaderBlock>& headers);
-  virtual void OnRstStream(const net::SpdyRstStreamControlFrame& frame);
-  virtual void OnGoAway(const net::SpdyGoAwayControlFrame& frame);
-  virtual void OnPing(const net::SpdyPingControlFrame& frame);
-  virtual void OnWindowUpdate(const net::SpdyWindowUpdateControlFrame& frame);
+  virtual void OnSynStream(net::SpdyStreamId stream_id,
+                           net::SpdyStreamId associated_stream_id,
+                           net::SpdyPriority priority,
+                           uint8 credential_slot,
+                           bool fin,
+                           bool unidirectional,
+                           const net::SpdyHeaderBlock& headers);
+  virtual void OnSynReply(net::SpdyStreamId stream_id,
+                          bool fin,
+                          const net::SpdyHeaderBlock& headers);
+  virtual void OnHeaders(net::SpdyStreamId stream_id,
+                         bool fin,
+                         const net::SpdyHeaderBlock& headers);
   virtual void OnStreamFrameData(net::SpdyStreamId stream_id,
-                                 const char* data, size_t len);
+                                 const char* data, size_t length,
+                                 net::SpdyDataFlags flags);
   virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value);
+  virtual void OnPing(uint32 unique_id);
+  virtual void OnRstStream(net::SpdyStreamId stream_id,
+                           net::SpdyStatusCodes status);
+  virtual void OnGoAway(net::SpdyStreamId last_accepted_stream_id,
+                        net::SpdyGoAwayStatus status);
+  virtual void OnWindowUpdate(net::SpdyStreamId stream_id,
+                              int delta_window_size);
+  virtual void OnControlFrameCompressed(
+      const net::SpdyControlFrame& uncompressed_frame,
+      const net::SpdyControlFrame& compressed_frame);
 
   // SpdyServerPushInterface methods:
   // Initiate a SPDY server push, roughly by pretending that the client sent a

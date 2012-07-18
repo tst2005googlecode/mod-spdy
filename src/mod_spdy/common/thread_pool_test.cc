@@ -45,7 +45,7 @@ class TestFunction : public net_instaweb::Function {
  protected:
   // net_instaweb::Function methods:
   virtual void Run() {
-    base::PlatformThread::Sleep(wait_);
+    base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(wait_));
     base::AutoLock autolock(*lock_);
     *result_ = RAN;
   }
@@ -84,7 +84,7 @@ TEST(ThreadPoolTest, ConcurrencyAndPrioritization) {
   executor->AddTask(new TestFunction(100, &lock, &result2), 2);
 
   // Wait 150 millis, then stop the executor.
-  base::PlatformThread::Sleep(150);
+  base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(150));
   executor->Stop();
 
   // Only TestFunctions that _started_ within the first 150 millis should have
@@ -135,9 +135,9 @@ TEST(ThreadPoolTest, MultipleExecutors) {
   // Wait 20 millis (to make sure the first few tasks got picked up), then
   // destroy executor2, which should stop it.  Finally, sleep another 100
   // millis to give the remaining tasks a chance to finish.
-  base::PlatformThread::Sleep(20);
+  base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(20));
   executor2.reset();
-  base::PlatformThread::Sleep(100);
+  base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
 
   // The three high priority tasks should have all run.  The other two tasks on
   // executor2 should have been cancelled when we stopped executor2, but the
@@ -256,7 +256,7 @@ void ExpectWorkersWithinTimeout(int expected_num_workers,
                     << " idle after " << timeout_millis << "ms";
       return;
     }
-    base::PlatformThread::Sleep(10);
+    base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(10));
     millis_remaining -= 10;
   }
 }
