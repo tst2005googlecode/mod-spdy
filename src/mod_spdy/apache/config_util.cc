@@ -18,9 +18,11 @@
 #include "http_config.h"
 
 #include "base/logging.h"
+#include "base/memory/scoped_ptr.h"
 
+#include "mod_spdy/apache/master_connection_context.h"
 #include "mod_spdy/apache/pool_util.h"
-#include "mod_spdy/common/connection_context.h"
+#include "mod_spdy/apache/slave_connection_context.h"
 #include "mod_spdy/common/spdy_server_config.h"
 
 extern "C" {
@@ -31,15 +33,33 @@ namespace mod_spdy {
 
 namespace {
 
+struct ConnectionContext {
+  // Exactly one of the fields below should be set.
+  scoped_ptr<MasterConnectionContext> master_context;
+  scoped_ptr<SlaveConnectionContext> slave_context;
+};
+
 SpdyServerConfig* GetServerConfigInternal(server_rec* server) {
   void* ptr = ap_get_module_config(server->module_config, &spdy_module);
   CHECK(ptr) << "mod_spdy server config pointer is NULL";
   return static_cast<SpdyServerConfig*>(ptr);
 }
 
-ConnectionContext* SetConnContextInternal(conn_rec* connection,
-                                          ConnectionContext* context) {
+ConnectionContext* GetConnContextInternal(conn_rec* connection) {
+  return static_cast<ConnectionContext*>(
+      ap_get_module_config(connection->conn_config, &spdy_module));
+}
+
+ConnectionContext* SetConnContextInternal(
+    conn_rec* connection,
+    MasterConnectionContext* master_context,
+    SlaveConnectionContext* slave_context) {
+  DCHECK((master_context == NULL) ^ (slave_context == NULL));
+  DCHECK(GetConnContextInternal(connection) == NULL);
+  ConnectionContext* context = new ConnectionContext;
   PoolRegisterDelete(connection->pool, context);
+  context->master_context.reset(master_context);
+  context->slave_context.reset(slave_context);
 
   // Place the context object in the connection's configuration vector, so that
   // other hook functions with access to this connection can get hold of the
@@ -49,6 +69,18 @@ ConnectionContext* SetConnContextInternal(conn_rec* connection,
                        context);      // pointer to store (any void* we want)
 
   return context;
+}
+
+MasterConnectionContext* GetMasterConnectionContextInternal(
+    conn_rec* connection) {
+  ConnectionContext* context = GetConnContextInternal(connection);
+  return (context != NULL) ? context->master_context.get() : NULL;
+}
+
+SlaveConnectionContext* GetSlaveConnectionContextInternal(
+    conn_rec* connection) {
+  ConnectionContext* context = GetConnContextInternal(connection);
+  return (context != NULL) ? context->slave_context.get() : NULL;
 }
 
 }  // namespace
@@ -69,25 +101,41 @@ SpdyServerConfig* GetServerConfig(cmd_parms* command) {
   return GetServerConfigInternal(command->server);
 }
 
-ConnectionContext* CreateMasterConnectionContext(conn_rec* connection,
+MasterConnectionContext* CreateMasterConnectionContext(conn_rec* connection,
                                                  bool using_ssl) {
-  return SetConnContextInternal(connection, new ConnectionContext(using_ssl));
+  ConnectionContext* context = SetConnContextInternal(
+      connection, new MasterConnectionContext(using_ssl), NULL);
+  return context->master_context.get();
 }
 
-ConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
-                                                bool using_ssl,
-                                                SpdyStream* stream) {
-  return SetConnContextInternal(connection,
-                                new ConnectionContext(using_ssl, stream));
+SlaveConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
+                                                     bool using_ssl,
+                                                     SpdyStream* stream) {
+  ConnectionContext* context = SetConnContextInternal(
+      connection, NULL, new SlaveConnectionContext(using_ssl, stream));
+  return context->slave_context.get();
 }
 
-ConnectionContext* GetConnectionContext(conn_rec* connection) {
-  // Get the shared context object for this connection.  This object is created
-  // and attached to the connection's configuration vector in
-  // spdy_pre_connection().
-  return static_cast<ConnectionContext*>(ap_get_module_config(
-      connection->conn_config,  // configuration vector to get from
-      &spdy_module));  // module with which desired object is associated
+bool HasMasterConnectionContext(conn_rec* connection) {
+  return GetMasterConnectionContextInternal(connection) != NULL;
+}
+
+bool HasSlaveConnectionContext(conn_rec* connection) {
+  return GetSlaveConnectionContextInternal(connection) != NULL;
+}
+
+MasterConnectionContext* GetMasterConnectionContext(conn_rec* connection) {
+  MasterConnectionContext* context =
+      GetMasterConnectionContextInternal(connection);
+  DCHECK(context != NULL);
+  return context;
+}
+
+SlaveConnectionContext* GetSlaveConnectionContext(conn_rec* connection) {
+  SlaveConnectionContext* context =
+      GetSlaveConnectionContextInternal(connection);
+  DCHECK(context != NULL);
+  return context;
 }
 
 }  // namespace mod_spdy

@@ -33,8 +33,8 @@
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/id_pool.h"
 #include "mod_spdy/apache/log_message_handler.h"
+#include "mod_spdy/apache/master_connection_context.h"
 #include "mod_spdy/apache/pool_util.h"
-#include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "net/instaweb/util/public/function.h"
 
@@ -56,7 +56,7 @@ class ApacheStreamTask : public net_instaweb::Function {
 
  private:
   SpdyStream* const stream_;
-  const bool using_ssl_;
+  bool using_ssl_;
   LocalPool local_;
   conn_rec* const slave_connection_;  // allocated in local_.pool()
   apr_socket_t* slave_socket_;
@@ -68,11 +68,18 @@ class ApacheStreamTask : public net_instaweb::Function {
 ApacheStreamTask::ApacheStreamTask(conn_rec* master_connection,
                                    SpdyStream* stream)
     : stream_(stream),
-      using_ssl_(GetConnectionContext(master_connection)->is_using_ssl()),
       slave_connection_((conn_rec*)apr_pcalloc(local_.pool(),
                                                sizeof(conn_rec))),
       slave_socket_(NULL),
       master_connection_id_(master_connection->id) {
+  // If we are created, the master connection is speaking SPDY, so it
+  // should have a master connection context.
+  DCHECK(HasMasterConnectionContext(master_connection));
+  MasterConnectionContext* master_context =
+      GetMasterConnectionContext(master_connection);
+  DCHECK(master_context != NULL);
+  using_ssl_ = (master_context != NULL) && master_context->is_using_ssl();
+
   // Initialize what fields of the connection object we can (the rest are
   // zeroed out by apr_pcalloc).  In particular, we should set at least those
   // fields set by core_create_conn() in core.c in Apache.

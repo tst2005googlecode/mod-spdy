@@ -21,7 +21,6 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/time.h"
-#include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session_io.h"

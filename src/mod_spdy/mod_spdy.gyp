@@ -36,7 +36,6 @@
         '<(DEPTH)/net/net.gyp:spdy',
       ],
       'sources': [
-        'common/connection_context.cc',
         'common/executor.cc',
         'common/http_request_visitor_interface.cc',
         'common/http_response_parser.cc',
@@ -83,7 +82,9 @@
         'apache/filters/spdy_to_http_filter.cc',
         'apache/id_pool.c',
         'apache/log_message_handler.cc',
+        'apache/master_connection_context.cc',
         'apache/pool_util.cc',
+        'apache/slave_connection_context.cc',
       ],
     },
     {

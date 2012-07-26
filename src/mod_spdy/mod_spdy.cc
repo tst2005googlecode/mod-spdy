@@ -42,8 +42,9 @@
 #include "mod_spdy/apache/filters/spdy_to_http_filter.h"
 #include "mod_spdy/apache/id_pool.h"
 #include "mod_spdy/apache/log_message_handler.h"
+#include "mod_spdy/apache/master_connection_context.h"
 #include "mod_spdy/apache/pool_util.h"
-#include "mod_spdy/common/connection_context.h"
+#include "mod_spdy/apache/slave_connection_context.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
@@ -122,10 +123,18 @@ mod_spdy::ThreadPool* gPerProcessThreadPool = NULL;
 // unlike our private functions, we use Apache C naming conventions for this
 // function because we export it to other modules.
 int spdy_get_version(conn_rec* connection) {
-  const mod_spdy::ConnectionContext* context =
-      mod_spdy::GetConnectionContext(connection);
-  if (context != NULL && context->is_using_spdy()) {
-    return context->spdy_version();
+  if (mod_spdy::HasMasterConnectionContext(connection)) {
+    mod_spdy::MasterConnectionContext* master_context =
+        mod_spdy::GetMasterConnectionContext(connection);
+    if (master_context->is_using_spdy()) {
+      return master_context->spdy_version();
+    }
+  }
+
+  if (mod_spdy::HasSlaveConnectionContext(connection)) {
+    mod_spdy::SlaveConnectionContext* slave_context =
+        mod_spdy::GetSlaveConnectionContext(connection);
+    return slave_context->spdy_version();
   }
   return 0;
 }
@@ -289,18 +298,14 @@ void ChildInit(apr_pool_t* pool, server_rec* server_list) {
 int DisableSslForSlaves(conn_rec* connection, void* csd) {
   mod_spdy::ScopedConnectionLogHandler log_handler(connection);
 
-  const mod_spdy::ConnectionContext* context =
-      mod_spdy::GetConnectionContext(connection);
-
-  // For master connections, the context object won't have been created yet (it
-  // gets created in PreConnection).
-  if (context == NULL) {
-    return DECLINED;
+  if (!mod_spdy::HasSlaveConnectionContext(connection)) {
+    // For master connections, the context object should't have been created
+    // yet (it gets created in PreConnection).
+    DCHECK(!mod_spdy::HasMasterConnectionContext(connection));
+    return DECLINED;  // only do things for slave connections.
   }
 
-  // If the context has already been created, this must be a slave connection
-  // (and mod_spdy must be enabled).
-  DCHECK(context->is_slave());
+  // If a slave context has already been created, mod_spdy must be enabled.
   DCHECK(mod_spdy::GetServerConfig(connection)->spdy_enabled());
 
   // Disable mod_ssl for the slave connection so it doesn't get in our way.
@@ -325,12 +330,11 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
 int PreConnection(conn_rec* connection, void* csd) {
   mod_spdy::ScopedConnectionLogHandler log_handler(connection);
 
-  mod_spdy::ConnectionContext* context =
-      mod_spdy::GetConnectionContext(connection);
+  // If a slave context has not yet been created, this is a "real" connection.
+  if (!mod_spdy::HasSlaveConnectionContext(connection)) {
+    // Master context should not have been created yet, either.
+    DCHECK(!mod_spdy::HasMasterConnectionContext(connection));
 
-  // If the connection context has not yet been created, this is a "real"
-  // connection (not one of our slave connections).
-  if (context == NULL) {
     // If mod_spdy is disabled on this server, don't allocate our context
     // object.
     const mod_spdy::SpdyServerConfig* config =
@@ -360,21 +364,24 @@ int PreConnection(conn_rec* connection, void* csd) {
     // Okay, we've got a real connection over SSL, so we'll be negotiating with
     // the client to see if we can use SPDY for this connection.  Create our
     // connection context object to keep track of the negotiation.
-    context = mod_spdy::CreateMasterConnectionContext(connection, using_ssl);
+    mod_spdy::MasterConnectionContext* master_context =
+        mod_spdy::CreateMasterConnectionContext(connection, using_ssl);
     // If we're assuming SPDY, we don't even need to do the negotiation.
     if (assume_spdy) {
-      context->set_assume_spdy(true);
+      master_context->set_assume_spdy(true);
     }
     return OK;
   }
   // If the context has already been created, this is a slave connection.
   else {
-    DCHECK(context->is_slave());
+    mod_spdy::SlaveConnectionContext* slave_context =
+        mod_spdy::GetSlaveConnectionContext(connection);
+
     DCHECK(mod_spdy::GetServerConfig(connection)->spdy_enabled());
 
     // Instantiate and add our SPDY-to-HTTP filter.
     mod_spdy::SpdyToHttpFilter* spdy_to_http_filter =
-        new mod_spdy::SpdyToHttpFilter(context->slave_stream());
+        new mod_spdy::SpdyToHttpFilter(slave_context->slave_stream());
     mod_spdy::PoolRegisterDelete(connection->pool, spdy_to_http_filter);
     ap_add_input_filter_handle(
         gSpdyToHttpFilterHandle,  // filter handle
@@ -384,7 +391,7 @@ int PreConnection(conn_rec* connection, void* csd) {
 
     // Instantiate and add our HTTP-to-SPDY filter.
     mod_spdy::HttpToSpdyFilter* http_to_spdy_filter =
-        new mod_spdy::HttpToSpdyFilter(context->slave_stream());
+        new mod_spdy::HttpToSpdyFilter(slave_context->slave_stream());
     PoolRegisterDelete(connection->pool, http_to_spdy_filter);
     ap_add_output_filter_handle(
         gHttpToSpdyFilterHandle,    // filter handle
@@ -424,19 +431,15 @@ int ProcessConnection(conn_rec* connection) {
 
   // Our connection context object will have been created by now, unless our
   // pre-connection hook saw that this was a non-SSL connection, in which case
-  // we won't be using SPDY so we can stop now.
-  const mod_spdy::ConnectionContext* context =
-      mod_spdy::GetConnectionContext(connection);
-  if (context == NULL) {
+  // we won't be using SPDY so we can stop now. It may also mean that this is
+  // a slave connection, in which case we don't want to deal with it here --
+  // instead we will let Apache treat it like a regular HTTP connection.
+  if (!mod_spdy::HasMasterConnectionContext(connection)) {
     return DECLINED;
   }
 
-  // If this is one of our slave connections (rather than a "real" connection),
-  // then we don't want to deal with it here -- instead we will let Apache
-  // treat it like a regular HTTP connection.
-  if (context->is_slave()) {
-    return DECLINED;
-  }
+  mod_spdy::MasterConnectionContext* master_context =
+      mod_spdy::GetMasterConnectionContext(connection);
 
   // In the unlikely event that we failed to create our per-process thread
   // pool, we're not going to be able to operate.
@@ -446,7 +449,7 @@ int ProcessConnection(conn_rec* connection) {
 
   // Unless we're simply assuming SPDY for this connection, we need to do NPN
   // to decide whether to use SPDY or not.
-  if (!context->is_assuming_spdy()) {
+  if (!master_context->is_assuming_spdy()) {
     // We need to pull some data through mod_ssl in order to force the SSL
     // handshake, and hence NPN, to take place.  To that end, perform a small
     // SPECULATIVE read (and then throw away whatever data we got).
@@ -484,7 +487,8 @@ int ProcessConnection(conn_rec* connection) {
     // hasn't happened, it's probably because we're using an old version of
     // mod_ssl that doesn't support NPN, in which case we should probably warn
     // the user that mod_spdy isn't going to work.
-    if (context->npn_state() == mod_spdy::ConnectionContext::NOT_DONE_YET) {
+    if (master_context->npn_state() ==
+        mod_spdy::MasterConnectionContext::NOT_DONE_YET) {
       LOG(WARNING)
           << "NPN didn't happen during SSL handshake.  You're probably using "
           << "a version of mod_ssl that doesn't support NPN. Without NPN "
@@ -496,11 +500,11 @@ int ProcessConnection(conn_rec* connection) {
   }
 
   // If NPN didn't choose SPDY, then don't use SPDY.
-  if (!context->is_using_spdy()) {
+  if (!master_context->is_using_spdy()) {
     return DECLINED;
   }
 
-  const int spdy_version = context->spdy_version();
+  const int spdy_version = master_context->spdy_version();
   LOG(INFO) << "Starting SPDY/" << spdy_version << " session";
 
   // At this point, we and the client have agreed to use SPDY (either that, or
@@ -581,28 +585,29 @@ int OnNextProtocolNegotiated(conn_rec* connection, const char* proto_name,
     return DECLINED;
   }
 
-  mod_spdy::ConnectionContext* context =
-      mod_spdy::GetConnectionContext(connection);
+  // We disable mod_ssl for slave connections, so NPN shouldn't be happening
+  // unless this is a non-slave connection.
+  if (mod_spdy::HasSlaveConnectionContext(connection)) {
+    LOG(DFATAL) << "mod_ssl was aparently not disabled for slave connection";
+    return DECLINED;
+  }
 
   // Given that mod_spdy is enabled, our context object should have already
   // been created in our pre-connection hook, unless this is a non-SSL
   // connection.  But if it's a non-SSL connection, then NPN shouldn't be
   // happening, and this hook shouldn't be getting called!  So, let's
   // LOG(DFATAL) if context is NULL here.
-  if (context == NULL) {
+  if (!mod_spdy::HasMasterConnectionContext(connection)) {
     LOG(DFATAL) << "NPN happened, but there is no connection context.";
     return DECLINED;
   }
 
-  // We disable mod_ssl for slave connections, so NPN shouldn't be happening
-  // unless this is a non-slave connection.
-  if (context->is_slave()) {
-    LOG(DFATAL) << "mod_ssl was aparently not disabled for slave connection";
-    return DECLINED;
-  }
+  mod_spdy::MasterConnectionContext* master_context =
+      mod_spdy::GetMasterConnectionContext(connection);
 
   // NPN should happen only once, so npn_state should still be NOT_DONE_YET.
-  if (context->npn_state() != mod_spdy::ConnectionContext::NOT_DONE_YET) {
+  if (master_context->npn_state() !=
+      mod_spdy::MasterConnectionContext::NOT_DONE_YET) {
     LOG(DFATAL) << "NPN happened twice.";
     return DECLINED;
   }
@@ -611,15 +616,18 @@ int OnNextProtocolNegotiated(conn_rec* connection, const char* proto_name,
   // connection as using SPDY.
   const base::StringPiece protocol_name(proto_name, proto_name_len);
   if (protocol_name == kSpdy2ProtocolName) {
-    context->set_npn_state(mod_spdy::ConnectionContext::USING_SPDY);
-    context->set_spdy_version(2);
+    master_context->set_npn_state(
+        mod_spdy::MasterConnectionContext::USING_SPDY);
+    master_context->set_spdy_version(2);
   } else if (protocol_name == kSpdy3ProtocolName) {
-    context->set_npn_state(mod_spdy::ConnectionContext::USING_SPDY);
-    context->set_spdy_version(3);
+    master_context->set_npn_state(
+        mod_spdy::MasterConnectionContext::USING_SPDY);
+    master_context->set_spdy_version(3);
   }
   // Otherwise, explicitly mark this connection as not using SPDY.
   else {
-    context->set_npn_state(mod_spdy::ConnectionContext::NOT_USING_SPDY);
+    master_context->set_npn_state(
+        mod_spdy::MasterConnectionContext::NOT_USING_SPDY);
   }
   return OK;
 }
@@ -634,18 +642,20 @@ int SetUpSubprocessEnv(request_rec* request) {
   }
 
   // Don't do anything unless this is a slave connection.
-  const mod_spdy::ConnectionContext* context =
-      mod_spdy::GetConnectionContext(connection);
-  if (context == NULL || !context->is_slave()) {
+  if (!mod_spdy::HasSlaveConnectionContext(connection)) {
     return DECLINED;
   }
+
+  mod_spdy::SlaveConnectionContext* slave_context =
+      mod_spdy::GetSlaveConnectionContext(connection);
 
   // For the benefit of CGI scripts, which have no way of calling
   // spdy_get_version(), set an environment variable indicating that this
   // request is over SPDY (and what SPDY version is being used), allowing them
   // to optimize the response for SPDY.
   // See http://code.google.com/p/mod-spdy/issues/detail?id=27 for details.
-  const std::string version_number(base::IntToString(context->spdy_version()));
+  const std::string version_number(
+      base::IntToString(slave_context->spdy_version()));
   apr_table_set(request->subprocess_env, kSpdyVersionEnvironmentVariable,
                 version_number.c_str());
 
@@ -654,7 +664,7 @@ int SetUpSubprocessEnv(request_rec* request) {
   // requests _are_ (usually) being served over SSL (via the master
   // connection), so we set the variable ourselves if we are in fact using SSL.
   // See http://code.google.com/p/mod-spdy/issues/detail?id=32 for details.
-  if (context->is_using_ssl()) {
+  if (slave_context->is_using_ssl()) {
     apr_table_setn(request->subprocess_env, "HTTPS", "on");
   }
 
@@ -671,16 +681,17 @@ void InsertRequestFilters(request_rec* request) {
   }
 
   // Don't do anything unless this is a slave connection.
-  mod_spdy::ConnectionContext* context =
-      mod_spdy::GetConnectionContext(connection);
-  if (context == NULL || !context->is_slave()) {
+  if (!mod_spdy::HasSlaveConnectionContext(connection)) {
     return;
   }
+
+  mod_spdy::SlaveConnectionContext* slave_context =
+      mod_spdy::GetSlaveConnectionContext(connection);
 
   // Insert a filter that will initiate server pushes when so instructed (such
   // as by an X-Associated-Content header).
   mod_spdy::ServerPushFilter* server_push_filter =
-      new mod_spdy::ServerPushFilter(context->slave_stream(), request);
+      new mod_spdy::ServerPushFilter(slave_context->slave_stream(), request);
   PoolRegisterDelete(request->pool, server_push_filter);
   ap_add_output_filter_handle(
       gServerPushFilterHandle,  // filter handle
