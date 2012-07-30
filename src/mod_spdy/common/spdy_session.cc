@@ -181,7 +181,7 @@ void SpdySession::Run() {
   }
 }
 
-void SpdySession::OnError(int error_code) {
+void SpdySession::OnError(net::SpdyFramer::SpdyError error_code) {
   LOG(ERROR) << "Session error: "
              << net::SpdyFramer::ErrorCodeToString(error_code);
   SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);

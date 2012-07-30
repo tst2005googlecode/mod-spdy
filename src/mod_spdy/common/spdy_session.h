@@ -58,7 +58,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
   void Run();
 
   // BufferedSpdyFramerVisitorInterface methods:
-  virtual void OnError(int error_code);
+  virtual void OnError(net::SpdyFramer::SpdyError error_code);
   virtual void OnStreamError(net::SpdyStreamId stream_id,
                              const std::string& description);
   virtual void OnSynStream(const net::SpdySynStreamControlFrame& frame,

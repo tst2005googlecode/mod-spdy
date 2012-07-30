@@ -18,7 +18,7 @@
 #include "mod_spdy/common/protocol_util.h"
 
 #include "base/string_piece.h"
-#include "base/string_util.h"  // for LowerCaseEqualsASCII
+#include "base/string_util.h"
 #include "net/spdy/spdy_frame_builder.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
@@ -27,6 +27,7 @@ namespace mod_spdy {
 
 namespace http {
 
+extern const char* const kAcceptEncoding = "accept-encoding";
 extern const char* const kConnection = "connection";
 extern const char* const kContentLength = "content-length";
 extern const char* const kContentType = "content-type";
@@ -37,6 +38,7 @@ extern const char* const kTransferEncoding = "transfer-encoding";
 extern const char* const kXModSpdy = "x-mod-spdy";
 
 extern const char* const kChunked = "chunked";
+extern const char* const kGzipDeflate = "gzip,deflate";
 
 }  // namespace http
 
@@ -71,6 +73,22 @@ bool IsInvalidSpdyResponseHeader(base::StringPiece key) {
                                http::kProxyConnection) ||
           LowerCaseEqualsASCII(key.begin(), key.end(),
                                http::kTransferEncoding));
+}
+
+void MergeInHeader(base::StringPiece key, base::StringPiece value,
+                   net::SpdyHeaderBlock* headers) {
+  // The SPDY spec requires that header names be lowercase, so forcibly
+  // lowercase the key here.
+  std::string lower_key(key.as_string());
+  StringToLowerASCII(&lower_key);
+
+  net::SpdyHeaderBlock::iterator iter = headers->find(lower_key);
+  if (iter == headers->end()) {
+    (*headers)[lower_key] = value.as_string();
+  } else {
+    iter->second.push_back('\0');
+    value.AppendToString(&iter->second);
+  }
 }
 
 }  // namespace mod_spdy

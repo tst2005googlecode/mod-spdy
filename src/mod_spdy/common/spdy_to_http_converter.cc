@@ -96,7 +96,8 @@ SpdyToHttpConverter::SpdyToHttpConverter(int spdy_version,
     : visitor_(visitor),
       framer_(spdy_version),
       state_(NO_FRAMES_YET),
-      use_chunking_(true) {
+      use_chunking_(true),
+      seen_accept_encoding_(false) {
   CHECK(visitor);
 }
 
@@ -200,14 +201,19 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
   // If this is the first data frame in the stream, we need to close the HTTP
   // headers section (for streams where there are never any data frames, we
   // close the headers section in FinishRequest instead).  Just before we do,
-  // we also need to set Transfer-Encoding: chunked, unless we're not using
-  // chunked encoding due to having received a Content-Length header.
+  // we may need to add some last-minute headers.
   if (state_ == RECEIVED_SYN_STREAM) {
     state_ = RECEIVED_DATA;
+
+    // Unless we're not using chunked encoding (due to having received a
+    // Content-Length headers), set Transfer-Encoding: chunked now.
     if (use_chunking_) {
       visitor_->OnLeadingHeader(http::kTransferEncoding, http::kChunked);
     }
-    visitor_->OnLeadingHeadersComplete();
+
+    // Add any other last minute headers we need, and close the leading headers
+    // section.
+    EndOfLeadingHeaders();
   }
   DCHECK(state_ == RECEIVED_DATA);
 
@@ -279,9 +285,33 @@ void SpdyToHttpConverter::GenerateLeadingHeaders(
       key = http::kHost;
     }
 
+    // Take note of whether the client has sent an explicit Accept-Encoding
+    // header; if they never do, we'll insert on for them later on.
+    if (key == http::kAcceptEncoding) {
+      // TODO(mdsteele): Ideally, if the client sends something like
+      //   "Accept-Encoding: lzma", we should change it to "Accept-Encoding:
+      //   lzma, gzip".  However, that's more work (we might need to parse the
+      //   syntax, to make sure we don't naively break it), and isn't
+      //   (currently) likely to come up in practice.
+      seen_accept_encoding_ = true;
+    }
+
     InsertHeader<&HttpRequestVisitorInterface::OnLeadingHeader>(
         key, value, visitor_);
   }
+}
+
+void SpdyToHttpConverter::EndOfLeadingHeaders() {
+  // All SPDY clients should be assumed to support both gzip and deflate, even
+  // if they don't say so (SPDY draft 2 section 3; SPDY draft 3 section 3.2.1),
+  // and indeed some SPDY clients omit the Accept-Encoding header.  So if we
+  // didn't see that header yet, add one now so that Apache knows it can use
+  // gzip/deflate.
+  if (!seen_accept_encoding_) {
+    visitor_->OnLeadingHeader(http::kAcceptEncoding, http::kGzipDeflate);
+  }
+
+  visitor_->OnLeadingHeadersComplete();
 }
 
 void SpdyToHttpConverter::FinishRequest() {
@@ -318,7 +348,7 @@ void SpdyToHttpConverter::FinishRequest() {
     // normal (non-trailing) headers yet (if there had been any data frames, we
     // would have closed the normal headers in ConvertDataFrame instead).  Do
     // so now.
-    visitor_->OnLeadingHeadersComplete();
+    EndOfLeadingHeaders();
   }
 
   // Indicate that this request is finished.

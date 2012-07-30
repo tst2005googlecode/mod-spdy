@@ -14,7 +14,7 @@
 
 vars = {
   "chromium_trunk": "http://src.chromium.org/svn/trunk",
-  "chromium_revision": "@133496",
+  "chromium_revision": "@141204",
   "chromium_deps_root": "src/third_party/chromium_deps",
   "apr_src": "http://svn.apache.org/repos/asf/apr/apr/tags/1.4.2",
   "apr_revision": "@head",
