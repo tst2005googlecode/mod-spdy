@@ -31,10 +31,9 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "mod_spdy/apache/config_util.h"
-#include "mod_spdy/apache/id_pool.h"
 #include "mod_spdy/apache/log_message_handler.h"
-#include "mod_spdy/apache/master_connection_context.h"
 #include "mod_spdy/apache/pool_util.h"
+#include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "net/instaweb/util/public/function.h"
 
@@ -56,11 +55,10 @@ class ApacheStreamTask : public net_instaweb::Function {
 
  private:
   SpdyStream* const stream_;
-  bool using_ssl_;
+  const bool using_ssl_;
   LocalPool local_;
   conn_rec* const slave_connection_;  // allocated in local_.pool()
   apr_socket_t* slave_socket_;
-  long master_connection_id_;
 
   DISALLOW_COPY_AND_ASSIGN(ApacheStreamTask);
 };
@@ -68,23 +66,44 @@ class ApacheStreamTask : public net_instaweb::Function {
 ApacheStreamTask::ApacheStreamTask(conn_rec* master_connection,
                                    SpdyStream* stream)
     : stream_(stream),
+      using_ssl_(GetConnectionContext(master_connection)->is_using_ssl()),
       slave_connection_((conn_rec*)apr_pcalloc(local_.pool(),
                                                sizeof(conn_rec))),
-      slave_socket_(NULL),
-      master_connection_id_(master_connection->id) {
-  // If we are created, the master connection is speaking SPDY, so it
-  // should have a master connection context.
-  DCHECK(HasMasterConnectionContext(master_connection));
-  MasterConnectionContext* master_context =
-      GetMasterConnectionContext(master_connection);
-  DCHECK(master_context != NULL);
-  using_ssl_ = (master_context != NULL) && master_context->is_using_ssl();
+      slave_socket_(NULL) {
+  // Pick a globally-unique ID for the slave connection; this must be unique at
+  // any given time.  Normally the MPM is responsible for assigning these, and
+  // each MPM does it differently, so we're cheating in a dangerous way by
+  // trying to assign one here.  However, most MPMs seem to do it in a similar
+  // way: for non-threaded MPMs (e.g. Prefork, WinNT), the ID is just the child
+  // ID, which is a small nonnegative integer (i.e. an array index into the
+  // list of active child processes); for threaded MPMs (e.g. Worker, Event)
+  // the ID is typically ((child_index * thread_limit) + thread_index), which
+  // will again be a positive integer, most likely (but not necessarily, if
+  // thread_limit is set absurdly high) smallish.
+  //
+  // Therefore, the approach that we take is to concatenate the Apache
+  // connection ID for the master connection with the SPDY stream ID, and, to
+  // avoid conflicts with MPM-assigned connection IDs, we make our slave
+  // connection ID negative.  We only have so many bits to work with
+  // (especially if long is only four bytes instead of eight), so we could
+  // potentially run into trouble if either the master connection ID or the
+  // stream ID gets very large (i.e. more than 2^16).  So, this approach
+  // definitely isn't any kind of robust; but it will probably usually work.
+  // It would, of course, be great to replace this with a better strategy, if
+  // we find one.
+  //
+  // TODO(mdsteele): We could also consider using an #if here to widen the
+  //   masks and the shift distance on systems where sizeof(long)==8.  We might
+  //   as well use those extra bits if we have them.
+  COMPILE_ASSERT(sizeof(long) >= 4, long_is_at_least_32_bits);
+  const long slave_connection_id =
+      -(((master_connection->id & 0x7fffL) << 16) |
+        (static_cast<long>(stream->stream_id()) & 0xffffL));
 
   // Initialize what fields of the connection object we can (the rest are
   // zeroed out by apr_pcalloc).  In particular, we should set at least those
   // fields set by core_create_conn() in core.c in Apache.
-  // -> id will be set once we are actually running the connection, in
-  // ::Run().
+  slave_connection_->id = slave_connection_id;
   slave_connection_->clogging_input_filters = 0;
   slave_connection_->sbh = NULL;
   // Tie resources for the slave connection to the lifetime of this StreamData
@@ -120,38 +139,6 @@ void ApacheStreamTask::Run() {
   ScopedStreamLogHandler log_handler(slave_connection_, stream_);
   VLOG(3) << "Starting stream task";
   if (!stream_->is_aborted()) {
-    // Pick a globally-unique ID for the slave connection; this must be unique
-    // at any given time.  Normally the MPM is responsible for assigning these,
-    // and each MPM does it differently, so we're cheating in a dangerous way by
-    // trying to assign one here.  However, most MPMs seem to do it in a similar
-    // way: for non-threaded MPMs (e.g. Prefork, WinNT), the ID is just the
-    // child ID, which is a small nonnegative integer (i.e. an array index into
-    // the list of active child processes); for threaded MPMs (e.g. Worker,
-    // Event) the ID is typically ((child_index * thread_limit) + thread_index),
-    // which will again be a positive integer, most likely (but not necessarily,
-    // if thread_limit is set absurdly high) smallish.
-    //
-    // Therefore, the approach that we take is to concatenate the Apache
-    // connection ID for the master connection with a small integer from IDPool
-    // that's unique within the process, and, to avoid conflicts with
-    // MPM-assigned connection IDs, we make our slave connection ID negative.
-    // We only have so many bits to work with
-    // (especially if long is only four bytes instead of eight), so we could
-    // potentially run into trouble if the master connection ID gets very large
-    // or we have too many active tasks simultaneously (i.e. more than 2^16).
-    // So, this approach definitely isn't any kind of robust; but it will
-    // probably usually work. It would, of course, be great to replace this
-    // with a better strategy, if we find one.
-    //
-    // TODO(mdsteele): We could also consider using an #if here to widen the
-    //   masks and the shift distance on systems where sizeof(long)==8.
-    //   We might as well use those extra bits if we have them.
-    COMPILE_ASSERT(sizeof(long) >= 4, long_is_at_least_32_bits);
-    const uint16 in_process_id = IdPool::Instance()->Alloc();
-    const long slave_connection_id =
-        -(((master_connection_id_ & 0x7fffL) << 16) | in_process_id);
-    slave_connection_->id = slave_connection_id;
-
     // In our context object for this connection, mark this connection as being
     // a slave.  Our pre-connection and process-connection hooks will notice
     // this, and act accordingly, when they are called for the slave
@@ -173,8 +160,6 @@ void ApacheStreamTask::Run() {
     // Invoke Apache's usual processing pipeline.  This will block until the
     // connection is complete.
     ap_process_connection(slave_connection_, slave_socket_);
-
-    IdPool::Instance()->Free(in_process_id);
   }
   VLOG(3) << "Finishing stream task";
 }

@@ -16,12 +16,13 @@
 #define MOD_SPDY_COMMON_SPDY_SESSION_H_
 
 #include <map>
+#include <queue>
+#include <vector>
 
 #include "base/basictypes.h"
 #include "base/synchronization/lock.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
-#include "mod_spdy/common/spdy_server_push_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/buffered_spdy_framer.h"
@@ -38,8 +39,7 @@ class SpdyStreamTaskFactory;
 // individual SPDY streams, and a SpdySessionIO for communicating with the
 // client (sending and receiving frames), this class takes care of implementing
 // the SPDY protocol and responding correctly to various situations.
-class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
-                    public SpdyServerPushInterface {
+class SpdySession : public net::BufferedSpdyFramerVisitorInterface {
  public:
   // The SpdySession does _not_ take ownership of any of these arguments.
   SpdySession(int spdy_version,
@@ -61,46 +61,19 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   virtual void OnError(net::SpdyFramer::SpdyError error_code);
   virtual void OnStreamError(net::SpdyStreamId stream_id,
                              const std::string& description);
-  virtual void OnSynStream(net::SpdyStreamId stream_id,
-                           net::SpdyStreamId associated_stream_id,
-                           net::SpdyPriority priority,
-                           uint8 credential_slot,
-                           bool fin,
-                           bool unidirectional,
-                           const net::SpdyHeaderBlock& headers);
-  virtual void OnSynReply(net::SpdyStreamId stream_id,
-                          bool fin,
-                          const net::SpdyHeaderBlock& headers);
-  virtual void OnHeaders(net::SpdyStreamId stream_id,
-                         bool fin,
-                         const net::SpdyHeaderBlock& headers);
+  virtual void OnSynStream(const net::SpdySynStreamControlFrame& frame,
+                           const linked_ptr<net::SpdyHeaderBlock>& headers);
+  virtual void OnSynReply(const net::SpdySynReplyControlFrame& frame,
+                          const linked_ptr<net::SpdyHeaderBlock>& headers);
+  virtual void OnHeaders(const net::SpdyHeadersControlFrame& frame,
+                         const linked_ptr<net::SpdyHeaderBlock>& headers);
+  virtual void OnRstStream(const net::SpdyRstStreamControlFrame& frame);
+  virtual void OnGoAway(const net::SpdyGoAwayControlFrame& frame);
+  virtual void OnPing(const net::SpdyPingControlFrame& frame);
+  virtual void OnWindowUpdate(const net::SpdyWindowUpdateControlFrame& frame);
   virtual void OnStreamFrameData(net::SpdyStreamId stream_id,
-                                 const char* data, size_t length,
-                                 net::SpdyDataFlags flags);
+                                 const char* data, size_t len);
   virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value);
-  virtual void OnPing(uint32 unique_id);
-  virtual void OnRstStream(net::SpdyStreamId stream_id,
-                           net::SpdyStatusCodes status);
-  virtual void OnGoAway(net::SpdyStreamId last_accepted_stream_id,
-                        net::SpdyGoAwayStatus status);
-  virtual void OnWindowUpdate(net::SpdyStreamId stream_id,
-                              int delta_window_size);
-  virtual void OnControlFrameCompressed(
-      const net::SpdyControlFrame& uncompressed_frame,
-      const net::SpdyControlFrame& compressed_frame);
-
-  // SpdyServerPushInterface methods:
-  // Initiate a SPDY server push, roughly by pretending that the client sent a
-  // SYN_STREAM with the given headers.  To repeat: the headers argument is
-  // _not_ the headers that the server will send to the client, but rather the
-  // headers to _pretend_ that the client sent to the server.  Requires that
-  // spdy_version() >= 3.
-  // Note that unlike most other methods of this class, StartServerPush may be
-  // called by stream threads, not just by the connection thread.
-  virtual SpdyServerPushInterface::PushStatus StartServerPush(
-      net::SpdyStreamId associated_stream_id,
-      net::SpdyPriority priority,
-      const net::SpdyHeaderBlock& request_headers);
 
  private:
   // A helper class for wrapping tasks returned by
@@ -134,42 +107,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
     DISALLOW_COPY_AND_ASSIGN(StreamTaskWrapper);
   };
 
-  // Helper class for keeping track of active stream tasks, and separately
-  // tracking the number of active client/server-initiated streams.  This class
-  // is not thread-safe without external synchronization, so it is used below
-  // along with a separate mutex.
-  class SpdyStreamMap {
-   public:
-    SpdyStreamMap();
-    ~SpdyStreamMap();
-
-    // Determine whether there are no currently active streams.
-    bool IsEmpty();
-    // Get the number of currently active streams created by the client or
-    // server, respectively.
-    size_t NumActiveClientStreams();
-    size_t NumActivePushStreams();
-    // Determine if a particular stream ID is currently active.
-    bool IsStreamActive(net::SpdyStreamId stream_id);
-    // Get the specified stream object, or NULL if the stream is inactive.
-    SpdyStream* GetStream(net::SpdyStreamId stream_id);
-    // Add a new stream.  Requires that the stream ID is currently inactive.
-    void AddStreamTask(StreamTaskWrapper* task);
-    // Remove a stream task.  Requires that the stream is currently active.
-    void RemoveStreamTask(StreamTaskWrapper* task);
-    // Adjust the window size of all active streams by the same delta.
-    void AdjustAllWindowSizes(int32 delta);
-    // Abort all streams in the map.  Note that this won't immediately empty
-    // the map (the tasks still have to shut down).
-    void AbortAllSilently();
-
-   private:
-    typedef std::map<net::SpdyStreamId, StreamTaskWrapper*> TaskMap;
-    TaskMap tasks_;
-    size_t num_active_push_streams_;
-
-    DISALLOW_COPY_AND_ASSIGN(SpdyStreamMap);
-  };
+  typedef std::map<net::SpdyStreamId, StreamTaskWrapper*> SpdyStreamMap;
 
   // Validate and set the per-stream initial flow-control window size to the
   // new value.  Must be using SPDY v3 or later to call this method.
@@ -207,9 +145,9 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   void AbortStream(net::SpdyStreamId stream_id, net::SpdyStatusCodes status);
 
   // Remove the given StreamTaskWrapper object from the stream map.  This is
-  // the only other method of this class, aside from StartServerPush, that
-  // might be called from another thread.  (Specifically, it is called by the
-  // StreamTaskWrapper destructor, which is called by the executor).
+  // the method of this class that might be called from another thread.
+  // (Specifically, it is called by the StreamTaskWrapper destructor, which is
+  // called by the executor).
   void RemoveStreamTask(StreamTaskWrapper* stream_data);
 
   // Grab the stream_map_lock_ and check if stream_map_ is empty.
@@ -226,7 +164,6 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   bool already_sent_goaway_;  // GOAWAY frame has been sent
   net::SpdyStreamId last_client_stream_id_;
   int32 initial_window_size_;  // per-stream initial flow-control window size
-  uint32 max_concurrent_pushes_;  // max number of active server pushes at once
 
   // The stream map must be protected by a lock, because each stream thread
   // will remove itself from the map (by calling RemoveStreamTask) when the
@@ -238,12 +175,6 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // block for a long time.
   base::Lock stream_map_lock_;
   SpdyStreamMap stream_map_;
-  // These fields are also protected by the stream_map_lock_; they are used for
-  // controlling server pushes, which can be initiated by stream threads as
-  // well as by the connection thread.  We could use a separate lock for these,
-  // but right now we probably don't need that much locking granularity.
-  net::SpdyStreamId last_server_push_stream_id_;
-  bool received_goaway_;  // we've received a GOAWAY frame from the client
 
   // The output queue is also shared between all stream threads, but its class
   // is thread-safe, so it doesn't need additional synchronization.

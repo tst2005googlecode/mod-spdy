@@ -18,7 +18,6 @@
 #include "base/logging.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
 
@@ -29,25 +28,21 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
                        net::SpdyPriority priority,
                        int32 initial_window_size,
                        SpdyFramePriorityQueue* output_queue,
-                       net::BufferedSpdyFramer* framer,
-                       SpdyServerPushInterface* pusher)
+                       net::BufferedSpdyFramer* framer)
     : stream_id_(stream_id),
       associated_stream_id_(associated_stream_id),
       priority_(priority),
       output_queue_(output_queue),
       framer_(framer),
-      pusher_(pusher),
       condvar_(&lock_),
       window_size_(initial_window_size),
       aborted_(false) {
   DCHECK(output_queue_);
   DCHECK(framer_);
-  DCHECK(pusher_);
   DCHECK_GT(window_size_, 0);
   // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
   DCHECK_GE(priority, 0u);
-  DCHECK_LE(priority,
-            LowestSpdyPriorityForVersion(framer_->protocol_version()));
+  DCHECK_LE(priority, framer_->protocol_version() < 3 ? 3u : 7u);
 }
 
 SpdyStream::~SpdyStream() {}
@@ -130,17 +125,13 @@ void SpdyStream::SendOutputSynStream(const net::SpdyHeaderBlock& headers,
       net::CONTROL_FLAG_UNIDIRECTIONAL);
   // Don't compress the headers in the frame here; it will be compressed later
   // by the master connection (which maintains the shared header compression
-  // state for all streams).  We need to send this SYN_STREAM right away,
-  // before any more frames on the associated stream are sent, to ensure that
-  // the pushed stream gets started while the associated stream is still open,
-  // so we insert this frame with kTopPriority.
-  output_queue_->Insert(
-      SpdyFramePriorityQueue::kTopPriority, framer_->CreateSynStream(
-          stream_id_, associated_stream_id_, priority_,
-          0,  // 0 = no credential slot
-          flags,
-          false,  // false = uncompressed
-          &headers));
+  // state for all streams).
+  SendOutputFrame(framer_->CreateSynStream(
+      stream_id_, associated_stream_id_, priority_,
+      0,  // 0 = no credential slot
+      flags,
+      false,  // false = uncompressed
+      &headers));
 }
 
 void SpdyStream::SendOutputSynReply(const net::SpdyHeaderBlock& headers,
@@ -249,13 +240,6 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
     window_size_ -= length;
     DCHECK_GE(window_size_, 0);
   }
-}
-
-SpdyServerPushInterface::PushStatus SpdyStream::StartServerPush(
-    net::SpdyPriority priority,
-    const net::SpdyHeaderBlock& request_headers) {
-  DCHECK_GE(spdy_version(), 3);
-  return pusher_->StartServerPush(stream_id_, priority, request_headers);
 }
 
 void SpdyStream::SendOutputFrame(net::SpdyFrame* frame) {

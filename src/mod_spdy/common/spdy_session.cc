@@ -21,25 +21,13 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/time.h"
+#include "mod_spdy/common/connection_context.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session_io.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 #include "net/spdy/spdy_protocol.h"
-
-namespace {
-
-// Server push stream IDs must be even, and must fit in 31 bits (SPDY draft 3
-// section 2.3.2).  Thus, this is the largest stream ID we can ever use for a
-// pushed stream.
-const net::SpdyStreamId kMaxServerPushStreamId = 0x7FFFFFFEu;
-
-// Until the client informs us otherwise, we will assume a limit of 100 open
-// push streams at a time.
-const uint32 kInitMaxConcurrentPushes = 100u;
-
-}  // namespace
 
 namespace mod_spdy {
 
@@ -55,11 +43,8 @@ SpdySession::SpdySession(int spdy_version,
       framer_(spdy_version),
       session_stopped_(false),
       already_sent_goaway_(false),
-      last_client_stream_id_(0u),
-      initial_window_size_(net::kSpdyStreamInitialWindowSize),
-      max_concurrent_pushes_(kInitMaxConcurrentPushes),
-      last_server_push_stream_id_(0u),
-      received_goaway_(false) {
+      last_client_stream_id_(0),
+      initial_window_size_(net::kSpdyStreamInitialWindowSize) {
   framer_.set_visitor(this);
 }
 
@@ -196,107 +181,6 @@ void SpdySession::Run() {
   }
 }
 
-SpdyServerPushInterface::PushStatus SpdySession::StartServerPush(
-    net::SpdyStreamId associated_stream_id,
-    net::SpdyPriority priority,
-    const net::SpdyHeaderBlock& request_headers) {
-  // Server push is pretty ill-defined in SPDY v2, so we require v3 or higher.
-  DCHECK_GE(spdy_version(), 3);
-
-  // Grab the headers that we are required to send with the initial SYN_STREAM.
-  const net::SpdyHeaderBlock::const_iterator host_iter =
-      request_headers.find(spdy::kSpdy3Host);
-  const net::SpdyHeaderBlock::const_iterator path_iter =
-      request_headers.find(spdy::kSpdy3Path);
-  const net::SpdyHeaderBlock::const_iterator scheme_iter =
-      request_headers.find(spdy::kSpdy3Scheme);
-  if (host_iter == request_headers.end() ||
-      path_iter == request_headers.end() ||
-      scheme_iter == request_headers.end()) {
-    return SpdyServerPushInterface::INVALID_REQUEST_HEADERS;
-  }
-  const std::string& host_header = host_iter->second;
-  const std::string& path_header = path_iter->second;
-  const std::string& scheme_header = scheme_iter->second;
-
-  StreamTaskWrapper* task_wrapper = NULL;
-  {
-    base::AutoLock autolock(stream_map_lock_);
-
-    // If we've received a GOAWAY frame the client, we shouldn't create any new
-    // streams on this session (SPDY draft 3 section 2.6.6).
-    if (received_goaway_) {
-      return SpdyServerPushInterface::CANNOT_PUSH_EVER_AGAIN;
-    }
-
-    // The associated stream must be active (SPDY draft 3 section 3.3.1).
-    if (!stream_map_.IsStreamActive(associated_stream_id)) {
-      return SpdyServerPushInterface::ASSOCIATED_STREAM_INACTIVE;
-    }
-
-    // Check if we're allowed to create new push streams right now (based on
-    // the client SETTINGS_MAX_CONCURRENT_STREAMS).  Note that the number of
-    // active push streams might be (temporarily) greater than the max, if the
-    // client lowered the max after we already started a bunch of pushes.
-    if (stream_map_.NumActivePushStreams() >= max_concurrent_pushes_) {
-      return SpdyServerPushInterface::TOO_MANY_CONCURRENT_PUSHES;
-    }
-
-    // In the unlikely event that the session stays open so long that we run
-    // out of server push stream IDs, we may do any more pushes on this session
-    // (SPDY draft 3 section 2.3.2).
-    DCHECK_LE(last_server_push_stream_id_, kMaxServerPushStreamId);
-    if (last_server_push_stream_id_ >= kMaxServerPushStreamId) {
-      return SpdyServerPushInterface::CANNOT_PUSH_EVER_AGAIN;
-    }
-    // Server push stream IDs must be even (SPDY draft 3 section 2.3.2).  So
-    // each time we do a push, we increment last_server_push_stream_id_ by two.
-    DCHECK_EQ(last_server_push_stream_id_ % 2u, 0u);
-    last_server_push_stream_id_ += 2u;
-    const net::SpdyStreamId stream_id = last_server_push_stream_id_;
-    // Only the server can create even stream IDs, and we never use the same
-    // one twice, so our chosen stream_id should definitely not be in use.
-    if (stream_map_.IsStreamActive(stream_id)) {
-      LOG(DFATAL) << "Next server push stream ID already in use: "
-                  << stream_id;
-      return PUSH_INTERNAL_ERROR;
-    }
-
-    // Create task and add it to the stream map.
-    task_wrapper = new StreamTaskWrapper(
-        this, stream_id, associated_stream_id, priority);
-    stream_map_.AddStreamTask(task_wrapper);
-    // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
-    //   stream, which the stream task will then have to re-parse.  This is
-    //   wasteful.  We should probably refactor such that we can send the
-    //   header map itself, and avoid the extra parsing.
-    task_wrapper->stream()->PostInputFrame(framer_.CreateSynStream(
-        stream_id, associated_stream_id, priority,
-        0,  // 0 = no credential slot
-        net::CONTROL_FLAG_FIN,
-        false,  // false = uncompressed
-        &request_headers));
-
-    // Send initial SYN_STREAM to the client.  It only needs to contain the
-    // ":host", ":path", and ":scheme" headers; the rest can follow in a later
-    // HEADERS frame (SPDY draft 3 section 3.3.1).
-    net::SpdyHeaderBlock initial_response_headers;
-    initial_response_headers[spdy::kSpdy3Host] = host_header;
-    initial_response_headers[spdy::kSpdy3Path] = path_header;
-    initial_response_headers[spdy::kSpdy3Scheme] = scheme_header;
-    task_wrapper->stream()->SendOutputSynStream(
-        initial_response_headers, false);
-
-    VLOG(2) << "Starting server push; opening stream " << stream_id;
-  }
-  if (task_wrapper == NULL) {
-    LOG(DFATAL) << "Can't happen: task_wrapper is NULL";
-    return SpdyServerPushInterface::PUSH_INTERNAL_ERROR;
-  }
-  executor_->AddTask(task_wrapper, priority);
-  return SpdyServerPushInterface::PUSH_STARTED;
-}
-
 void SpdySession::OnError(net::SpdyFramer::SpdyError error_code) {
   LOG(ERROR) << "Session error: "
              << net::SpdyFramer::ErrorCodeToString(error_code);
@@ -310,19 +194,21 @@ void SpdySession::OnStreamError(net::SpdyStreamId stream_id,
 }
 
 void SpdySession::OnStreamFrameData(net::SpdyStreamId stream_id,
-                                    const char* data, size_t length,
-                                    net::SpdyDataFlags flags) {
+                                    const char* data, size_t length) {
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
   // RemoveStreamTask() at any time.
   {
     base::AutoLock autolock(stream_map_lock_);
-    SpdyStream* stream = stream_map_.GetStream(stream_id);
-    if (stream != NULL) {
+    SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
+    if (iter != stream_map_.end()) {
       VLOG(4) << "[stream " << stream_id << "] Received DATA (length="
               << length << ")";
+      SpdyStream* stream = iter->second->stream();
       // Copy the data into an _uncompressed_ SPDY data frame and post it to
       // the stream's input queue.
+      net::SpdyDataFlags flags =
+          length == 0 ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
       // Note that we must still be holding stream_map_lock_ when we call this
       // method -- otherwise the stream may be deleted out from under us by the
       // StreamTaskWrapper destructor.  That's okay -- PostInputFrame is a
@@ -351,26 +237,33 @@ void SpdySession::OnStreamFrameData(net::SpdyStreamId stream_id,
   }
 
   // If the client sends data for a nonexistant stream, we must send a
-  // RST_STREAM frame with error code INVALID_STREAM (SPDY draft 2 section
-  // 2.4).  Note that we release the mutex *before* sending the frame.
+  // RST_STREAM frame with error code INVALID_STREAM.  See
+  // http://dev.chromium.org/spdy/spdy-protocol/spdy-protocol-draft2#TOC-Data-frames
+  // Note that we release the mutex *before* sending the frame.
   LOG(WARNING) << "Client sent DATA (length=" << length
                << ") for nonexistant stream " << stream_id;
   SendRstStreamFrame(stream_id, net::INVALID_STREAM);
 }
 
 void SpdySession::OnSynStream(
-    net::SpdyStreamId stream_id,
-    net::SpdyStreamId associated_stream_id,
-    net::SpdyPriority priority,
-    uint8 credential_slot,
-    bool fin,
-    bool unidirectional,
-    const net::SpdyHeaderBlock& headers) {
+    const net::SpdySynStreamControlFrame& frame,
+    const linked_ptr<net::SpdyHeaderBlock>& headers) {
   // The SPDY spec requires us to ignore SYN_STREAM frames after sending a
   // GOAWAY frame (SPDY draft 3 section 2.6.6).
   if (already_sent_goaway_) {
     return;
   }
+
+  // If we see invalid flags, reject the frame.
+  if (0 != (frame.flags() & ~(net::CONTROL_FLAG_FIN |
+                              net::CONTROL_FLAG_UNIDIRECTIONAL))) {
+    LOG(WARNING) << "Client sent SYN_STREAM with invalid flags ("
+                 << frame.flags() << ").  Sending GOAWAY.";
+    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
+    return;
+  }
+
+  const net::SpdyStreamId stream_id = frame.stream_id();
 
   // Client stream IDs must be odd-numbered.
   if (stream_id % 2 == 0) {
@@ -380,8 +273,7 @@ void SpdySession::OnSynStream(
     return;
   }
 
-  // Client stream IDs must be strictly increasing (SPDY draft 2 section
-  // 2.5.1).
+  // Client stream IDs must be strictly increasing.
   if (stream_id <= last_client_stream_id_) {
     LOG(WARNING) << "Client sent SYN_STREAM for non-increasing stream ID ("
                  << stream_id << " after " << last_client_stream_id_
@@ -409,18 +301,17 @@ void SpdySession::OnSynStream(
 
     // We already checked that stream_id > last_client_stream_id_, so there
     // definitely shouldn't already be a stream with this ID in the map.
-    DCHECK(!stream_map_.IsStreamActive(stream_id));
+    DCHECK_EQ(0, stream_map_.count(stream_id));
 #else
-    if (stream_map_.IsStreamActive(stream_id)) {
+    if (stream_map_.count(stream_id) != 0) {
       SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
       return;
     }
 #endif
 
-    // Limit the number of simultaneous open streams the client can create;
-    // refuse the stream if there are too many currently active (non-push)
-    // streams.
-    if (static_cast<int>(stream_map_.NumActiveClientStreams()) >=
+    // Limit the number of simultaneous open streams; refuse the stream if
+    // there are too many currently active streams.
+    if (static_cast<int>(stream_map_.size()) >=
         config_->max_streams_per_connection()) {
       SendRstStreamFrame(stream_id, net::REFUSED_STREAM);
       return;
@@ -429,21 +320,18 @@ void SpdySession::OnSynStream(
     // Initiate a new stream.
     last_client_stream_id_ = std::max(last_client_stream_id_, stream_id);
     task_wrapper = new StreamTaskWrapper(
-        this, stream_id, associated_stream_id, priority);
-    stream_map_.AddStreamTask(task_wrapper);
-    const net::SpdyControlFlags flags = static_cast<net::SpdyControlFlags>(
-        (fin ? net::CONTROL_FLAG_FIN : 0) |
-        (unidirectional ? net::CONTROL_FLAG_UNIDIRECTIONAL : 0));
+        this, stream_id, frame.associated_stream_id(), frame.priority());
+    stream_map_[stream_id] = task_wrapper;
     // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
     //   stream, which the stream task will then have to re-parse.  This is
     //   wasteful.  We should probably refactor such that we can send the
     //   header map itself, and avoid the extra parsing.
     task_wrapper->stream()->PostInputFrame(framer_.CreateSynStream(
-        stream_id, associated_stream_id, priority,
-        credential_slot,
-        flags,
+        stream_id, frame.associated_stream_id(), frame.priority(),
+        frame.credential_slot(),
+        static_cast<net::SpdyControlFlags>(frame.flags()),
         false,  // false = uncompressed
-        &headers));
+        headers.get()));
   }
   DCHECK(task_wrapper);
   // Release the lock before adding the task to the executor.  This is mostly
@@ -453,18 +341,28 @@ void SpdySession::OnSynStream(
   // holding the lock, because the task won't get deleted before it's been
   // added to the executor.
   VLOG(2) << "Received SYN_STREAM; opening stream " << stream_id;
-  executor_->AddTask(task_wrapper, priority);
+  executor_->AddTask(task_wrapper, frame.priority());
 }
 
-void SpdySession::OnSynReply(net::SpdyStreamId stream_id,
-                             bool fin,
-                             const net::SpdyHeaderBlock& headers) {
+void SpdySession::OnSynReply(const net::SpdySynReplyControlFrame& frame,
+                             const linked_ptr<net::SpdyHeaderBlock>& headers) {
   // TODO(mdsteele)
 }
 
-void SpdySession::OnRstStream(net::SpdyStreamId stream_id,
-                              net::SpdyStatusCodes status) {
-  switch (status) {
+void SpdySession::OnRstStream(
+    const net::SpdyRstStreamControlFrame& frame) {
+  // RST_STREAM does not define any flags (SPDY draft 2 section 2.7.3).  If we
+  // see invalid flags, tell the client to go away (but don't return from the
+  // method; we'll still go ahead and abort the stream that the RST_STREAM
+  // frame is asking us to terminate).
+  if (0 != frame.flags()) {
+    LOG(WARNING) << "Client sent RST_STREAM with invalid flags ("
+                 << frame.flags() << ").  Sending GOAWAY.";
+    SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
+  }
+
+  const net::SpdyStreamId stream_id = frame.stream_id();
+  switch (frame.status()) {
     // These are totally benign reasons to abort a stream, so just abort the
     // stream without a fuss.
     case net::REFUSED_STREAM:
@@ -484,8 +382,8 @@ void SpdySession::OnRstStream(net::SpdyStreamId stream_id,
     // TODO(mdsteele): Should we have special behavior for any other kinds of
     // errors?
     default:
-      LOG(WARNING) << "Client sent RST_STREAM with status=" << status
-                   << " for stream " << stream_id << ".  Aborting stream.";
+      LOG(WARNING) << "Client sent RST_STREAM with status=" << frame.status()
+                   <<" for stream " << stream_id << ".  Aborting stream.";
       AbortStreamSilently(stream_id);
       break;
   }
@@ -496,9 +394,6 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
   VLOG(4) << "Received SETTING (flags=" << flags << "): "
           << id << "=" << value;
   switch (id) {
-    case net::SETTINGS_MAX_CONCURRENT_STREAMS:
-      max_concurrent_pushes_ = value;
-      break;
     case net::SETTINGS_INITIAL_WINDOW_SIZE:
       // Flow control only exists for SPDY v3 and up.
       if (spdy_version() < 3) {
@@ -512,9 +407,11 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
     case net::SETTINGS_UPLOAD_BANDWIDTH:
     case net::SETTINGS_DOWNLOAD_BANDWIDTH:
     case net::SETTINGS_ROUND_TRIP_TIME:
+    case net::SETTINGS_MAX_CONCURRENT_STREAMS:
     case net::SETTINGS_CURRENT_CWND:
     case net::SETTINGS_DOWNLOAD_RETRANS_RATE:
-      // Ignore other settings for now.
+      // Ignore other settings for now.  Once we support server push, we'll
+      // need to pay attention to SETTINGS_MAX_CONCURRENT_STREAMS.
       break;
     default:
       LOG(ERROR) << "Client sent invalid SETTINGS id (" << id
@@ -524,33 +421,30 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
   }
 }
 
-void SpdySession::OnPing(uint32 unique_id) {
+void SpdySession::OnPing(const net::SpdyPingControlFrame& frame) {
   VLOG(4) << "Received PING frame";
   // The SPDY spec requires the server to ignore even-numbered PING frames that
   // it did not initiate (SPDY draft 3 section 2.6.5), and right now, we never
   // initiate pings.
-  if (unique_id % 2 == 0) {
+  if (frame.unique_id() % 2 == 0) {
     return;
   }
 
   // Any odd-numbered PING frame we receive was initiated by the client, and
-  // should be echoed back _immediately_ (SPDY draft 2 section 2.7.6).
-  SendFrame(framer_.CreatePingFrame(unique_id));
+  // should thus be echoed back, as per the SPDY spec.
+  SendFrameRaw(frame);
 }
 
-void SpdySession::OnGoAway(net::SpdyStreamId last_accepted_stream_id,
-                           net::SpdyGoAwayStatus status) {
+void SpdySession::OnGoAway(const net::SpdyGoAwayControlFrame& frame) {
   VLOG(4) << "Received GOAWAY frame (last_accepted_stream_id="
-          << last_accepted_stream_id << ")";
-  // Take note that we have received a GOAWAY frame; we should not start any
-  // new server push streams on this session.
-  base::AutoLock autolock(stream_map_lock_);
-  received_goaway_ = true;
+          << frame.last_accepted_stream_id() << ")";
+  // TODO(mdsteele): For now I think we can mostly ignore GOAWAY frames, but
+  // once we implement server-push we definitely need to take note of them.
 }
 
-void SpdySession::OnHeaders(net::SpdyStreamId stream_id,
-                            bool fin,
-                            const net::SpdyHeaderBlock& headers) {
+void SpdySession::OnHeaders(const net::SpdyHeadersControlFrame& frame,
+                            const linked_ptr<net::SpdyHeaderBlock>& headers) {
+  const net::SpdyStreamId stream_id = frame.stream_id();
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
   // RemoveStreamTask() at any time.
@@ -558,19 +452,18 @@ void SpdySession::OnHeaders(net::SpdyStreamId stream_id,
     // TODO(mdsteele): This is pretty similar to the code in OnStreamFrameData.
     //   Maybe we can factor it out?
     base::AutoLock autolock(stream_map_lock_);
-    SpdyStream* stream = stream_map_.GetStream(stream_id);
-    if (stream != NULL) {
+    SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
+    if (iter != stream_map_.end()) {
       VLOG(4) << "[stream " << stream_id << "] Received HEADERS frame";
-      net::SpdyControlFlags flags =
-          (fin ? net::CONTROL_FLAG_FIN : net::CONTROL_FLAG_NONE);
+      SpdyStream* stream = iter->second->stream();
       // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
       //   stream, which the stream task will then have to re-parse.  This is
       //   wasteful.  We should probably refactor such that we can send the
       //   header map itself, and avoid the extra parsing.
       stream->PostInputFrame(framer_.CreateHeaders(
-          stream_id, flags,
+          stream_id, static_cast<net::SpdyControlFlags>(frame.flags()),
           false,  // false = uncompressed
-          &headers));
+          headers.get()));
       return;
     }
   }
@@ -580,15 +473,8 @@ void SpdySession::OnHeaders(net::SpdyStreamId stream_id,
   SendRstStreamFrame(stream_id, net::INVALID_STREAM);
 }
 
-void SpdySession::OnControlFrameCompressed(
-    const net::SpdyControlFrame& uncompressed_frame,
-    const net::SpdyControlFrame& compressed_frame) {
-  // This method exists in case we want to collect compression statistics, but
-  // we're not interested in that right now, so just ignore it.
-}
-
-void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
-                                 int delta_window_size) {
+void SpdySession::OnWindowUpdate(
+    const net::SpdyWindowUpdateControlFrame& frame) {
   // Flow control only exists for SPDY v3 and up.
   if (spdy_version() < 3) {
     LOG(ERROR) << "Got a WINDOW_UPDATE frame over SPDY v" << spdy_version();
@@ -597,16 +483,17 @@ void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
   }
 
   base::AutoLock autolock(stream_map_lock_);
-  SpdyStream* stream = stream_map_.GetStream(stream_id);
-  if (stream == NULL) {
+  const net::SpdyStreamId stream_id = frame.stream_id();
+  SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
+  if (iter == stream_map_.end()) {
     // We must ignore WINDOW_UPDATE frames for closed streams (SPDY draft 3
     // section 2.6.8).
     return;
   }
 
   VLOG(4) << "[stream " << stream_id << "] Received WINDOW_UPDATE("
-          << delta_window_size << ") frame";
-  stream->AdjustWindowSize(delta_window_size);
+          << frame.delta_window_size() << ") frame";
+  iter->second->stream()->AdjustWindowSize(frame.delta_window_size());
 }
 
 void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {
@@ -638,7 +525,10 @@ void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {
   // We also have to adjust the window size of all currently active streams by
   // the delta (SPDY draft 3 section 2.6.8).
   base::AutoLock autolock(stream_map_lock_);
-  stream_map_.AdjustAllWindowSizes(delta);
+  for (SpdyStreamMap::const_iterator iter = stream_map_.begin();
+       iter != stream_map_.end(); ++iter) {
+    iter->second->stream()->AdjustWindowSize(delta);
+  }
 }
 
 // Compress (if necessary), send, and then delete the given frame object.
@@ -707,7 +597,10 @@ void SpdySession::StopSession() {
   // any time.
   {
     base::AutoLock autolock(stream_map_lock_);
-    stream_map_.AbortAllSilently();
+    for (SpdyStreamMap::const_iterator iter = stream_map_.begin();
+         iter != stream_map_.end(); ++iter) {
+      iter->second->stream()->AbortSilently();
+    }
   }
   // Stop all stream threads and tasks for this SPDY session.  This will
   // block until all currently running stream tasks have exited, but since we
@@ -722,9 +615,9 @@ void SpdySession::AbortStreamSilently(net::SpdyStreamId stream_id) {
   // We need to lock when reading the stream map, because one of the stream
   // threads could call RemoveStreamTask() at any time.
   base::AutoLock autolock(stream_map_lock_);
-  SpdyStream* stream = stream_map_.GetStream(stream_id);
-  if (stream != NULL) {
-    stream->AbortSilently();
+  SpdyStreamMap::const_iterator iter = stream_map_.find(stream_id);
+  if (iter != stream_map_.end()) {
+    iter->second->stream()->AbortSilently();
   }
 }
 
@@ -744,13 +637,16 @@ void SpdySession::RemoveStreamTask(StreamTaskWrapper* task_wrapper) {
   // We need to lock when touching the stream map, in case the main connection
   // thread is currently in the middle of reading the stream map.
   base::AutoLock autolock(stream_map_lock_);
-  VLOG(2) << "Closing stream " << task_wrapper->stream()->stream_id();
-  stream_map_.RemoveStreamTask(task_wrapper);
+  const net::SpdyStreamId stream_id = task_wrapper->stream()->stream_id();
+  VLOG(2) << "Closing stream " << stream_id;
+  DCHECK_EQ(1u, stream_map_.count(stream_id));
+  DCHECK_EQ(task_wrapper, stream_map_[stream_id]);
+  stream_map_.erase(stream_id);
 }
 
 bool SpdySession::StreamMapIsEmpty() {
   base::AutoLock autolock(stream_map_lock_);
-  return stream_map_.IsEmpty();
+  return stream_map_.empty();
 }
 
 // This constructor is always called by the main connection thread, so we're
@@ -765,11 +661,8 @@ SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     : spdy_session_(spdy_session),
       stream_(stream_id, associated_stream_id, priority,
               spdy_session_->initial_window_size_,
-              &spdy_session_->output_queue_, &spdy_session_->framer_,
-              spdy_session_),
-      subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {
-  CHECK(subtask_);
-}
+              &spdy_session_->output_queue_, &spdy_session_->framer_),
+      subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {}
 
 SpdySession::StreamTaskWrapper::~StreamTaskWrapper() {
   // Remove this object from the SpdySession's stream map.
@@ -782,88 +675,6 @@ void SpdySession::StreamTaskWrapper::Run() {
 
 void SpdySession::StreamTaskWrapper::Cancel() {
   subtask_->CallCancel();
-}
-
-SpdySession::SpdyStreamMap::SpdyStreamMap()
-    : num_active_push_streams_(0u) {}
-
-SpdySession::SpdyStreamMap::~SpdyStreamMap() {}
-
-bool SpdySession::SpdyStreamMap::IsEmpty() {
-  DCHECK_LE(num_active_push_streams_, tasks_.size());
-  return tasks_.empty();
-}
-
-size_t SpdySession::SpdyStreamMap::NumActiveClientStreams() {
-  DCHECK_LE(num_active_push_streams_, tasks_.size());
-  return tasks_.size() - num_active_push_streams_;
-}
-
-size_t SpdySession::SpdyStreamMap::NumActivePushStreams() {
-  DCHECK_LE(num_active_push_streams_, tasks_.size());
-  return num_active_push_streams_;
-}
-
-bool SpdySession::SpdyStreamMap::IsStreamActive(net::SpdyStreamId stream_id) {
-  return tasks_.count(stream_id) > 0u;
-}
-
-void SpdySession::SpdyStreamMap::AddStreamTask(
-    StreamTaskWrapper* task_wrapper) {
-  DCHECK(task_wrapper);
-  SpdyStream* stream = task_wrapper->stream();
-  DCHECK(stream);
-  net::SpdyStreamId stream_id = stream->stream_id();
-  DCHECK_EQ(0u, tasks_.count(stream_id));
-  tasks_[stream_id] = task_wrapper;
-  if (stream->is_server_push()) {
-    ++num_active_push_streams_;
-  }
-  DCHECK_LE(num_active_push_streams_, tasks_.size());
-}
-
-void SpdySession::SpdyStreamMap::RemoveStreamTask(
-    StreamTaskWrapper* task_wrapper) {
-  DCHECK(task_wrapper);
-  SpdyStream* stream = task_wrapper->stream();
-  DCHECK(stream);
-  net::SpdyStreamId stream_id = stream->stream_id();
-  DCHECK_EQ(1u, tasks_.count(stream_id));
-  DCHECK_EQ(task_wrapper, tasks_[stream_id]);
-  if (stream->is_server_push()) {
-    DCHECK_GT(num_active_push_streams_, 0u);
-    --num_active_push_streams_;
-  }
-  tasks_.erase(stream_id);
-  DCHECK_LE(num_active_push_streams_, tasks_.size());
-}
-
-SpdyStream* SpdySession::SpdyStreamMap::GetStream(
-    net::SpdyStreamId stream_id) {
-  TaskMap::const_iterator iter = tasks_.find(stream_id);
-  if (iter == tasks_.end()) {
-    return NULL;
-  }
-  StreamTaskWrapper* task_wrapper = iter->second;
-  DCHECK(task_wrapper);
-  SpdyStream* stream = task_wrapper->stream();
-  DCHECK(stream);
-  DCHECK_EQ(stream_id, stream->stream_id());
-  return stream;
-}
-
-void SpdySession::SpdyStreamMap::AdjustAllWindowSizes(int32 delta) {
-  for (TaskMap::const_iterator iter = tasks_.begin();
-       iter != tasks_.end(); ++iter) {
-    iter->second->stream()->AdjustWindowSize(delta);
-  }
-}
-
-void SpdySession::SpdyStreamMap::AbortAllSilently() {
-  for (TaskMap::const_iterator iter = tasks_.begin();
-       iter != tasks_.end(); ++iter) {
-    iter->second->stream()->AbortSilently();
-  }
 }
 
 }  // namespace mod_spdy

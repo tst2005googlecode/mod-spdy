@@ -109,7 +109,7 @@ TEST(SpdyFrameQueueTest, BlockingPop) {
 
   // Even if we wait for a little bit, the task shouldn't complete, because
   // that thread is blocked, because the queue is still empty.
-  base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(50));
+  base::PlatformThread::Sleep(50);
   runner.notification()->ExpectNotSet();
   ExpectEmpty(&queue);
 

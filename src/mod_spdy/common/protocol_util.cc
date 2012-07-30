@@ -34,9 +34,7 @@ extern const char* const kContentType = "content-type";
 extern const char* const kHost = "host";
 extern const char* const kKeepAlive = "keep-alive";
 extern const char* const kProxyConnection = "proxy-connection";
-extern const char* const kReferer = "referer";
 extern const char* const kTransferEncoding = "transfer-encoding";
-extern const char* const kXAssociatedContent = "x-associated-content";
 extern const char* const kXModSpdy = "x-mod-spdy";
 
 extern const char* const kChunked = "chunked";
@@ -75,10 +73,6 @@ bool IsInvalidSpdyResponseHeader(base::StringPiece key) {
                                http::kProxyConnection) ||
           LowerCaseEqualsASCII(key.begin(), key.end(),
                                http::kTransferEncoding));
-}
-
-net::SpdyPriority LowestSpdyPriorityForVersion(int spdy_version) {
-  return (spdy_version < 3 ? 3u : 7u);
 }
 
 void MergeInHeader(base::StringPiece key, base::StringPiece value,

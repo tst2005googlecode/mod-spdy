@@ -32,9 +32,7 @@ extern const char* const kContentType;
 extern const char* const kHost;
 extern const char* const kKeepAlive;
 extern const char* const kProxyConnection;
-extern const char* const kReferer;
 extern const char* const kTransferEncoding;
-extern const char* const kXAssociatedContent;
 extern const char* const kXModSpdy;
 
 // HTTP header values.
@@ -67,11 +65,6 @@ base::StringPiece FrameData(const net::SpdyFrame& frame);
 
 // Return true if this header is forbidden in SPDY responses, ignoring case.
 bool IsInvalidSpdyResponseHeader(base::StringPiece key);
-
-// Return the SpdyPriority representing the least important priority for the
-// given SPDY version.  For SPDY v2 and below, it's 3; for SPDY v3 and above,
-// it's 7.  (The most important SpdyPriority is always 0.)
-net::SpdyPriority LowestSpdyPriorityForVersion(int spdy_version);
 
 // Add a header to a header table, lower-casing and merging if necessary.
 void MergeInHeader(base::StringPiece key, base::StringPiece value,

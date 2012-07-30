@@ -20,8 +20,7 @@
 
 namespace mod_spdy {
 
-class MasterConnectionContext;
-class SlaveConnectionContext;
+class ConnectionContext;
 class SpdyServerConfig;
 class SpdyStream;
 
@@ -37,38 +36,25 @@ const SpdyServerConfig* GetServerConfig(request_rec* request);
 // reading it), the configuration object is returned non-const.
 SpdyServerConfig* GetServerConfig(cmd_parms* command);
 
-// Allocate a new MasterConnectionContext object for a master connection in the given
+// Allocate a new ConnectionContext object for a master connection in the given
 // connection's pool, attach it to the connection's config vector, and return
-// it. Cannot be called on connection which previously was passed to
-// Create[Master|Slave]ConnectionContext.
-MasterConnectionContext* CreateMasterConnectionContext(
-    conn_rec* connection, bool using_ssl);
+// it.
+ConnectionContext* CreateMasterConnectionContext(conn_rec* connection,
+                                                 bool using_ssl);
 
 // Allocate a new ConnectionContext object for a slave connection in the given
 // connection's pool, attach it to the connection's config vector, and return
-// it. Cannot be called on connection which previously was passed to
-// Create[Master|Slave]ConnectionContext.
-SlaveConnectionContext* CreateSlaveConnectionContext(
-      conn_rec* connection, bool using_ssl, SpdyStream* stream);
+// it.
+ConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
+                                                bool using_ssl,
+                                                SpdyStream* stream);
 
-// Returns true if the connection has had a master connection context set.
-// We expect the result to be true for outgoing connections for which
-// mod_spdy is enabled on the server and which are using SSL, and on which
-// the pre-connection hook has fired.
-bool HasMasterConnectionContext(conn_rec* connection);
-
-// Returns true if the connection has had a slave connection context set.
-bool HasSlaveConnectionContext(conn_rec* connection);
-
-// Get the master connection context that was set on this connection
-// by a call to CreateMasterConnectionContext. Precondition:
-// HasMasterConnectionContext has been called, and returned true.
-MasterConnectionContext* GetMasterConnectionContext(conn_rec* connection);
-
-// Get the slave connection context that was set on this connection
-// by a call to CreateSlaveConnectionContext.
-// Precondition: HasSlaveConnectionContext has been called, and returned true.
-SlaveConnectionContext* GetSlaveConnectionContext(conn_rec* connection);
+// Get the connection object that was attached to this connection by
+// CreateConnectionContext; return NULL if CreateConnectionContext has not been
+// called for this connection, which will be the case if 1) mod_spdy is
+// disabled on this server, 2) this is a non-SSL connection, or 3) this is not
+// a slave connection, and the pre-connection hook hasn't fired yet.
+ConnectionContext* GetConnectionContext(conn_rec* connection);
 
 }  // namespace mod_spdy
 
