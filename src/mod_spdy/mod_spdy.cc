@@ -316,7 +316,8 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
     // the master connection), unless we're configured to assume SPDY for
     // non-SSL connections.  Let's check if that's the case, and LOG(DFATAL) if
     // it's not.
-    if (!mod_spdy::GetServerConfig(connection)->use_even_without_ssl()) {
+    if (mod_spdy::GetServerConfig(connection)->
+        use_spdy_version_without_ssl() == 0) {
       LOG(DFATAL) << "mod_ssl missing for slave connection";
     }
   }
@@ -343,7 +344,9 @@ int PreConnection(conn_rec* connection, void* csd) {
       return DECLINED;
     }
 
-    bool assume_spdy = false;
+    // We'll set this to a nonzero SPDY version number momentarily if we're
+    // configured to assume a particular SPDY version for this connection.
+    int assume_spdy_version = 0;
 
     // Check if this connection is over SSL; if not, we can't do NPN, so we
     // definitely won't be using SPDY (unless we're configured to assume SPDY
@@ -354,9 +357,8 @@ int PreConnection(conn_rec* connection, void* csd) {
       // This is not an SSL connection, so we can't talk SPDY on it _unless_ we
       // have opted to assume SPDY over non-SSL connections (presumably for
       // debugging purposes; this would normally break browsers).
-      if (config->use_even_without_ssl()) {
-        assume_spdy = true;
-      } else {
+      assume_spdy_version = config->use_spdy_version_without_ssl();
+      if (assume_spdy_version == 0) {
         return DECLINED;
       }
     }
@@ -366,9 +368,11 @@ int PreConnection(conn_rec* connection, void* csd) {
     // connection context object to keep track of the negotiation.
     mod_spdy::MasterConnectionContext* master_context =
         mod_spdy::CreateMasterConnectionContext(connection, using_ssl);
-    // If we're assuming SPDY, we don't even need to do the negotiation.
-    if (assume_spdy) {
+    // If we're assuming SPDY for this connection, it means we know NPN won't
+    // happen at all, and we're just going to assume a particular SPDY version.
+    if (assume_spdy_version != 0) {
       master_context->set_assume_spdy(true);
+      master_context->set_spdy_version(assume_spdy_version);
     }
     return OK;
   }

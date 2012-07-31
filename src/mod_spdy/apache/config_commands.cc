@@ -86,6 +86,28 @@ const char* SetNonNegativeInt(cmd_parms* cmd, void* dir, const char* arg) {
   return NULL;
 }
 
+const char* SetUseSpdyForNonSslConnections(cmd_parms* cmd, void* dir,
+                                           const char* arg) {
+  int value;
+  if (!base::StringToInt(arg, &value) || value < 2 || value > 3) {
+    if (0 == apr_strnatcasecmp(arg, "off")) {
+      value = 0;
+    } else if (0 == apr_strnatcasecmp(arg, "on")) {
+      value = 2;
+      LOG(WARNING) << "Passing \"on\" to " << cmd->cmd->name
+                   << " is deprecated and will eventually be disallowed.  "
+                   << "Instead, specify the SPDY version number to use "
+                   << "(2, 3, or off).  For backwards compatibility, \"on\" "
+                   << "specifies SPDY/2.";
+    } else {
+      return apr_pstrcat(cmd->pool, cmd->cmd->name,
+                         " must be 2, 3, or off", NULL);
+    }
+  }
+  GetServerConfig(cmd)->set_use_spdy_version_without_ssl(value);
+  return NULL;
+}
+
 // This template can be wrapped around any of the above functions to restrict
 // the directive to being used only at the top level (as opposed to within a
 // <VirtualHost> directive).
@@ -134,7 +156,7 @@ const command_rec kSpdyConfigCommands[] = {
       "Set the verbosity of mod_spdy logging"),
   SPDY_CONFIG_COMMAND(
       "SpdyDebugUseSpdyForNonSslConnections",
-      SetBoolean<&SpdyServerConfig::set_use_even_without_ssl>,
+      SetUseSpdyForNonSslConnections,
       "Use SPDY even over non-SSL connections; DO NOT USE IN PRODUCTION"),
   {NULL}
 };

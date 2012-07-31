@@ -20,7 +20,7 @@ const bool kDefaultSpdyEnabled = false;
 const int kDefaultMaxStreamsPerConnection = 100;
 const int kDefaultMinThreadsPerProcess = 2;
 const int kDefaultMaxThreadsPerProcess = 10;
-const bool kDefaultUseEvenWithoutSsl = false;
+const int kDefaultUseSpdyVersionWithoutSsl = 0;
 const int kDefaultVlogLevel = 0;
 
 }  // namespace
@@ -32,7 +32,7 @@ SpdyServerConfig::SpdyServerConfig()
       max_streams_per_connection_(kDefaultMaxStreamsPerConnection),
       min_threads_per_process_(kDefaultMinThreadsPerProcess),
       max_threads_per_process_(kDefaultMaxThreadsPerProcess),
-      use_even_without_ssl_(kDefaultUseEvenWithoutSsl),
+      use_spdy_version_without_ssl_(kDefaultUseSpdyVersionWithoutSsl),
       vlog_level_(kDefaultVlogLevel) {}
 
 SpdyServerConfig::~SpdyServerConfig() {}
@@ -46,8 +46,8 @@ void SpdyServerConfig::MergeFrom(const SpdyServerConfig& a,
                                      b.min_threads_per_process_);
   max_threads_per_process_.MergeFrom(a.max_threads_per_process_,
                                      b.max_threads_per_process_);
-  use_even_without_ssl_.MergeFrom(a.use_even_without_ssl_,
-                                  b.use_even_without_ssl_);
+  use_spdy_version_without_ssl_.MergeFrom(
+      a.use_spdy_version_without_ssl_, b.use_spdy_version_without_ssl_);
   vlog_level_.MergeFrom(a.vlog_level_, b.vlog_level_);
 }
 
