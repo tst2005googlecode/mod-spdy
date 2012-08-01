@@ -1,11 +1,6 @@
-# This patch adds hooks for Next Protocol Negotiation (NPN) into mod_ssl.  This
-# change is under review to be included in Apache trunk:
-#   https://issues.apache.org/bugzilla/show_bug.cgi?id=52210
-# But until it becomes part of an Apache 2.2 release, we need to apply the patch
-# ourselves.
 Index: modules/ssl/ssl_private.h
 ===================================================================
---- modules/ssl/ssl_private.h	(revision 1202283)
+--- modules/ssl/ssl_private.h	(revision 1367982)
 +++ modules/ssl/ssl_private.h	(working copy)
 @@ -603,6 +603,7 @@
  #ifndef OPENSSL_NO_TLSEXT
@@ -15,35 +10,25 @@ Index: modules/ssl/ssl_private.h
  
  /**  Session Cache Support  */
  void         ssl_scache_init(server_rec *, apr_pool_t *);
-@@ -714,4 +715,3 @@
- 
- #endif /* SSL_PRIVATE_H */
- /** @} */
--
 Index: modules/ssl/ssl_engine_init.c
 ===================================================================
---- modules/ssl/ssl_engine_init.c	(revision 1202283)
+--- modules/ssl/ssl_engine_init.c	(revision 1367982)
 +++ modules/ssl/ssl_engine_init.c	(working copy)
 @@ -559,6 +559,11 @@
      SSL_CTX_set_tmp_dh_callback(ctx,  ssl_callback_TmpDH);
  
      SSL_CTX_set_info_callback(ctx, ssl_callback_Info);
 +
-+#if OPENSSL_VERSION_NUMBER >= 0x10001000L && !defined(OPENSSL_NO_TLSEXT) && !defined(OPENSSL_NO_NEXTPROTONEG)
++#ifdef HAVE_TLS_NPN
 +    SSL_CTX_set_next_protos_advertised_cb(
 +        ctx, ssl_callback_AdvertiseNextProtos, NULL);
 +#endif
  }
  
  static void ssl_init_ctx_verify(server_rec *s,
-@@ -1352,4 +1357,3 @@
- 
-     return APR_SUCCESS;
- }
--
 Index: modules/ssl/ssl_engine_io.c
 ===================================================================
---- modules/ssl/ssl_engine_io.c	(revision 1202283)
+--- modules/ssl/ssl_engine_io.c	(revision 1367982)
 +++ modules/ssl/ssl_engine_io.c	(working copy)
 @@ -338,6 +338,7 @@
      apr_pool_t *pool;
@@ -53,29 +38,35 @@ Index: modules/ssl/ssl_engine_io.c
  } bio_filter_in_ctx_t;
  
  /*
-@@ -1409,6 +1410,21 @@
+@@ -1409,6 +1410,27 @@
          APR_BRIGADE_INSERT_TAIL(bb, bucket);
      }
  
++#ifdef HAVE_TLS_NPN
 +    /* By this point, Next Protocol Negotiation (NPN) should be completed (if
 +     * our version of OpenSSL supports it).  If we haven't already, find out
 +     * which protocol was decided upon and inform other modules by calling
 +     * npn_proto_negotiated_hook. */
 +    if (!inctx->npn_finished) {
-+        inctx->npn_finished = 1;
-+#if OPENSSL_VERSION_NUMBER >= 0x10001000L && !defined(OPENSSL_NO_TLSEXT) && !defined(OPENSSL_NO_NEXTPROTONEG)
 +        const unsigned char *next_proto = NULL;
 +        unsigned next_proto_len = 0;
-+        SSL_get0_next_proto_negotiated(inctx->ssl, &next_proto,
-+                                       &next_proto_len);
-+        ssl_run_npn_proto_negotiated_hook(f->c, next_proto, next_proto_len);
-+#endif
++
++        SSL_get0_next_proto_negotiated(
++            inctx->ssl, &next_proto, &next_proto_len);
++        ap_log_cerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, f->c,
++                      "SSL NPN negotiated protocol: '%s'",
++                      apr_pstrmemdup(f->c->pool, (const char*)next_proto,
++                                     next_proto_len));
++        modssl_run_npn_proto_negotiated_hook(
++            f->c, (const char*)next_proto, next_proto_len);
++        inctx->npn_finished = 1;
 +    }
++#endif
 +
      return APR_SUCCESS;
  }
  
-@@ -1753,6 +1769,7 @@
+@@ -1753,6 +1775,7 @@
      inctx->block = APR_BLOCK_READ;
      inctx->pool = c->pool;
      inctx->filter_ctx = filter_ctx;
@@ -85,12 +76,14 @@ Index: modules/ssl/ssl_engine_io.c
  void ssl_io_filter_init(conn_rec *c, SSL *ssl)
 Index: modules/ssl/ssl_engine_kernel.c
 ===================================================================
---- modules/ssl/ssl_engine_kernel.c	(revision 1202283)
+--- modules/ssl/ssl_engine_kernel.c	(revision 1367982)
 +++ modules/ssl/ssl_engine_kernel.c	(working copy)
-@@ -1969,6 +1969,77 @@
-     }
+@@ -2104,3 +2104,84 @@
+     return 0;
  }
- 
+ #endif
++
++#ifdef HAVE_TLS_NPN
 +/*
 + * This callback function is executed when SSL needs to decide what protocols
 + * to advertise during Next Protocol Negotiation (NPN).  It must produce a
@@ -101,55 +94,63 @@ Index: modules/ssl/ssl_engine_kernel.c
 +int ssl_callback_AdvertiseNextProtos(SSL *ssl, const unsigned char **data_out,
 +                                     unsigned int *size_out, void *arg)
 +{
++    conn_rec *c = (conn_rec*)SSL_get_app_data(ssl);
++    apr_array_header_t *protos;
++    int num_protos;
++    unsigned int size;
++    int i;
++    unsigned char *data;
++    unsigned char *start;
++
 +    *data_out = NULL;
 +    *size_out = 0;
 +
-+    /* Get the connection object.  If it's not available, then there's nothing
-+     * for us to do. */
-+    conn_rec *c = (conn_rec*)SSL_get_app_data(ssl);
++    /* If the connection object is not available, then there's nothing for us
++     * to do. */
 +    if (c == NULL) {
 +        return SSL_TLSEXT_ERR_OK;
 +    }
 +
 +    /* Invoke our npn_advertise_protos hook, giving other modules a chance to
 +     * add alternate protocol names to advertise. */
-+    apr_array_header_t *protos = apr_array_make(c->pool, 0, sizeof(char*));
-+    ssl_run_npn_advertise_protos_hook(c, protos);
-+    int num_protos = protos->nelts;
-+
-+    /* If no other modules added any alternate protocols, then we're done. */
-+    if (num_protos == 0) {
-+        return SSL_TLSEXT_ERR_OK;
-+    }
++    protos = apr_array_make(c->pool, 0, sizeof(char*));
++    modssl_run_npn_advertise_protos_hook(c, protos);
++    num_protos = protos->nelts;
 +
 +    /* We now have a list of null-terminated strings; we need to concatenate
 +     * them together into a single string, where each protocol name is prefixed
 +     * by its length.  First, calculate how long that string will be. */
-+    unsigned int size = 0;
-+    int i;
++    size = 0;
 +    for (i = 0; i < num_protos; ++i) {
-+        const char* string = APR_ARRAY_IDX(protos, i, const char*);
++        const char *string = APR_ARRAY_IDX(protos, i, const char*);
 +        unsigned int length = strlen(string);
 +        /* If the protocol name is too long (the length must fit in one byte),
-+         * then log an error and quit. */
++         * then log an error and skip it. */
 +        if (length > 255) {
 +            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c,
 +                          "SSL NPN protocol name too long (length=%u): %s",
 +                          length, string);
-+            return SSL_TLSEXT_ERR_OK;
++            continue;
 +        }
 +        /* Leave room for the length prefix (one byte) plus the protocol name
 +         * itself. */
 +        size += 1 + length;
 +    }
 +
++    /* If there is nothing to advertise (either because no modules added
++     * anything to the protos array, or because all strings added to the array
++     * were skipped), then we're done. */
++    if (size == 0) {
++        return SSL_TLSEXT_ERR_OK;
++    }
++
 +    /* Now we can build the string.  Copy each protocol name string into the
 +     * larger string, prefixed by its length. */
-+    unsigned char* data = apr_palloc(c->pool, size * sizeof(unsigned char));
-+    unsigned char* start = data;
++    data = apr_palloc(c->pool, size * sizeof(unsigned char));
++    start = data;
 +    for (i = 0; i < num_protos; ++i) {
-+        const char* string = APR_ARRAY_IDX(protos, i, const char*);
-+        size_t length = strlen(string);
++        const char *string = APR_ARRAY_IDX(protos, i, const char*);
++        apr_size_t length = strlen(string);
 +        *start = (unsigned char)length;
 +        ++start;
 +        memcpy(start, string, length * sizeof(unsigned char));
@@ -161,28 +162,25 @@ Index: modules/ssl/ssl_engine_kernel.c
 +    *size_out = size;
 +    return SSL_TLSEXT_ERR_OK;
 +}
-+
- #ifndef OPENSSL_NO_TLSEXT
- /*
-  * This callback function is executed when OpenSSL encounters an extended
++#endif
 Index: modules/ssl/mod_ssl.c
 ===================================================================
---- modules/ssl/mod_ssl.c	(revision 1202283)
+--- modules/ssl/mod_ssl.c	(revision 1367982)
 +++ modules/ssl/mod_ssl.c	(working copy)
 @@ -220,6 +220,18 @@
      AP_END_CMD
  };
  
-+/* Implement 'ssl_run_npn_advertise_protos_hook'. */
++/* Implement 'modssl_run_npn_advertise_protos_hook'. */
 +APR_IMPLEMENT_OPTIONAL_HOOK_RUN_ALL(
-+    ssl, AP, int, npn_advertise_protos_hook,
-+    (conn_rec* connection, apr_array_header_t* protos),
++    modssl, AP, int, npn_advertise_protos_hook,
++    (conn_rec *connection, apr_array_header_t *protos),
 +    (connection, protos), OK, DECLINED);
 +
-+/* Implement 'ssl_run_npn_proto_negotiated_hook'. */
++/* Implement 'modssl_run_npn_proto_negotiated_hook'. */
 +APR_IMPLEMENT_OPTIONAL_HOOK_RUN_ALL(
-+    ssl, AP, int, npn_proto_negotiated_hook,
-+    (conn_rec* connection, char* proto_name, apr_size_t proto_name_len),
++    modssl, AP, int, npn_proto_negotiated_hook,
++    (conn_rec *connection, const char *proto_name, apr_size_t proto_name_len),
 +    (connection, proto_name, proto_name_len), OK, DECLINED);
 +
  /*
@@ -190,7 +188,7 @@ Index: modules/ssl/mod_ssl.c
   */
 Index: modules/ssl/mod_ssl.h
 ===================================================================
---- modules/ssl/mod_ssl.h	(revision 1202283)
+--- modules/ssl/mod_ssl.h	(revision 1367982)
 +++ modules/ssl/mod_ssl.h	(working copy)
 @@ -60,5 +60,26 @@
  
@@ -202,8 +200,8 @@ Index: modules/ssl/mod_ssl.h
 + * given the connection and an APR array; it should push one or more char*'s
 + * pointing to null-terminated strings (such as "http/1.1" or "spdy/2") onto
 + * the array and return OK, or do nothing and return DECLINED. */
-+APR_DECLARE_EXTERNAL_HOOK(ssl, AP, int, npn_advertise_protos_hook,
-+                          (conn_rec* connection, apr_array_header_t* protos));
++APR_DECLARE_EXTERNAL_HOOK(modssl, AP, int, npn_advertise_protos_hook,
++                          (conn_rec *connection, apr_array_header_t *protos));
 +
 +/** The npn_proto_negotiated optional hook allows other modules to discover the
 + * name of the protocol that was chosen during the Next Protocol Negotiation
@@ -213,9 +211,25 @@ Index: modules/ssl/mod_ssl.h
 + * connection, a non-null-terminated string containing the protocol name, and
 + * the length of the string; it should do something appropriate (i.e. insert or
 + * remove filters) and return OK, or do nothing and return DECLINED. */
-+APR_DECLARE_EXTERNAL_HOOK(ssl, AP, int, npn_proto_negotiated_hook,
-+                          (conn_rec* connection, char* proto_name,
++APR_DECLARE_EXTERNAL_HOOK(modssl, AP, int, npn_proto_negotiated_hook,
++                          (conn_rec *connection, const char *proto_name,
 +                           apr_size_t proto_name_len));
 +
  #endif /* __MOD_SSL_H__ */
  /** @} */
+Index: modules/ssl/ssl_toolkit_compat.h
+===================================================================
+--- modules/ssl/ssl_toolkit_compat.h	(revision 1367982)
++++ modules/ssl/ssl_toolkit_compat.h	(working copy)
+@@ -145,6 +145,11 @@
+ #define HAVE_FIPS
+ #endif
+ 
++#if OPENSSL_VERSION_NUMBER >= 0x10001000L && !defined(OPENSSL_NO_NEXTPROTONEG) \
++    && !defined(OPENSSL_NO_TLSEXT)
++#define HAVE_TLS_NPN
++#endif
++
+ #ifndef PEM_F_DEF_CALLBACK
+ #ifdef PEM_F_PEM_DEF_CALLBACK
+ /** In OpenSSL 0.9.8 PEM_F_DEF_CALLBACK was renamed */

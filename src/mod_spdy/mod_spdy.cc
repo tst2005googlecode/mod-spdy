@@ -63,13 +63,11 @@ APR_DECLARE_OPTIONAL_FN(module*, ap_find_loaded_module_symbol,
 // #include "mod_ssl.h").
 APR_DECLARE_OPTIONAL_FN(int, ssl_engine_disable, (conn_rec*));
 APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec*));
-APR_DECLARE_EXTERNAL_HOOK(
-    ssl, AP, int, npn_advertise_protos_hook,
-    (conn_rec* connection, apr_array_header_t* protos));
-APR_DECLARE_EXTERNAL_HOOK(
-    ssl, AP, int, npn_proto_negotiated_hook,
-    (conn_rec* connection, const char* proto_name,
-     apr_size_t proto_name_len));
+APR_DECLARE_EXTERNAL_HOOK(modssl, AP, int, npn_advertise_protos_hook,
+                          (conn_rec *connection, apr_array_header_t *protos));
+APR_DECLARE_EXTERNAL_HOOK(modssl, AP, int, npn_proto_negotiated_hook,
+                          (conn_rec *connection, const char *proto_name,
+                           apr_size_t proto_name_len));
 
 }  // extern "C"
 
@@ -791,7 +789,7 @@ void RegisterHooks(apr_pool_t* pool) {
   // mod_ssl.h, for appropriately-patched versions of mod_ssl.  See TAMB 10.2.3
   // for more about optional hooks.
   APR_OPTIONAL_HOOK(
-      ssl,                        // prefix of optional hook
+      modssl,                     // prefix of optional hook
       npn_advertise_protos_hook,  // name of optional hook
       AdvertiseSpdy,              // hook function to be called
       NULL,                       // predecessors
@@ -802,7 +800,7 @@ void RegisterHooks(apr_pool_t* pool) {
   // it doesn't, so we'll do it for them.  We use APR_HOOK_LAST here, since
   // http/1.1 is our last choice.  Note that our AdvertiseHttp function won't
   // add "http/1.1" to the list if it's already there, so this is future-proof.
-  APR_OPTIONAL_HOOK(ssl, npn_advertise_protos_hook,
+  APR_OPTIONAL_HOOK(modssl, npn_advertise_protos_hook,
                     AdvertiseHttp, NULL, NULL, APR_HOOK_LAST);
 
   // Register a hook with mod_ssl to be called when NPN has been completed and
@@ -810,7 +808,7 @@ void RegisterHooks(apr_pool_t* pool) {
   // be using SPDY with the client, and enable this module if so.  This hook is
   // declared in mod_ssl.h, for appropriately-patched versions of mod_ssl.
   APR_OPTIONAL_HOOK(
-      ssl,                        // prefix of optional hook
+      modssl,                     // prefix of optional hook
       npn_proto_negotiated_hook,  // name of optional hook
       OnNextProtocolNegotiated,   // hook function to be called
       NULL,                       // predecessors
