@@ -131,7 +131,7 @@ TEST(SpdyStreamTest, HasFlowControlInSpdy3) {
 
   // After increasing the window size by eight, we should get eight more bytes,
   // and then we should still be blocked.
-  stream.AdjustWindowSize(8);
+  stream.AdjustOutputWindowSize(8);
   ExpectDataFrame(&output_queue, "klmnopqr", false);
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectNotSet();
@@ -139,11 +139,11 @@ TEST(SpdyStreamTest, HasFlowControlInSpdy3) {
   // Finally, we increase the window size by fifteen.  We should get the last
   // eight bytes of data out (with FLAG_FIN now set), the task should be
   // completed, and the remaining window size should be seven.
-  stream.AdjustWindowSize(15);
+  stream.AdjustOutputWindowSize(15);
   ExpectDataFrame(&output_queue, "stuvwxyz", true);
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectSetWithinMillis(100);
-  EXPECT_EQ(7, stream.current_window_size());
+  EXPECT_EQ(7, stream.current_output_window_size());
 }
 
 // Test that flow control is well-behaved when the stream is aborted.
@@ -198,7 +198,7 @@ TEST(SpdyStreamTest, FlowControlOverflow) {
   // Increase the window size so large that it overflows.  We should get a
   // RST_STREAM frame and the stream should be aborted.
   EXPECT_FALSE(stream.is_aborted());
-  stream.AdjustWindowSize(0x20000000);
+  stream.AdjustOutputWindowSize(0x20000000);
   EXPECT_TRUE(stream.is_aborted());
   ExpectRstStream(&output_queue, net::FLOW_CONTROL_ERROR);
   EXPECT_TRUE(output_queue.IsEmpty());
@@ -226,37 +226,37 @@ TEST(SpdyStreamTest, NegativeWindowSize) {
   ExpectDataFrame(&output_queue, "abcdefghij", false);
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectNotSet();
-  EXPECT_EQ(0, stream.current_window_size());
+  EXPECT_EQ(0, stream.current_output_window_size());
 
   // Adjust the window size down (as if due to a SETTINGS frame reducing the
   // initial window size).  Our current window size should now be negative, and
   // we should still be blocked.
-  stream.AdjustWindowSize(-5);
+  stream.AdjustOutputWindowSize(-5);
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectNotSet();
-  EXPECT_EQ(-5, stream.current_window_size());
+  EXPECT_EQ(-5, stream.current_output_window_size());
 
   // Adjust the initial window size up, but not enough to be positive.  We
   // should still be blocked.
-  stream.AdjustWindowSize(4);
+  stream.AdjustOutputWindowSize(4);
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectNotSet();
-  EXPECT_EQ(-1, stream.current_window_size());
+  EXPECT_EQ(-1, stream.current_output_window_size());
 
   // Adjust the initial window size up again.  Now we should get a few more
   // bytes out.
-  stream.AdjustWindowSize(4);
+  stream.AdjustOutputWindowSize(4);
   ExpectDataFrame(&output_queue, "klm", false);
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectNotSet();
-  EXPECT_EQ(0, stream.current_window_size());
+  EXPECT_EQ(0, stream.current_output_window_size());
 
   // Finally, open the floodgates; we should get the rest of the data.
-  stream.AdjustWindowSize(800);
+  stream.AdjustOutputWindowSize(800);
   ExpectDataFrame(&output_queue, "nopqrstuvwxyz", true);
   EXPECT_TRUE(output_queue.IsEmpty());
   runner.notification()->ExpectSetWithinMillis(100);
-  EXPECT_EQ(787, stream.current_window_size());
+  EXPECT_EQ(787, stream.current_output_window_size());
 }
 
 // Test that we handle sending empty DATA frames correctly in SPDY v2.
@@ -294,27 +294,27 @@ TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy3) {
   // suppressed.
   stream.SendOutputDataFrame("", false);
   EXPECT_TRUE(output_queue.IsEmpty());
-  EXPECT_EQ(initial_window_size, stream.current_window_size());
+  EXPECT_EQ(initial_window_size, stream.current_output_window_size());
 
   // Send one window's worth of data.  It should get sent successfully.
   const std::string data(initial_window_size, 'x');
   stream.SendOutputDataFrame(data, false);
   ExpectDataFrame(&output_queue, data, false);
   EXPECT_TRUE(output_queue.IsEmpty());
-  EXPECT_EQ(0, stream.current_window_size());
+  EXPECT_EQ(0, stream.current_output_window_size());
 
   // Try to send another empty data frame without FLAG_FIN.  It should be
   // suppressed, and we shouldn't block, even though the window size is zero.
   stream.SendOutputDataFrame("", false);
   EXPECT_TRUE(output_queue.IsEmpty());
-  EXPECT_EQ(0, stream.current_window_size());
+  EXPECT_EQ(0, stream.current_output_window_size());
 
   // Now send an empty data frame _with_ FLAG_FIN.  It should _not_ be
   // suppressed, and we still shouldn't block.
   stream.SendOutputDataFrame("", true);
   ExpectDataFrame(&output_queue, "", true);
   EXPECT_TRUE(output_queue.IsEmpty());
-  EXPECT_EQ(0, stream.current_window_size());
+  EXPECT_EQ(0, stream.current_output_window_size());
 }
 
 }  // namespace

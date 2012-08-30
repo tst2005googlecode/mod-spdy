@@ -157,8 +157,8 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
     void AddStreamTask(StreamTaskWrapper* task);
     // Remove a stream task.  Requires that the stream is currently active.
     void RemoveStreamTask(StreamTaskWrapper* task);
-    // Adjust the window size of all active streams by the same delta.
-    void AdjustAllWindowSizes(int32 delta);
+    // Adjust the output window size of all active streams by the same delta.
+    void AdjustAllOutputWindowSizes(int32 delta);
     // Abort all streams in the map.  Note that this won't immediately empty
     // the map (the tasks still have to shut down).
     void AbortAllSilently();

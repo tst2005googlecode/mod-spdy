@@ -27,7 +27,7 @@ namespace mod_spdy {
 SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
                        net::SpdyStreamId associated_stream_id,
                        net::SpdyPriority priority,
-                       int32 initial_window_size,
+                       int32 initial_output_window_size,
                        SpdyFramePriorityQueue* output_queue,
                        net::BufferedSpdyFramer* framer,
                        SpdyServerPushInterface* pusher)
@@ -38,12 +38,12 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
       framer_(framer),
       pusher_(pusher),
       condvar_(&lock_),
-      window_size_(initial_window_size),
-      aborted_(false) {
+      aborted_(false),
+      output_window_size_(initial_output_window_size) {
   DCHECK(output_queue_);
   DCHECK(framer_);
   DCHECK(pusher_);
-  DCHECK_GT(window_size_, 0);
+  DCHECK_GT(output_window_size_, 0);
   // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
   DCHECK_GE(priority, 0u);
   DCHECK_LE(priority,
@@ -73,12 +73,53 @@ void SpdyStream::AbortWithRstStream(net::SpdyStatusCodes status) {
   InternalAbortWithRstStream(status);
 }
 
-int32 SpdyStream::current_window_size() const {
+int32 SpdyStream::current_output_window_size() const {
   base::AutoLock autolock(lock_);
-  return window_size_;
+  DCHECK_GE(spdy_version(), 3);
+  return output_window_size_;
 }
 
-void SpdyStream::AdjustWindowSize(int32 delta) {
+void SpdyStream::OnInputDataConsumed(size_t size) {
+  // Sanity check: there is no input data to absorb for a server push stream,
+  // so we should only be getting called for client-initiated streams.
+  DCHECK(!is_server_push());
+
+  // Flow control only exists for SPDY v3 and up, so for SPDY v2 we don't need
+  // to bother tracking this.
+  if (spdy_version() < 3) {
+    return;
+  }
+
+  // If the size arg is zero, this method should be a no-op, so just quit now.
+  // The SPDY spec forbids sending WINDOW_UPDATE frames with a non-positive
+  // delta-window-size (SPDY draft 3 section 2.6.8).
+  if (size == 0) {
+    return;
+  }
+
+  base::AutoLock autolock(lock_);
+
+  // Don't bother with any of this if the stream has been aborted.
+  if (aborted_) {
+    return;
+  }
+
+  // Make sure there won't be any overflow shenanigans.
+  COMPILE_ASSERT(sizeof(size_t) >= sizeof(net::kSpdyStreamMaximumWindowSize),
+                 size_t_is_at_least_32_bits);
+  DCHECK_LE(size, static_cast<size_t>(net::kSpdyStreamMaximumWindowSize));
+
+  // Send a WINDOW_UPDATE frame to the client.
+  SendOutputFrame(framer_->CreateWindowUpdate(
+      stream_id_, static_cast<uint32>(size)));
+  // TODO(mdsteele): To avoid sending lots of little WINDOW_UPDATE frames, we
+  //   should automatically bunching up smaller chunks to avoid sending too
+  //   many frames.  However, to avoid possible overflow or other badness,
+  //   we'll need to also monitor and enforce input-side flow control (and
+  //   abort the stream if the client violates flow control).
+}
+
+void SpdyStream::AdjustOutputWindowSize(int32 delta) {
   base::AutoLock autolock(lock_);
 
   // Flow control only exists for SPDY v3 and up.
@@ -92,7 +133,7 @@ void SpdyStream::AdjustWindowSize(int32 delta) {
   // any blocked threads).  Note that although delta is usually positive, it
   // can also be negative, so we check for both overflow and underflow.
   const int64 new_size =
-      static_cast<int64>(window_size_) + static_cast<int64>(delta);
+      static_cast<int64>(output_window_size_) + static_cast<int64>(delta);
   if (new_size > static_cast<int64>(net::kSpdyStreamMaximumWindowSize) ||
       new_size < -static_cast<int64>(net::kSpdyStreamMaximumWindowSize)) {
     InternalAbortWithRstStream(net::FLOW_CONTROL_ERROR);
@@ -100,11 +141,11 @@ void SpdyStream::AdjustWindowSize(int32 delta) {
   }
 
   // Update the window size.
-  const int32 old_size = window_size_;
-  window_size_ = static_cast<int32>(new_size);
+  const int32 old_size = output_window_size_;
+  output_window_size_ = static_cast<int32>(new_size);
 
   // If the window size is newly positive, wake up any blocked threads.
-  if (old_size <= 0 && window_size_ > 0) {
+  if (old_size <= 0 && output_window_size_ > 0) {
     condvar_.Broadcast();
   }
 }
@@ -180,27 +221,6 @@ void SpdyStream::SendOutputHeaders(const net::SpdyHeaderBlock& headers,
       &headers));
 }
 
-void SpdyStream::SendOutputWindowUpdate(size_t delta) {
-  base::AutoLock autolock(lock_);
-
-  // Flow control only exists for SPDY v3 and up.
-  DCHECK_GE(spdy_version(), 3);
-  // The SPDY spec forbids sending WINDOW_UPDATE frames with a non-positive
-  // delta-window-size (SPDY draft 3 section 2.6.8).
-  DCHECK_GT(delta, 0u);
-  // Make sure there won't be any overflow shenanigans.
-  COMPILE_ASSERT(sizeof(size_t) >= sizeof(net::kSpdyStreamMaximumWindowSize),
-                 size_t_is_at_least_32_bits);
-  DCHECK_LE(delta, static_cast<size_t>(net::kSpdyStreamMaximumWindowSize));
-
-  if (aborted_) {
-    return;
-  }
-
-  SendOutputFrame(framer_->CreateWindowUpdate(
-      stream_id_, static_cast<uint32>(delta)));
-}
-
 void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
   base::AutoLock autolock(lock_);
   if (aborted_) {
@@ -226,7 +246,7 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
     // until the client increases it (or we abort).  Note that the window size
     // can be negative if the client decreased the maximum window size (with a
     // SETTINGS frame) after we already sent data (SPDY draft 3 section 2.6.8).
-    while (!aborted_ && window_size_ <= 0) {
+    while (!aborted_ && output_window_size_ <= 0) {
       condvar_.Wait();
     }
     if (aborted_) {
@@ -237,17 +257,17 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
     // send, send a smaller data frame with the first part of the data, and
     // then we'll sleep until the window size is increased before sending the
     // rest.
-    DCHECK_GT(window_size_, 0);
+    DCHECK_GT(output_window_size_, 0);
     const size_t length = std::min(
-        data.size(), static_cast<size_t>(window_size_));
+        data.size(), static_cast<size_t>(output_window_size_));
     const net::SpdyDataFlags flags =
         flag_fin && length == data.size() ?
         net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
     SendOutputFrame(framer_->CreateDataFrame(
         stream_id_, data.data(), length, flags));
     data = data.substr(length);
-    window_size_ -= length;
-    DCHECK_GE(window_size_, 0);
+    output_window_size_ -= length;
+    DCHECK_GE(output_window_size_, 0);
   }
 }
 

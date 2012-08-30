@@ -43,7 +43,7 @@ class SpdyStream {
   SpdyStream(net::SpdyStreamId stream_id,
              net::SpdyStreamId associated_stream_id_,
              net::SpdyPriority priority,
-             int32 initial_window_size,
+             int32 initial_output_window_size,
              SpdyFramePriorityQueue* output_queue,
              net::BufferedSpdyFramer* framer,
              SpdyServerPushInterface* pusher);
@@ -81,7 +81,14 @@ class SpdyStream {
 
   // What is the current window size for this stream?  This is mostly useful
   // for debugging.
-  int32 current_window_size() const;
+  int32 current_output_window_size() const;
+
+  // This should be called by the stream thread for each chunk of input data
+  // that it consumes.  The SpdyStream object will take care of sending
+  // WINDOW_UPDATE frames as appropriate (of course not sending WINDOW_UPDATE
+  // frames for SPDY/2 connections).  The connection thread must not call this
+  // method.
+  void OnInputDataConsumed(size_t size);
 
   // This should be called by the connection thread to adjust the window size,
   // either due to receiving a WINDOW_UPDATE frame from the client, or from the
@@ -92,7 +99,7 @@ class SpdyStream {
   // This method should *not* be called by the stream thread; the SpdyStream
   // object will automatically take care of decreasing the window size for sent
   // data.
-  void AdjustWindowSize(int32 delta);
+  void AdjustOutputWindowSize(int32 delta);
 
   // Provide a SPDY frame sent from the client.  This is to be called from the
   // master connection thread.  This method takes ownership of the frame
@@ -116,11 +123,6 @@ class SpdyStream {
 
   // Send a HEADERS frame to the client for this stream.
   void SendOutputHeaders(const net::SpdyHeaderBlock& headers, bool flag_fin);
-
-  // Send a WINDOW_UPDATE frame to the client for this stream, indicating that
-  // we have consumed the given quantity of data.  The delta must be within the
-  // legal range for window update frames (from 1 to 0x7fffffff).
-  void SendOutputWindowUpdate(size_t delta);
 
   // Send a SPDY data frame to the client on this stream.
   void SendOutputDataFrame(base::StringPiece data, bool flag_fin);
@@ -148,20 +150,24 @@ class SpdyStream {
   // stream.  Must be holding lock_ to call this method.
   void InternalAbortWithRstStream(net::SpdyStatusCodes status);
 
+  // These fields are all either constant or thread-safe, and do not require
+  // additional synchronization.  In the case of framer_, we are careful to
+  // only call certain methods, in a thread-safe way (even though some of those
+  // methods are marked as non-const).
   const net::SpdyStreamId stream_id_;
   const net::SpdyStreamId associated_stream_id_;
   const net::SpdyPriority priority_;
   SpdyFrameQueue input_queue_;
   SpdyFramePriorityQueue* const output_queue_;
-  net::BufferedSpdyFramer* const framer_;
+  net::BufferedSpdyFramer* const framer_;  // we call only thread-safe methods
   SpdyServerPushInterface* const pusher_;
 
   // The lock protects the fields below.  The above fields do not require
   // additional synchronization.
   mutable base::Lock lock_;
   base::ConditionVariable condvar_;
-  int32 window_size_;
   bool aborted_;
+  int32 output_window_size_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyStream);
 };

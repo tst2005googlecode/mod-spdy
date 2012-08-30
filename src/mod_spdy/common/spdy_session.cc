@@ -606,7 +606,7 @@ void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
 
   VLOG(4) << "[stream " << stream_id << "] Received WINDOW_UPDATE("
           << delta_window_size << ") frame";
-  stream->AdjustWindowSize(delta_window_size);
+  stream->AdjustOutputWindowSize(delta_window_size);
 }
 
 void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {
@@ -638,7 +638,7 @@ void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {
   // We also have to adjust the window size of all currently active streams by
   // the delta (SPDY draft 3 section 2.6.8).
   base::AutoLock autolock(stream_map_lock_);
-  stream_map_.AdjustAllWindowSizes(delta);
+  stream_map_.AdjustAllOutputWindowSizes(delta);
 }
 
 // Compress (if necessary), send, and then delete the given frame object.
@@ -852,10 +852,10 @@ SpdyStream* SpdySession::SpdyStreamMap::GetStream(
   return stream;
 }
 
-void SpdySession::SpdyStreamMap::AdjustAllWindowSizes(int32 delta) {
+void SpdySession::SpdyStreamMap::AdjustAllOutputWindowSizes(int32 delta) {
   for (TaskMap::const_iterator iter = tasks_.begin();
        iter != tasks_.end(); ++iter) {
-    iter->second->stream()->AdjustWindowSize(delta);
+    iter->second->stream()->AdjustOutputWindowSize(delta);
   }
 }
 
