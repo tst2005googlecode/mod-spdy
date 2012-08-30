@@ -99,6 +99,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // called by stream threads, not just by the connection thread.
   virtual SpdyServerPushInterface::PushStatus StartServerPush(
       net::SpdyStreamId associated_stream_id,
+      int32 server_push_depth,
       net::SpdyPriority priority,
       const net::SpdyHeaderBlock& request_headers);
 
@@ -115,6 +116,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
     StreamTaskWrapper(SpdySession* spdy_session,
                       net::SpdyStreamId stream_id,
                       net::SpdyStreamId associated_stream_id,
+                      int32 server_push_depth,
                       net::SpdyPriority priority);
     virtual ~StreamTaskWrapper();
 

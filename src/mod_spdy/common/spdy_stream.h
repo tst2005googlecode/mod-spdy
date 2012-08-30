@@ -42,6 +42,7 @@ class SpdyStream {
   // actually mutate state, so we require a non-const pointer here).
   SpdyStream(net::SpdyStreamId stream_id,
              net::SpdyStreamId associated_stream_id_,
+             int32 server_push_depth,
              net::SpdyPriority priority,
              int32 initial_output_window_size,
              SpdyFramePriorityQueue* output_queue,
@@ -64,6 +65,11 @@ class SpdyStream {
   net::SpdyStreamId associated_stream_id() const {
     return associated_stream_id_;
   }
+
+  // Get the current depth of the stream. 0 if this is a client initiated
+  // stream or associated_stream.depth+1 if this stream was created as
+  // a result of another stream.
+  int32 server_push_depth() const { return server_push_depth_; }
 
   // Get the priority of this stream.
   net::SpdyPriority priority() const { return priority_; }
@@ -156,6 +162,7 @@ class SpdyStream {
   // methods are marked as non-const).
   const net::SpdyStreamId stream_id_;
   const net::SpdyStreamId associated_stream_id_;
+  const int32 server_push_depth_;
   const net::SpdyPriority priority_;
   SpdyFrameQueue input_queue_;
   SpdyFramePriorityQueue* const output_queue_;

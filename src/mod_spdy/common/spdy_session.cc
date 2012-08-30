@@ -198,6 +198,7 @@ void SpdySession::Run() {
 
 SpdyServerPushInterface::PushStatus SpdySession::StartServerPush(
     net::SpdyStreamId associated_stream_id,
+    int32 server_push_depth,
     net::SpdyPriority priority,
     const net::SpdyHeaderBlock& request_headers) {
   // Server push is pretty ill-defined in SPDY v2, so we require v3 or higher.
@@ -264,7 +265,7 @@ SpdyServerPushInterface::PushStatus SpdySession::StartServerPush(
 
     // Create task and add it to the stream map.
     task_wrapper = new StreamTaskWrapper(
-        this, stream_id, associated_stream_id, priority);
+        this, stream_id, associated_stream_id, server_push_depth, priority);
     stream_map_.AddStreamTask(task_wrapper);
     // TODO(mdsteele): Here we serialize an uncompressed frame to send to the
     //   stream, which the stream task will then have to re-parse.  This is
@@ -429,7 +430,9 @@ void SpdySession::OnSynStream(
     // Initiate a new stream.
     last_client_stream_id_ = std::max(last_client_stream_id_, stream_id);
     task_wrapper = new StreamTaskWrapper(
-        this, stream_id, associated_stream_id, priority);
+        this, stream_id, associated_stream_id,
+        0, // server_push_depth = 0
+        priority);
     stream_map_.AddStreamTask(task_wrapper);
     const net::SpdyControlFlags flags = static_cast<net::SpdyControlFlags>(
         (fin ? net::CONTROL_FLAG_FIN : 0) |
@@ -761,9 +764,10 @@ SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     SpdySession* spdy_session,
     net::SpdyStreamId stream_id,
     net::SpdyStreamId associated_stream_id,
+    int32 server_push_depth,
     net::SpdyPriority priority)
     : spdy_session_(spdy_session),
-      stream_(stream_id, associated_stream_id, priority,
+      stream_(stream_id, associated_stream_id, server_push_depth, priority,
               spdy_session_->initial_window_size_,
               &spdy_session_->output_queue_, &spdy_session_->framer_,
               spdy_session_),

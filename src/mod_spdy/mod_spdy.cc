@@ -693,7 +693,8 @@ void InsertRequestFilters(request_rec* request) {
   // Insert a filter that will initiate server pushes when so instructed (such
   // as by an X-Associated-Content header).
   mod_spdy::ServerPushFilter* server_push_filter =
-      new mod_spdy::ServerPushFilter(slave_context->slave_stream(), request);
+      new mod_spdy::ServerPushFilter(slave_context->slave_stream(), request,
+                                     mod_spdy::GetServerConfig(request));
   PoolRegisterDelete(request->pool, server_push_filter);
   ap_add_output_filter_handle(
       gServerPushFilterHandle,  // filter handle

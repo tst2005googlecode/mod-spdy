@@ -22,6 +22,8 @@
 
 #include "base/basictypes.h"
 #include "base/string_piece.h"
+#include "mod_spdy/common/spdy_server_config.h"
+
 
 namespace mod_spdy {
 
@@ -33,7 +35,8 @@ class SpdyStream;
 class ServerPushFilter {
  public:
   // Does not take ownership of either argument.
-  ServerPushFilter(SpdyStream* stream, request_rec* request);
+  ServerPushFilter(SpdyStream* stream, request_rec* request,
+                   const SpdyServerConfig* server_cfg);
   ~ServerPushFilter();
 
   // Read data from the given brigade and write the result through the given
@@ -60,6 +63,7 @@ class ServerPushFilter {
 
   SpdyStream* const stream_;
   request_rec* const request_;
+  const SpdyServerConfig* server_cfg_;
 
   DISALLOW_COPY_AND_ASSIGN(ServerPushFilter);
 };

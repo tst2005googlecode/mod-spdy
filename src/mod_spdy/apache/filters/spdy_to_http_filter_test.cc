@@ -41,9 +41,10 @@ namespace {
 
 class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
  public:
-    MOCK_METHOD3(StartServerPush,
+    MOCK_METHOD4(StartServerPush,
                  mod_spdy::SpdyServerPushInterface::PushStatus(
                      net::SpdyStreamId associated_stream_id,
+                     int32 server_push_depth,
                      net::SpdyPriority priority,
                      const net::SpdyHeaderBlock& request_headers));
 };
@@ -54,7 +55,7 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
       : framer_(GetParam()),
         stream_id_(1),
         priority_(framer_.GetHighestPriority()),
-        stream_(stream_id_, 0, priority_, net::kSpdyStreamInitialWindowSize,
+        stream_(stream_id_, 0, 0, priority_, net::kSpdyStreamInitialWindowSize,
                 &output_queue_, &framer_, &pusher_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());

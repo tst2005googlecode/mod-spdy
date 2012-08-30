@@ -47,9 +47,10 @@ namespace {
 
 class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
  public:
-    MOCK_METHOD3(StartServerPush,
+    MOCK_METHOD4(StartServerPush,
                  mod_spdy::SpdyServerPushInterface::PushStatus(
                      net::SpdyStreamId associated_stream_id,
+                     int32 server_push_depth,
                      net::SpdyPriority priority,
                      const net::SpdyHeaderBlock& request_headers));
 };
@@ -161,10 +162,12 @@ TEST_P(HttpToSpdyFilterTest, ResponseWithContentLength) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyStreamId associated_stream_id = 0;
+  const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
-  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_, &pusher_);
+  mod_spdy::SpdyStream stream(
+      stream_id, associated_stream_id, initial_server_push_depth, priority,
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send part of the header data into the filter:
@@ -243,10 +246,12 @@ TEST_P(HttpToSpdyFilterTest, ChunkedResponse) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyStreamId associated_stream_id = 0;
+  const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
-  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_, &pusher_);
+  mod_spdy::SpdyStream stream(
+      stream_id, associated_stream_id, initial_server_push_depth, priority,
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send part of the header data into the filter:
@@ -314,10 +319,12 @@ TEST_P(HttpToSpdyFilterTest, RedirectResponse) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 5;
   const net::SpdyStreamId associated_stream_id = 0;
+  const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
-  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_, &pusher_);
+  mod_spdy::SpdyStream stream(
+      stream_id, associated_stream_id, initial_server_push_depth, priority,
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send part of the header data into the filter:
@@ -351,10 +358,12 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 5;
   const net::SpdyStreamId associated_stream_id = 0;
+  const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
-  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_, &pusher_);
+  mod_spdy::SpdyStream stream(
+      stream_id, associated_stream_id, initial_server_push_depth, priority,
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send the header data into the filter:
@@ -400,10 +409,12 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 7;
   const net::SpdyStreamId associated_stream_id = 0;
+  const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetLowestPriority();
-  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_, &pusher_);
+  mod_spdy::SpdyStream stream(
+      stream_id, associated_stream_id, initial_server_push_depth, priority,
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send the header data into the filter:
@@ -445,10 +456,12 @@ TEST_P(HttpToSpdyFilterTest, ServerPushedStream) {
   // Set up our data structures that we're testing:
   const net::SpdyStreamId stream_id = 4;
   const net::SpdyStreamId associated_stream_id = 3;
+  const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
-  mod_spdy::SpdyStream stream(stream_id, associated_stream_id, priority,
-                              net::kSpdyStreamInitialWindowSize,
-                              &output_queue_, &buffered_framer_, &pusher_);
+  mod_spdy::SpdyStream stream(
+      stream_id, associated_stream_id, initial_server_push_depth, priority,
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      &pusher_);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
 
   // Send the response data into the filter:

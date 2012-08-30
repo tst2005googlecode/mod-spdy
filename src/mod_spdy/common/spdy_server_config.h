@@ -44,6 +44,12 @@ class SpdyServerConfig {
     return max_threads_per_process_.get();
   }
 
+  // Return the maximum number of recursive levels to follow
+  // X-Associated-Content headers
+  int max_server_push_depth() const {
+    return max_server_push_depth_.get();
+  }
+
   // If nonzero, assume (unencrypted) SPDY/x for non-SSL connections, where x
   // is the version number returned here.  This will most likely break normal
   // browsers, but is useful for testing.
@@ -64,6 +70,9 @@ class SpdyServerConfig {
   }
   void set_max_threads_per_process(int n) {
     max_threads_per_process_.set(n);
+  }
+  void set_max_server_push_depth(int n) {
+    max_server_push_depth_.set(n);
   }
   void set_use_spdy_version_without_ssl(int n) {
     use_spdy_version_without_ssl_.set(n);
@@ -97,6 +106,7 @@ class SpdyServerConfig {
   Option<int> max_streams_per_connection_;
   Option<int> min_threads_per_process_;
   Option<int> max_threads_per_process_;
+  Option<int> max_server_push_depth_;
   Option<int> use_spdy_version_without_ssl_;
   Option<int> vlog_level_;
   // Note: Add more config options here as needed; be sure to also update the

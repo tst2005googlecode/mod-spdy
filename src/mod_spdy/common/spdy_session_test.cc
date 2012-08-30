@@ -101,7 +101,7 @@ ACTION_P5(StartServerPush, session, stream_id, pri, url, expected_status) {
   push_headers[":scheme"] = "https";
   push_headers[":version"] = "HTTP/1.1";
   EXPECT_EQ(expected_status,
-            session->StartServerPush(stream_id, pri, push_headers));
+            session->StartServerPush(stream_id, 0, pri, push_headers));
 }
 
 ACTION_P(SendResponseHeaders, task) {
@@ -182,7 +182,7 @@ void FakeStreamTask::Run() {
     push_headers[":path"] = "/styles/main.css";
     push_headers[":scheme"] = "https";
     push_headers[":version"] = "HTTP/1.1";
-    session_->StartServerPush(stream_->stream_id(), priority, push_headers);
+    session_->StartServerPush(stream_->stream_id(), 0, priority, push_headers);
   }
 
   stream_->SendOutputDataFrame("foobar", false);

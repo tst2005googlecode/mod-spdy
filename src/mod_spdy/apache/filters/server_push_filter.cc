@@ -20,6 +20,7 @@
 #include "base/string_number_conversions.h"  // for StringToUint
 #include "base/string_piece.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"
 
 namespace mod_spdy {
@@ -97,8 +98,9 @@ net::SpdyPriority ParseOptionalPriority(SpdyStream* spdy_stream,
 
 }  // namespace
 
-ServerPushFilter::ServerPushFilter(SpdyStream* stream, request_rec* request)
-    : stream_(stream), request_(request) {
+ServerPushFilter::ServerPushFilter(SpdyStream* stream, request_rec* request,
+                                   const SpdyServerConfig* server_cfg)
+    : stream_(stream), request_(request), server_cfg_(server_cfg) {
   DCHECK(stream_);
   DCHECK(request_);
 }
@@ -109,8 +111,10 @@ apr_status_t ServerPushFilter::Write(ap_filter_t* filter,
                                      apr_bucket_brigade* input_brigade) {
   DCHECK_EQ(request_, filter->r);
   // We only do server pushes for SPDY v3 and later.  Also, to avoid infinite
-  // push loops, we don't allow a server-pushed stream to push more streams.
-  if (stream_->spdy_version() >= 3 && !stream_->is_server_push()) {
+  // push loops, we don't allow push streams to invoke further push streams
+  // beyond a specified depth.
+  if (stream_->spdy_version() >= 3 &&
+      stream_->server_push_depth() < server_cfg_->max_server_push_depth()) {
     // Parse and start pushes for each X-Associated-Content header, if any.
     // (Note that APR tables allow multiple entries with the same key, just
     // like HTTP headers.)
@@ -134,6 +138,7 @@ apr_status_t ServerPushFilter::Write(ap_filter_t* filter,
 void ServerPushFilter::ParseXAssociatedContentHeader(base::StringPiece value) {
   AbsorbWhiteSpace(&value);
   bool first_url = true;
+
   while (!value.empty()) {
     // The URLs should be separated by commas, so a comma should proceed each
     // URL except the first.
@@ -150,6 +155,7 @@ void ServerPushFilter::ParseXAssociatedContentHeader(base::StringPiece value) {
       LOG(INFO) << "Parse error in X-Associated-Content: expected quoted URL";
       return;
     }
+
     // The URL may optionally be followed by a priority.  If the priority is
     // not there, use the lowest-importance priority by default.
     net::SpdyPriority priority = ParseOptionalPriority(stream_, &value);

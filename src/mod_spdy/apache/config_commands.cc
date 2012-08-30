@@ -148,7 +148,12 @@ const command_rec kSpdyConfigCommands[] = {
       "SpdyMaxThreadsPerProcess",
       GlobalOnly<SetPositiveInt<
         &SpdyServerConfig::set_max_threads_per_process> >,
-      "Maxiumum number of worker threads to spawn per child process"),
+      "Maximum number of worker threads to spawn per child process"),
+  SPDY_CONFIG_COMMAND(
+      "SpdyMaxServerPushDepth",
+      SetNonNegativeInt<
+        &SpdyServerConfig::set_max_server_push_depth>,
+      "Maximum number of recursive levels to follow X-Associated-Content header. 0 Disables. Defaults to 1."),
   // Debugging commands, which should not be used in production:
   SPDY_CONFIG_COMMAND(
       "SpdyDebugLoggingVerbosity",

@@ -26,6 +26,7 @@ namespace mod_spdy {
 
 SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
                        net::SpdyStreamId associated_stream_id,
+                       int32 server_push_depth,
                        net::SpdyPriority priority,
                        int32 initial_output_window_size,
                        SpdyFramePriorityQueue* output_queue,
@@ -33,6 +34,7 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
                        SpdyServerPushInterface* pusher)
     : stream_id_(stream_id),
       associated_stream_id_(associated_stream_id),
+      server_push_depth_(server_push_depth),
       priority_(priority),
       output_queue_(output_queue),
       framer_(framer),
@@ -275,7 +277,7 @@ SpdyServerPushInterface::PushStatus SpdyStream::StartServerPush(
     net::SpdyPriority priority,
     const net::SpdyHeaderBlock& request_headers) {
   DCHECK_GE(spdy_version(), 3);
-  return pusher_->StartServerPush(stream_id_, priority, request_headers);
+  return pusher_->StartServerPush(stream_id_, server_push_depth_+1, priority, request_headers);
 }
 
 void SpdyStream::SendOutputFrame(net::SpdyFrame* frame) {

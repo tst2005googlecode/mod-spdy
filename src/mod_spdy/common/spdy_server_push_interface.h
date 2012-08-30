@@ -53,6 +53,7 @@ class SpdyServerPushInterface {
   // headers to _pretend_ that the client sent to the server.
   virtual PushStatus StartServerPush(
       net::SpdyStreamId associated_stream_id,
+      int32 server_push_depth,
       net::SpdyPriority priority,
       const net::SpdyHeaderBlock& request_headers) = 0;
 
