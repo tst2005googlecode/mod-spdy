@@ -20,6 +20,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/string_piece.h"
 #include "base/time.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/testing/async_task_runner.h"
 #include "mod_spdy/common/testing/notification.h"
@@ -32,12 +33,15 @@
 using mod_spdy::testing::FlagFinIs;
 using mod_spdy::testing::IsDataFrameWith;
 using mod_spdy::testing::IsRstStream;
+using mod_spdy::testing::IsWindowUpdate;
+using mod_spdy::testing::StreamIdIs;
 using testing::AllOf;
 
 namespace {
 
 const net::SpdyStreamId kStreamId = 1;
 const net::SpdyStreamId kAssocStreamId = 0;
+const int32 kInitServerPushDepth = 0;
 const net::SpdyPriority kPriority = 2;
 
 class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
@@ -58,7 +62,8 @@ void ExpectDataFrame(mod_spdy::SpdyFramePriorityQueue* output_queue,
   ASSERT_TRUE(output_queue->BlockingPop(
       base::TimeDelta::FromMilliseconds(100), &raw_frame));
   scoped_ptr<net::SpdyFrame> frame(raw_frame);
-  EXPECT_THAT(*frame, AllOf(IsDataFrameWith(data), FlagFinIs(flag_fin)));
+  EXPECT_THAT(*frame, AllOf(IsDataFrameWith(data), StreamIdIs(kStreamId),
+                            FlagFinIs(flag_fin)));
 }
 
 // Expect to get a frame from the queue (within 100 milliseconds) that is a
@@ -69,7 +74,18 @@ void ExpectRstStream(mod_spdy::SpdyFramePriorityQueue* output_queue,
   ASSERT_TRUE(output_queue->BlockingPop(
       base::TimeDelta::FromMilliseconds(100), &raw_frame));
   scoped_ptr<net::SpdyFrame> frame(raw_frame);
-  EXPECT_THAT(*frame, IsRstStream(status));
+  EXPECT_THAT(*frame, AllOf(IsRstStream(status), StreamIdIs(kStreamId)));
+}
+
+// Expect to get a frame from the queue (within 100 milliseconds) that is a
+// WINDOW_UPDATE frame with the given delta.
+void ExpectWindowUpdate(mod_spdy::SpdyFramePriorityQueue* output_queue,
+                        uint32 delta) {
+  net::SpdyFrame* raw_frame;
+  ASSERT_TRUE(output_queue->BlockingPop(
+      base::TimeDelta::FromMilliseconds(100), &raw_frame));
+  scoped_ptr<net::SpdyFrame> frame(raw_frame);
+  EXPECT_THAT(*frame, AllOf(IsWindowUpdate(delta), StreamIdIs(kStreamId)));
 }
 
 // When run, a SendDataTask sends the given data to the given stream.
@@ -93,10 +109,9 @@ TEST(SpdyStreamTest, NoFlowControlInSpdy2) {
   net::BufferedSpdyFramer framer(2);
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
-  const int32 initial_server_push_depth = 0;
   const int32 initial_window_size = 10;
   mod_spdy::SpdyStream stream(
-      kStreamId, kAssocStreamId, initial_server_push_depth, kPriority, 
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
       initial_window_size, &output_queue, &framer, &pusher);
 
   // Send more data than can fit in the initial window size.
@@ -114,10 +129,9 @@ TEST(SpdyStreamTest, HasFlowControlInSpdy3) {
   net::BufferedSpdyFramer framer(3);
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
-  const int32 initial_server_push_depth = 0;
   const int32 initial_window_size = 10;
   mod_spdy::SpdyStream stream(
-      kStreamId, kAssocStreamId, initial_server_push_depth, kPriority, 
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
       initial_window_size, &output_queue, &framer, &pusher);
 
   // Send more data than can fit in the initial window size.
@@ -154,10 +168,9 @@ TEST(SpdyStreamTest, FlowControlAbort) {
   net::BufferedSpdyFramer framer(3);
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
-  const int32 initial_server_push_depth = 0;
   const int32 initial_window_size = 7;
   mod_spdy::SpdyStream stream(
-      kStreamId, kAssocStreamId, initial_server_push_depth, kPriority, 
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
       initial_window_size, &output_queue, &framer, &pusher);
 
   // Send more data than can fit in the initial window size.
@@ -196,9 +209,9 @@ TEST(SpdyStreamTest, FlowControlOverflow) {
   net::BufferedSpdyFramer framer(3);
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
-  const int32 initial_server_push_depth = 0;
-  mod_spdy::SpdyStream stream(kStreamId, kAssocStreamId, initial_server_push_depth,
-      kPriority, 0x60000000, &output_queue, &framer, &pusher);
+  mod_spdy::SpdyStream stream(
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
+      0x60000000, &output_queue, &framer, &pusher);
 
   // Increase the window size so large that it overflows.  We should get a
   // RST_STREAM frame and the stream should be aborted.
@@ -215,10 +228,9 @@ TEST(SpdyStreamTest, NegativeWindowSize) {
   net::BufferedSpdyFramer framer(3);
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
-  const int32 initial_server_push_depth = 0;
   const int32 initial_window_size = 10;
   mod_spdy::SpdyStream stream(
-      kStreamId, kAssocStreamId, initial_server_push_depth, kPriority, 
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
       initial_window_size, &output_queue, &framer, &pusher);
 
   // Send more data than can fit in the initial window size.
@@ -270,9 +282,8 @@ TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy2) {
   net::BufferedSpdyFramer framer(2);
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
-  const int32 initial_server_push_depth = 0;
   mod_spdy::SpdyStream stream(
-      kStreamId, kAssocStreamId, initial_server_push_depth, kPriority,
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
       net::kSpdyStreamInitialWindowSize, &output_queue, &framer, &pusher);
 
   // Try to send an empty data frame without FLAG_FIN.  It should be
@@ -293,9 +304,8 @@ TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy3) {
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
   const int32 initial_window_size = 10;
-  const int32 initial_server_push_depth = 0;
   mod_spdy::SpdyStream stream(
-      kStreamId, kAssocStreamId, initial_server_push_depth, kPriority,
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
       initial_window_size, &output_queue, &framer, &pusher);
 
   // Try to send an empty data frame without FLAG_FIN.  It should be
@@ -323,6 +333,125 @@ TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy3) {
   ExpectDataFrame(&output_queue, "", true);
   EXPECT_TRUE(output_queue.IsEmpty());
   EXPECT_EQ(0, stream.current_output_window_size());
+}
+
+TEST(SpdyStreamTest, InputFlowControl) {
+  net::BufferedSpdyFramer framer(3);
+  mod_spdy::SpdyFramePriorityQueue output_queue;
+  MockSpdyServerPushInterface pusher;
+  mod_spdy::SpdyStream stream(
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
+      net::kSpdyStreamInitialWindowSize, &output_queue, &framer, &pusher);
+
+  // The initial window size is 64K.
+  EXPECT_EQ(65536, stream.current_input_window_size());
+
+  // Post a SYN_STREAM frame to the input.  This should not affect the input
+  // window size.
+  net::SpdyHeaderBlock request_headers;
+  request_headers[mod_spdy::http::kContentLength] = "4000";
+  request_headers[mod_spdy::spdy::kSpdy3Host] = "www.example.com";
+  request_headers[mod_spdy::spdy::kSpdy3Method] = "GET";
+  request_headers[mod_spdy::spdy::kSpdy3Path] = "/index.html";
+  request_headers[mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
+  stream.PostInputFrame(framer.CreateSynStream(
+        kStreamId, kAssocStreamId, kPriority,
+        0,  // 0 = no credential slot
+        net::CONTROL_FLAG_NONE,
+        false,  // false = uncompressed
+        &request_headers));
+  EXPECT_EQ(65536, stream.current_input_window_size());
+
+  // Send a little bit of data.  This should reduce the input window size.
+  const std::string data1("abcdefghij");
+  stream.PostInputFrame(framer.CreateDataFrame(
+      kStreamId, data1.data(), data1.size(), net::DATA_FLAG_NONE));
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65526, stream.current_input_window_size());
+
+  // Inform the stream that we have consumed this data.  However, we shouldn't
+  // yet send a WINDOW_UPDATE frame for so small an amount, so the window size
+  // should stay the same.
+  stream.OnInputDataConsumed(10);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65526, stream.current_input_window_size());
+
+  // Send the rest of the data.  This should further reduce the input window
+  // size.
+  const std::string data2(9000, 'x');
+  stream.PostInputFrame(framer.CreateDataFrame(
+      kStreamId, data2.data(), data2.size(), net::DATA_FLAG_FIN));
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(56526, stream.current_input_window_size());
+
+  // Inform the stream that we have consumed a bit more of the data.  However,
+  // we still shouldn't yet send a WINDOW_UPDATE frame, and the window size
+  // should still stay the same.
+  stream.OnInputDataConsumed(10);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(56526, stream.current_input_window_size());
+
+  // Now say that we've consumed a whole bunch of data.  At this point, we
+  // should get a WINDOW_UPDATE frame for everything consumed so far, and the
+  // window size should increase accordingly.
+  stream.OnInputDataConsumed(8900);
+  ExpectWindowUpdate(&output_queue, 8920);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65446, stream.current_input_window_size());
+
+  // Consume the last of the data.  This is now just a little bit, so no need
+  // for a WINDOW_UPDATE here.
+  stream.OnInputDataConsumed(90);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65446, stream.current_input_window_size());
+}
+
+TEST(SpdyStreamTest, InputFlowControlError) {
+  net::BufferedSpdyFramer framer(3);
+  mod_spdy::SpdyFramePriorityQueue output_queue;
+  MockSpdyServerPushInterface pusher;
+  mod_spdy::SpdyStream stream(
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
+      net::kSpdyStreamInitialWindowSize, &output_queue, &framer, &pusher);
+
+  // Send a bunch of data.  This should reduce the input window size.
+  const std::string data1(1000, 'x');
+  for (int i = 0; i < 65; ++i) {
+    EXPECT_EQ(65536 - i * 1000, stream.current_input_window_size());
+    stream.PostInputFrame(framer.CreateDataFrame(
+        kStreamId, data1.data(), data1.size(), net::DATA_FLAG_NONE));
+    EXPECT_TRUE(output_queue.IsEmpty());
+  }
+  EXPECT_EQ(536, stream.current_input_window_size());
+  EXPECT_FALSE(stream.is_aborted());
+
+  // Send a bit more data than there is room in the window size.  This should
+  // trigger a RST_STREAM.
+  const std::string data2(537, 'y');
+  stream.PostInputFrame(framer.CreateDataFrame(
+      kStreamId, data2.data(), data2.size(), net::DATA_FLAG_NONE));
+  ExpectRstStream(&output_queue, net::FLOW_CONTROL_ERROR);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_TRUE(stream.is_aborted());
+}
+
+TEST(SpdyStreamTest, NoInputFlowControlInSpdy2) {
+  net::BufferedSpdyFramer framer(2);
+  mod_spdy::SpdyFramePriorityQueue output_queue;
+  MockSpdyServerPushInterface pusher;
+  mod_spdy::SpdyStream stream(
+      kStreamId, kAssocStreamId, kInitServerPushDepth, kPriority,
+      net::kSpdyStreamInitialWindowSize, &output_queue, &framer, &pusher);
+
+  // Send more data than will fit in the window size.  However, we shouldn't
+  // get an error, because this is SPDY/2 and there is no flow control.
+  const std::string data1(1000, 'x');
+  for (int i = 0; i < 70; ++i) {
+    stream.PostInputFrame(framer.CreateDataFrame(
+        kStreamId, data1.data(), data1.size(), net::DATA_FLAG_NONE));
+    EXPECT_TRUE(output_queue.IsEmpty());
+    EXPECT_FALSE(stream.is_aborted());
+  }
 }
 
 }  // namespace

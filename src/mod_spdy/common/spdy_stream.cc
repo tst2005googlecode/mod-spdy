@@ -22,6 +22,16 @@
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
 
+namespace {
+
+// The smallest WINDOW_UPDATE delta we're willing to send.  If the client sends
+// us less than this much data, we wait for more data before sending a
+// WINDOW_UPDATE frame (so that we don't end up sending lots of little ones).
+const size_t kMinWindowUpdateSize =
+    static_cast<size_t>(net::kSpdyStreamInitialWindowSize) / 8;
+
+}  // namespace
+
 namespace mod_spdy {
 
 SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
@@ -41,7 +51,11 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
       pusher_(pusher),
       condvar_(&lock_),
       aborted_(false),
-      output_window_size_(initial_output_window_size) {
+      output_window_size_(initial_output_window_size),
+      // TODO(mdsteele): Make our initial input window size configurable (we
+      //   would send the chosen value to the client with a SETTINGS frame).
+      input_window_size_(net::kSpdyStreamInitialWindowSize),
+      input_bytes_consumed_(0) {
   DCHECK(output_queue_);
   DCHECK(framer_);
   DCHECK(pusher_);
@@ -75,6 +89,12 @@ void SpdyStream::AbortWithRstStream(net::SpdyStatusCodes status) {
   InternalAbortWithRstStream(status);
 }
 
+int32 SpdyStream::current_input_window_size() const {
+  base::AutoLock autolock(lock_);
+  DCHECK_GE(spdy_version(), 3);
+  return input_window_size_;
+}
+
 int32 SpdyStream::current_output_window_size() const {
   base::AutoLock autolock(lock_);
   DCHECK_GE(spdy_version(), 3);
@@ -93,8 +113,6 @@ void SpdyStream::OnInputDataConsumed(size_t size) {
   }
 
   // If the size arg is zero, this method should be a no-op, so just quit now.
-  // The SPDY spec forbids sending WINDOW_UPDATE frames with a non-positive
-  // delta-window-size (SPDY draft 3 section 2.6.8).
   if (size == 0) {
     return;
   }
@@ -106,19 +124,54 @@ void SpdyStream::OnInputDataConsumed(size_t size) {
     return;
   }
 
+  // Make sure the current input window size is sane.  Although there are
+  // provisions in the SPDY spec that allow the window size to be temporarily
+  // negative, or to go above its default initial size, with our current
+  // implementation that should never happen.  Once we make the initial input
+  // window size configurable, we may need to adjust or remove these checks.
+  DCHECK_GE(input_window_size_, 0);
+  DCHECK_LE(input_window_size_, net::kSpdyStreamInitialWindowSize);
+
+  // Add the newly consumed data to the total.  Assuming our caller is behaving
+  // well (even if the client isn't) -- that is, they are only consuming as
+  // much data as we have put into the input queue -- there should be no
+  // overflow here, and the new value should be at most the amount of
+  // un-WINDOW_UPDATE-ed data we've received.  The reason we can be sure of
+  // this is that PostInputFrame() refuses to put more data into the queue than
+  // the window size allows, and aborts the stream if the client tries.
+  input_bytes_consumed_ += size;
+  DCHECK_GE(input_bytes_consumed_, size);
+  DCHECK_LE(input_bytes_consumed_,
+            static_cast<size_t>(net::kSpdyStreamInitialWindowSize -
+                                input_window_size_));
+
+  // We don't want to send lots of little WINDOW_UPDATE frames (as that would
+  // waste bandwidth), so only bother sending one once it would have a
+  // reasonably large value.
+  // TODO(mdsteele): Consider also tracking whether we have received a FLAG_FIN
+  //   on this stream; once we've gotten FLAG_FIN, there will be no more data,
+  //   so we don't need to send any more WINDOW_UPDATE frames.
+  if (input_bytes_consumed_ < kMinWindowUpdateSize) {
+    return;
+  }
+
+  // The SPDY spec forbids sending WINDOW_UPDATE frames with a non-positive
+  // delta-window-size (SPDY draft 3 section 2.6.8).  But since we already
+  // checked above that size was positive, input_bytes_consumed_ should now be
+  // positive as well.
+  DCHECK_GT(input_bytes_consumed_, 0u);
   // Make sure there won't be any overflow shenanigans.
   COMPILE_ASSERT(sizeof(size_t) >= sizeof(net::kSpdyStreamMaximumWindowSize),
                  size_t_is_at_least_32_bits);
-  DCHECK_LE(size, static_cast<size_t>(net::kSpdyStreamMaximumWindowSize));
+  DCHECK_LE(input_bytes_consumed_,
+            static_cast<size_t>(net::kSpdyStreamMaximumWindowSize));
 
-  // Send a WINDOW_UPDATE frame to the client.
+  // Send a WINDOW_UPDATE frame to the client and update our window size.
   SendOutputFrame(framer_->CreateWindowUpdate(
-      stream_id_, static_cast<uint32>(size)));
-  // TODO(mdsteele): To avoid sending lots of little WINDOW_UPDATE frames, we
-  //   should automatically bunching up smaller chunks to avoid sending too
-  //   many frames.  However, to avoid possible overflow or other badness,
-  //   we'll need to also monitor and enforce input-side flow control (and
-  //   abort the stream if the client violates flow control).
+      stream_id_, static_cast<uint32>(input_bytes_consumed_)));
+  input_window_size_ += input_bytes_consumed_;
+  DCHECK_LE(input_window_size_, net::kSpdyStreamInitialWindowSize);
+  input_bytes_consumed_ = 0;
 }
 
 void SpdyStream::AdjustOutputWindowSize(int32 delta) {
@@ -153,6 +206,33 @@ void SpdyStream::AdjustOutputWindowSize(int32 delta) {
 }
 
 void SpdyStream::PostInputFrame(net::SpdyFrame* frame) {
+  base::AutoLock autolock(lock_);
+  if (aborted_) {
+    return;
+  }
+
+  // If this is a data frame (and we're using SPDY v3 or above) we need to
+  // track flow control.
+  if (!frame->is_control_frame() && spdy_version() >= 3) {
+    DCHECK_GE(input_window_size_, 0);
+    const int32 size = frame->length();
+    // If receiving this much data would overflow the window size, then abort
+    // the stream with a flow control error.
+    if (size > input_window_size_) {
+      LOG(WARNING) << "Client violated flow control by sending too much data "
+                   << "to stream " << stream_id_ << ".  Aborting stream.";
+      InternalAbortWithRstStream(net::FLOW_CONTROL_ERROR);
+      return;  // Quit without posting the frame to the queue.
+    }
+    // Otherwise, decrease the window size.  It will be increased again once
+    // the data has been comsumed (by OnInputDataConsumed()).
+    else {
+      input_window_size_ -= size;
+    }
+  }
+
+  // Now that we've decreased the window size as necessary, we can make the
+  // frame available for consumption by the stream thread.
   input_queue_.Insert(frame);
 }
 

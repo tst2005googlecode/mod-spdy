@@ -32,7 +32,8 @@ class SpdyFramePriorityQueue;
 // coordinate and pass SPDY frames between the SPDY-to-HTTP filter, the
 // HTTP-to-SPDY filter, and the master SPDY connection thread.  This class is
 // thread-safe, and in particular can be used concurrently by the stream thread
-// and the connection thread.
+// and the connection thread (although certain methods are meant to only ever
+// be called by one thread or the other; see the doc comments).
 class SpdyStream {
  public:
   // The SpdyStream object does *not* take ownership of any of these arguments.
@@ -85,15 +86,17 @@ class SpdyStream {
   // Same as AbortSilently, but also sends a RST_STREAM frame for this stream.
   void AbortWithRstStream(net::SpdyStatusCodes status);
 
-  // What is the current window size for this stream?  This is mostly useful
-  // for debugging.
+  // What are the current window sizes for this stream?  These are mostly
+  // useful for debugging.  Requires that spdy_version() >= 3.
+  int32 current_input_window_size() const;
   int32 current_output_window_size() const;
 
   // This should be called by the stream thread for each chunk of input data
   // that it consumes.  The SpdyStream object will take care of sending
-  // WINDOW_UPDATE frames as appropriate (of course not sending WINDOW_UPDATE
-  // frames for SPDY/2 connections).  The connection thread must not call this
-  // method.
+  // WINDOW_UPDATE frames as appropriate (automatically bunching up smaller,
+  // chunks to avoid sending too many frames, and of course not sending
+  // WINDOW_UPDATE frames for SPDY/2 connections).  The connection thread must
+  // not call this method.
   void OnInputDataConsumed(size_t size);
 
   // This should be called by the connection thread to adjust the window size,
@@ -175,6 +178,8 @@ class SpdyStream {
   base::ConditionVariable condvar_;
   bool aborted_;
   int32 output_window_size_;
+  int32 input_window_size_;
+  size_t input_bytes_consumed_;  // consumed since we last sent a WINDOW_UPDATE
 
   DISALLOW_COPY_AND_ASSIGN(SpdyStream);
 };
