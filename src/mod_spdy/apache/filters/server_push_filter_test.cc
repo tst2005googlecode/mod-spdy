@@ -74,6 +74,7 @@ class ServerPushFilterTest : public testing::TestWithParam<int> {
     request_->connection = connection_;
     request_->headers_in = apr_table_make(local_.pool(), 5);
     request_->headers_out = apr_table_make(local_.pool(), 5);
+    request_->err_headers_out = apr_table_make(local_.pool(), 5);
     request_->protocol = const_cast<char*>("HTTP/1.1");
     request_->unparsed_uri = const_cast<char*>(kRefererUrl);
     ap_filter_->c = connection_;
@@ -179,51 +180,55 @@ TEST_P(ServerPushFilterTest, MultipleXAssociatedContentHeaders) {
   const net::SpdyPriority lowest =
       mod_spdy::LowestSpdyPriorityForVersion(stream.spdy_version());
 
-  testing::Sequence s1, s2, s3;
+  testing::Sequence s1, s2, s3, s4, s5;
 
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1), Eq(2u), 
-                                       Contains(
-                                           Pair(mod_spdy::spdy::kSpdy3Path, 
-                                                "/x1.png")))).InSequence(s1);
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1), Eq(0u), 
-                                       Contains(
-                                           Pair(mod_spdy::spdy::kSpdy3Path, 
-                                                "/x2.png")))).InSequence(s1);
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(2u),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x1.png")))).InSequence(s1);
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(0u),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x2.png")))).InSequence(s1);
 
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1), Eq(lowest), 
-                                       Contains(
-                                           Pair(mod_spdy::spdy::kSpdy3Path, 
-                                                "/x3.png")))).InSequence(s2);
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(lowest),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x3.png")))).InSequence(s2);
 
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1),
-                                       Eq(3u), Contains(
-                                           Pair(mod_spdy::spdy::kSpdy3Path, 
-                                                "/x4.png")))).InSequence(s3);
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1), Eq(lowest), 
-                                       Contains(
-                                           Pair(mod_spdy::spdy::kSpdy3Path, 
-                                                "/x5.png")))).InSequence(s3);
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1), Eq(1u), 
-                                       Contains(
-                                           Pair(mod_spdy::spdy::kSpdy3Path, 
-                                                "/x6.png")))).InSequence(s3);
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(3u),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x4.png")))).InSequence(s3);
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(lowest),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x5.png")))).InSequence(s3);
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(1u),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x6.png")))).InSequence(s3);
 
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(2u),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x7.png")))).InSequence(s4);
+
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(lowest),
+      Contains(Pair(mod_spdy::spdy::kSpdy3Path, "/x8.png")))).InSequence(s5);
+
+  // Add multiple X-Associated-Content headers to both headers_out and
+  // err_headers_out.
   apr_table_addn(request_->headers_out, mod_spdy::http::kXAssociatedContent,
                  "\"/x1.png\":2, \"/x2.png\":0");
   apr_table_addn(request_->headers_out, mod_spdy::http::kXAssociatedContent,
                  "\"/x3.png\"");
   apr_table_addn(request_->headers_out, mod_spdy::http::kXAssociatedContent,
                  "\"/x4.png\":3, \"/x5.png\", \"/x6.png\":1");
+  apr_table_addn(request_->err_headers_out, mod_spdy::http::kXAssociatedContent,
+                 "\"/x7.png\" : 2");
+  apr_table_addn(request_->err_headers_out, mod_spdy::http::kXAssociatedContent,
+                 "\"/x8.png\"");
 
   WriteBrigade(&server_push_filter);
-  // All three X-Associated-Content headers should get removed.
+  // All the X-Associated-Content headers should get removed.
   EXPECT_TRUE(apr_table_get(request_->headers_out,
+                            mod_spdy::http::kXAssociatedContent) == NULL);
+  EXPECT_TRUE(apr_table_get(request_->err_headers_out,
                             mod_spdy::http::kXAssociatedContent) == NULL);
 }
 

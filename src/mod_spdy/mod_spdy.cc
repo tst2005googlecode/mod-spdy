@@ -838,10 +838,14 @@ void RegisterHooks(apr_pool_t* pool) {
       "SPDY_SERVER_PUSH",         // name
       ServerPushFilter,           // filter function
       NULL,                       // init function (n/a in our case)
-      // We use CONTENT_SET+1 so that we come in just after mod_headers (which
-      // uses CONTENT_SET).  That way, a user can set an X-Associated-Content
-      // header with mod_headers and have it get picked up by this filter.
-      static_cast<ap_filter_type>(AP_FTYPE_CONTENT_SET + 1));
+      // We use PROTOCOL-1 so that we come in just before the core HTTP_HEADER
+      // filter serializes the response header table.  That way we have a
+      // chance to remove the X-Associated-Content header before it is sent to
+      // the client, while still letting us run as late as possible so that we
+      // can catch headers set by a variety of modules (for example,
+      // mod_headers doesn't run until the CONTENT_SET stage, so if we ran at
+      // the RESOURCE stage, that would be too early).
+      static_cast<ap_filter_type>(AP_FTYPE_PROTOCOL - 1));
 
   // Register our optional functions, so that other modules can retrieve and
   // use them.  See TAMB 10.1.2.

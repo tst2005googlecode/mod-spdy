@@ -124,10 +124,18 @@ apr_status_t ServerPushFilter::Write(ap_filter_t* filter,
         request_->headers_out,  // the apr_table_t to iterate over
         // Varargs: zero or more char* keys to iterate over, followed by NULL
         http::kXAssociatedContent, NULL);
+    // We need to give the same treatment to err_headers_out as we just gave to
+    // headers_out.  Depending on how the X-Associated-Content header was set,
+    // it might end up in either one.  For example, using a mod_headers Header
+    // directive will put the header in headers_out, but using a PHP header()
+    // function call will put the header in err_headers_out.
+    apr_table_do(OnXAssociatedContent, this, request_->err_headers_out,
+                 http::kXAssociatedContent, NULL);
   }
   // Even in cases where we forbid pushes from this stream, we still purge the
-  // X-Associated-Content header.
+  // X-Associated-Content header (from both headers_out and err_headers_out).
   apr_table_unset(request_->headers_out, http::kXAssociatedContent);
+  apr_table_unset(request_->err_headers_out, http::kXAssociatedContent);
 
   // Remove ourselves from the filter chain.
   ap_remove_output_filter(filter);
