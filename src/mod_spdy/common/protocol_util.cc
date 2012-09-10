@@ -61,6 +61,28 @@ extern const char* const kSpdy3Version = ":version";
 
 }  // namespace spdy
 
+const char* GoAwayStatusCodeToString(net::SpdyGoAwayStatus status) {
+  switch (status) {
+    case net::GOAWAY_OK:             return "OK";
+    case net::GOAWAY_PROTOCOL_ERROR: return "PROTOCOL_ERROR";
+    case net::GOAWAY_INTERNAL_ERROR: return "INTERNAL_ERROR";
+    default:                         return "<unknown>";
+  }
+}
+
+const char* SettingsIdToString(net::SpdySettingsIds id) {
+  switch (id) {
+    case net::SETTINGS_UPLOAD_BANDWIDTH:       return "UPLOAD_BANDWIDTH";
+    case net::SETTINGS_DOWNLOAD_BANDWIDTH:     return "DOWNLOAD_BANDWIDTH";
+    case net::SETTINGS_ROUND_TRIP_TIME:        return "ROUND_TRIP_TIME";
+    case net::SETTINGS_MAX_CONCURRENT_STREAMS: return "MAX_CONCURRENT_STREAMS";
+    case net::SETTINGS_CURRENT_CWND:           return "CURRENT_CWND";
+    case net::SETTINGS_DOWNLOAD_RETRANS_RATE:  return "DOWNLOAD_RETRANS_RATE";
+    case net::SETTINGS_INITIAL_WINDOW_SIZE:    return "INITIAL_WINDOW_SIZE";
+    default:                                   return "<unknown>";
+  }
+}
+
 base::StringPiece FrameData(const net::SpdyFrame& frame) {
   return base::StringPiece(
       frame.data(), frame.length() + net::SpdyFrame::kHeaderSize);

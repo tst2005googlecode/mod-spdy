@@ -244,8 +244,8 @@ SpdyServerPushInterface::PushStatus SpdySession::StartServerPush(
     }
 
     // In the unlikely event that the session stays open so long that we run
-    // out of server push stream IDs, we may do any more pushes on this session
-    // (SPDY draft 3 section 2.3.2).
+    // out of server push stream IDs, we may not do any more pushes on this
+    // session (SPDY draft 3 section 2.3.2).
     DCHECK_LE(last_server_push_stream_id_, kMaxServerPushStreamId);
     if (last_server_push_stream_id_ >= kMaxServerPushStreamId) {
       return SpdyServerPushInterface::CANNOT_PUSH_EVER_AGAIN;
@@ -260,7 +260,7 @@ SpdyServerPushInterface::PushStatus SpdySession::StartServerPush(
     if (stream_map_.IsStreamActive(stream_id)) {
       LOG(DFATAL) << "Next server push stream ID already in use: "
                   << stream_id;
-      return PUSH_INTERNAL_ERROR;
+      return SpdyServerPushInterface::PUSH_INTERNAL_ERROR;
     }
 
     // Create task and add it to the stream map.
@@ -475,19 +475,12 @@ void SpdySession::OnRstStream(net::SpdyStreamId stream_id,
       VLOG(2) << "Client cancelled/refused stream " << stream_id;
       AbortStreamSilently(stream_id);
       break;
-    // If there was a PROTOCOL_ERROR, the session is probably unrecoverable,
-    // so just log an error and abort the session.
-    case net::PROTOCOL_ERROR:
-      LOG(WARNING) << "Client sent RST_STREAM with PROTOCOL_ERROR for stream "
-                   << stream_id << ".  Aborting stream and sending GOAWAY.";
-      AbortStreamSilently(stream_id);
-      SendGoAwayFrame(net::GOAWAY_OK);
-      break;
-    // For all other errors, abort the stream, but log a warning first.
-    // TODO(mdsteele): Should we have special behavior for any other kinds of
-    // errors?
+    // If there was an error, abort the stream, but log a warning first.
+    // TODO(mdsteele): Should we have special behavior for different kinds of
+    //   errors?
     default:
-      LOG(WARNING) << "Client sent RST_STREAM with status=" << status
+      LOG(WARNING) << "Client sent RST_STREAM with "
+                   << RstStreamStatusCodeToString(status)
                    << " for stream " << stream_id << ".  Aborting stream.";
       AbortStreamSilently(stream_id);
       break;
@@ -497,7 +490,7 @@ void SpdySession::OnRstStream(net::SpdyStreamId stream_id,
 void SpdySession::OnSetting(net::SpdySettingsIds id,
                             uint8 flags, uint32 value) {
   VLOG(4) << "Received SETTING (flags=" << flags << "): "
-          << id << "=" << value;
+          << SettingsIdToString(id) << "=" << value;
   switch (id) {
     case net::SETTINGS_MAX_CONCURRENT_STREAMS:
       max_concurrent_pushes_ = value;
@@ -528,7 +521,7 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
 }
 
 void SpdySession::OnPing(uint32 unique_id) {
-  VLOG(4) << "Received PING frame";
+  VLOG(4) << "Received PING frame (id=" << unique_id << ")";
   // The SPDY spec requires the server to ignore even-numbered PING frames that
   // it did not initiate (SPDY draft 3 section 2.6.5), and right now, we never
   // initiate pings.
@@ -543,12 +536,36 @@ void SpdySession::OnPing(uint32 unique_id) {
 
 void SpdySession::OnGoAway(net::SpdyStreamId last_accepted_stream_id,
                            net::SpdyGoAwayStatus status) {
-  VLOG(4) << "Received GOAWAY frame (last_accepted_stream_id="
+  VLOG(4) << "Received GOAWAY frame (status="
+          << GoAwayStatusCodeToString(status) << ", last_accepted_stream_id="
           << last_accepted_stream_id << ")";
+
   // Take note that we have received a GOAWAY frame; we should not start any
   // new server push streams on this session.
-  base::AutoLock autolock(stream_map_lock_);
-  received_goaway_ = true;
+  {
+    base::AutoLock autolock(stream_map_lock_);
+    received_goaway_ = true;
+  }
+
+  // If this was not a normal shutdown (GOAWAY_OK), we should probably log a
+  // warning to let the user know something's up.
+  switch (status) {
+    case net::GOAWAY_OK:
+      break;
+    case net::GOAWAY_PROTOCOL_ERROR:
+      LOG(WARNING) << "Client sent GOAWAY with PROTOCOL_ERROR.  Possibly we "
+                   << "did something wrong?";
+      break;
+    case net::GOAWAY_INTERNAL_ERROR:
+      LOG(WARNING) << "Client sent GOAWAY with INTERNAL_ERROR.  Apparently "
+                   << "they're broken?";
+      break;
+    default:
+      LOG(ERROR) << "Client sent GOAWAY with invalid status code ("
+                 << status << ").  Sending GOAWAY.";
+      SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
+      break;
+  }
 }
 
 void SpdySession::OnHeaders(net::SpdyStreamId stream_id,

@@ -62,10 +62,17 @@ extern const char* const kSpdy3Version;
 
 }  // namespace spdy
 
+// Convert various SPDY enum types to strings.
+const char* GoAwayStatusCodeToString(net::SpdyGoAwayStatus status);
+inline const char* RstStreamStatusCodeToString(net::SpdyStatusCodes status) {
+  return net::SpdyFramer::StatusCodeToString(status);
+}
+const char* SettingsIdToString(net::SpdySettingsIds id);
+
 // Return a view of the raw bytes of the frame.
 base::StringPiece FrameData(const net::SpdyFrame& frame);
 
-// Return true if this header is forbidden in SPDY responses, ignoring case.
+// Return true if this header is forbidden in SPDY responses (ignoring case).
 bool IsInvalidSpdyResponseHeader(base::StringPiece key);
 
 // Return the SpdyPriority representing the least important priority for the
