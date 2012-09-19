@@ -267,7 +267,7 @@ TEST_F(HttpResponseParserTest, LargeContentLength) {
       "Content-Length: 5497558138880\r\n"
       "\r\n"
       "This is the beginning of 5TB of data."));
-  ASSERT_EQ(5497558138843uL, parser_.GetRemainingBytesForTest());
+  ASSERT_EQ(5497558138843uLL, parser_.GetRemainingBytesForTest());
 }
 
 }  // namespace
