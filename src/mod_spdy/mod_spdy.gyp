@@ -85,7 +85,9 @@
         'apache/master_connection_context.cc',
         'apache/pool_util.cc',
         'apache/sockaddr_util.cc',
+        'apache/slave_connection.cc',
         'apache/slave_connection_context.cc',
+        'apache/ssl_util.cc',
       ],
     },
     {

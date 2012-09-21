@@ -37,14 +37,13 @@
 #include "mod_spdy/apache/apache_spdy_stream_task_factory.h"
 #include "mod_spdy/apache/config_commands.h"
 #include "mod_spdy/apache/config_util.h"
-#include "mod_spdy/apache/filters/http_to_spdy_filter.h"
-#include "mod_spdy/apache/filters/server_push_filter.h"
-#include "mod_spdy/apache/filters/spdy_to_http_filter.h"
 #include "mod_spdy/apache/id_pool.h"
+#include "mod_spdy/apache/filters/server_push_filter.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/master_connection_context.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/apache/slave_connection_context.h"
+#include "mod_spdy/apache/ssl_util.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
@@ -61,8 +60,6 @@ APR_DECLARE_OPTIONAL_FN(module*, ap_find_loaded_module_symbol,
 
 // Declaring modified mod_ssl's optional hooks here (so that we don't need to
 // #include "mod_ssl.h").
-APR_DECLARE_OPTIONAL_FN(int, ssl_engine_disable, (conn_rec*));
-APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec*));
 APR_DECLARE_EXTERNAL_HOOK(modssl, AP, int, npn_advertise_protos_hook,
                           (conn_rec *connection, apr_array_header_t *protos));
 APR_DECLARE_EXTERNAL_HOOK(modssl, AP, int, npn_proto_negotiated_hook,
@@ -92,20 +89,12 @@ const char* const kPhpModuleNames[] = {
   "php6_module"
 };
 
-// These global variables store the filter handles for our filters.  Normally,
+// This global variable stores the filter handle for our push filter.  Normally,
 // global variables would be very dangerous in a concurrent environment like
-// Apache, but these ones are okay because they are assigned just once, at
+// Apache, but this one is okay because it is assigned just once, at
 // start-up (during which Apache is running single-threaded; see TAMB 2.2.1),
 // and are read-only thereafter.
-ap_filter_rec_t* gHttpToSpdyFilterHandle = NULL;
 ap_filter_rec_t* gServerPushFilterHandle = NULL;
-ap_filter_rec_t* gSpdyToHttpFilterHandle = NULL;
-
-// These global variables store pointers to "optional functions" defined in
-// mod_ssl.  See TAMB 10.1.2 for more about optional functions.  These, too,
-// are assigned just once, at start-up.
-int (*gDisableSslForConnection)(conn_rec*) = NULL;
-int (*gIsUsingSslForConnection)(conn_rec*) = NULL;
 
 // A process-global thread pool for processing SPDY streams concurrently.  This
 // is initialized once in *each child process* by our child-init hook.  Note
@@ -137,27 +126,8 @@ int spdy_get_version(conn_rec* connection) {
   return 0;
 }
 
-// See TAMB 8.4.2
-apr_status_t SpdyToHttpFilter(ap_filter_t* filter,
-                              apr_bucket_brigade* brigade,
-                              ap_input_mode_t mode,
-                              apr_read_type_e block,
-                              apr_off_t readbytes) {
-  mod_spdy::SpdyToHttpFilter* spdy_to_http_filter =
-      static_cast<mod_spdy::SpdyToHttpFilter*>(filter->ctx);
-  return spdy_to_http_filter->Read(filter, brigade, mode, block, readbytes);
-}
-
-// See TAMB 8.4.1
-apr_status_t HttpToSpdyFilter(ap_filter_t* filter,
-                              apr_bucket_brigade* input_brigade) {
-  mod_spdy::HttpToSpdyFilter* http_to_spdy_filter =
-      static_cast<mod_spdy::HttpToSpdyFilter*>(filter->ctx);
-  return http_to_spdy_filter->Write(filter, input_brigade);
-}
-
-apr_status_t ServerPushFilter(ap_filter_t* filter,
-                              apr_bucket_brigade* input_brigade) {
+apr_status_t ServerPushFilterFunc(ap_filter_t* filter,
+                                  apr_bucket_brigade* input_brigade) {
   mod_spdy::ServerPushFilter* server_push_filter =
       static_cast<mod_spdy::ServerPushFilter*>(filter->ctx);
   return server_push_filter->Write(filter, input_brigade);
@@ -165,32 +135,7 @@ apr_status_t ServerPushFilter(ap_filter_t* filter,
 
 // Called on server startup, after all modules have loaded.
 void RetrieveOptionalFunctions() {
-  gDisableSslForConnection = APR_RETRIEVE_OPTIONAL_FN(ssl_engine_disable);
-  gIsUsingSslForConnection = APR_RETRIEVE_OPTIONAL_FN(ssl_is_https);
-  // If mod_ssl isn't installed, we'll get back NULL for these functions.  Our
-  // other hook functions will fail gracefully (i.e. do nothing) if these
-  // functions are NULL, but if the user installed mod_spdy without mod_ssl and
-  // expected it to do anything, we should warn them otherwise.
-  //
-  // Note: Alternatively, it may be that there's no mod_ssl, but mod_spdy has
-  // been configured to assume SPDY for non-SSL connections, in which case this
-  // warning is untrue.  But there's no easy way to check the server config
-  // from here, and normal users should never use that config option anyway
-  // (it's for debugging), so I don't think the spurious warning is a big deal.
-  if (gDisableSslForConnection == NULL &&
-      gIsUsingSslForConnection == NULL) {
-    LOG(WARNING) << "It seems that mod_spdy is installed but mod_ssl isn't.  "
-                 << "Without SSL, the server cannot ever use SPDY.";
-  }
-  // Whether or not mod_ssl is installed, either both functions should be
-  // non-NULL or both functions should be NULL.  Otherwise, something is wrong
-  // (like, maybe some kind of bizarre mutant mod_ssl is installed) and
-  // mod_spdy probably won't work correctly.
-  if ((gDisableSslForConnection == NULL) ^
-      (gIsUsingSslForConnection == NULL)) {
-    LOG(DFATAL) << "Some, but not all, of mod_ssl's optional functions are "
-                << "available.  What's going on?";
-  }
+  mod_spdy::RetrieveModSslFunctions();
 }
 
 // Called after configuration has completed.
@@ -307,8 +252,7 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
   DCHECK(mod_spdy::GetServerConfig(connection)->spdy_enabled());
 
   // Disable mod_ssl for the slave connection so it doesn't get in our way.
-  if (gDisableSslForConnection == NULL ||
-      gDisableSslForConnection(connection) == 0) {
+  if (!mod_spdy::DisableSslForConnection(connection)) {
     // Hmm, mod_ssl either isn't installed or isn't enabled.  That should be
     // impossible (we wouldn't _have_ a slave connection without having SSL for
     // the master connection), unless we're configured to assume SPDY for
@@ -349,8 +293,7 @@ int PreConnection(conn_rec* connection, void* csd) {
     // Check if this connection is over SSL; if not, we can't do NPN, so we
     // definitely won't be using SPDY (unless we're configured to assume SPDY
     // for non-SSL connections).
-    const bool using_ssl = (gIsUsingSslForConnection != NULL &&
-                            gIsUsingSslForConnection(connection) != 0);
+    const bool using_ssl = mod_spdy::IsUsingSslForConnection(connection);
     if (!using_ssl) {
       // This is not an SSL connection, so we can't talk SPDY on it _unless_ we
       // have opted to assume SPDY over non-SSL connections (presumably for
@@ -381,23 +324,16 @@ int PreConnection(conn_rec* connection, void* csd) {
 
     DCHECK(mod_spdy::GetServerConfig(connection)->spdy_enabled());
 
-    // Instantiate and add our SPDY-to-HTTP filter.
-    mod_spdy::SpdyToHttpFilter* spdy_to_http_filter =
-        new mod_spdy::SpdyToHttpFilter(slave_context->slave_stream());
-    mod_spdy::PoolRegisterDelete(connection->pool, spdy_to_http_filter);
+    // Add our input and output filters.
     ap_add_input_filter_handle(
-        gSpdyToHttpFilterHandle,  // filter handle
-        spdy_to_http_filter,      // context (any void* we want)
+        slave_context->input_filter_handle(),  // filter handle
+        slave_context->input_filter_context(), // context (any void* we want)
         NULL,                     // request object
         connection);              // connection object
 
-    // Instantiate and add our HTTP-to-SPDY filter.
-    mod_spdy::HttpToSpdyFilter* http_to_spdy_filter =
-        new mod_spdy::HttpToSpdyFilter(slave_context->slave_stream());
-    PoolRegisterDelete(connection->pool, http_to_spdy_filter);
     ap_add_output_filter_handle(
-        gHttpToSpdyFilterHandle,    // filter handle
-        http_to_spdy_filter,        // context (any void* we want)
+        slave_context->output_filter_handle(),    // filter handle
+        slave_context->output_filter_context(),   // context (any void* we want)
         NULL,                       // request object
         connection);                // connection object
 
@@ -691,16 +627,20 @@ void InsertRequestFilters(request_rec* request) {
       mod_spdy::GetSlaveConnectionContext(connection);
 
   // Insert a filter that will initiate server pushes when so instructed (such
-  // as by an X-Associated-Content header).
-  mod_spdy::ServerPushFilter* server_push_filter =
-      new mod_spdy::ServerPushFilter(slave_context->slave_stream(), request,
-                                     mod_spdy::GetServerConfig(request));
-  PoolRegisterDelete(request->pool, server_push_filter);
-  ap_add_output_filter_handle(
-      gServerPushFilterHandle,  // filter handle
-      server_push_filter,       // context (any void* we want)
-      request,                  // request object
-      connection);              // connection object
+  // as by an X-Associated-Content header). This is conditional on this
+  // connection being managed entirely on mod_spdy, and not being done on
+  // behalf of someone else using the slave connection API.
+  if (slave_context->slave_stream() != NULL) {
+    mod_spdy::ServerPushFilter* server_push_filter =
+        new mod_spdy::ServerPushFilter(slave_context->slave_stream(), request,
+                                       mod_spdy::GetServerConfig(request));
+    PoolRegisterDelete(request->pool, server_push_filter);
+    ap_add_output_filter_handle(
+        gServerPushFilterHandle,  // filter handle
+        server_push_filter,       // context (any void* we want)
+        request,                  // request object
+        connection);              // connection object
+  }
 }
 
 apr_status_t InvokeIdPoolDestroyInstance(void*) {
@@ -816,27 +756,15 @@ void RegisterHooks(apr_pool_t* pool) {
       NULL,                       // successors
       APR_HOOK_MIDDLE);           // position
 
-  // Register our input filter, and store the filter handle into a global
-  // variable so we can use it later to instantiate our filter into a filter
-  // chain.  The "filter type" argument below determines where in the filter
-  // chain our filter will be placed.  We use AP_FTYPE_NETWORK so that we will
-  // be at the very end of the input chain for slave connections, in place of
-  // the usual core input filter.
-  gSpdyToHttpFilterHandle = ap_register_input_filter(
-      "SPDY_TO_HTTP",             // name
-      SpdyToHttpFilter,           // filter function
-      NULL,                       // init function (n/a in our case)
-      AP_FTYPE_NETWORK);          // filter type
+  // Create the various filters that will be used to route bytes to/from us
+  // on slave connections.
+  mod_spdy::ApacheSpdyStreamTaskFactory::InitFilters();
 
-  // Now register our output filters, analogously to the input filter above.
-  gHttpToSpdyFilterHandle = ap_register_output_filter(
-      "HTTP_TO_SPDY",             // name
-      HttpToSpdyFilter,           // filter function
-      NULL,                       // init function (n/a in our case)
-      AP_FTYPE_NETWORK);          // filter type
+  // Also create the filter we will use to detect us being instructed to
+  // do server pushes.
   gServerPushFilterHandle = ap_register_output_filter(
       "SPDY_SERVER_PUSH",         // name
-      ServerPushFilter,           // filter function
+      ServerPushFilterFunc,       // filter function
       NULL,                       // init function (n/a in our case)
       // We use PROTOCOL-1 so that we come in just before the core HTTP_HEADER
       // filter serializes the response header table.  That way we have a
