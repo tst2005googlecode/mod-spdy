@@ -53,7 +53,7 @@ class ThreadPool::ThreadPoolExecutor : public Executor {
   virtual void Stop();
 
  private:
-  friend class WorkerThread;
+  friend class ThreadPool;
   ThreadPool* const master_;
   base::ConditionVariable stopping_condvar_;
   bool stopped_;  // protected by master_->lock_
@@ -75,6 +75,8 @@ void ThreadPool::ThreadPoolExecutor::AddTask(net_instaweb::Function* task,
     if (!master_->zombies_.empty()) {
       std::set<WorkerThread*> zombies;
       zombies.swap(master_->zombies_);
+      // Joining these threads should be basically instant, since they've
+      // already terminated.  But to be safe, let's unlock while we join them.
       base::AutoUnlock autounlock(master_->lock_);
       ThreadPool::JoinThreads(zombies);
     }
@@ -242,71 +244,28 @@ void ThreadPool::WorkerThread::ThreadMain() {
     // shut itself down.
     if (master_->task_queue_.empty()) {
       DCHECK_LE(time_remaining.InSecondsF(), 0.0);
-      DCHECK_GE(master_->workers_.size(), master_->min_threads_);
-      // Don't shut us down if the thread pool is already at the minimum number
-      // of threads; just go back to the top of the while (true) loop.
-      if (master_->workers_.size() <= master_->min_threads_) {
-        continue;
+      // Ask the master if we should stop.  If this returns true, this worker
+      // has been zombified, so we're free to terminate the thread.
+      if (master_->TryZombifyIdleThread(this)) {
+        return;  // Yes, we should stop; terminate the thread.
+      } else {
+        continue;  // No, we shouldn't stop; jump to the top of the while loop.
       }
-      // Remove this thread from the worker set.
-      DCHECK_EQ(1u, master_->workers_.count(this));
-      master_->workers_.erase(this);
-      // When a (joinable) thread terminates, it must still be cleaned up,
-      // either by another thread joining it, or by detatching it.  However,
-      // the master's not shutting down here, so it doesn't know to join this
-      // thread, and the Chromium thread abstraction we're using doesn't
-      // currently allow us to detach a thread.  So instead, we place this
-      // worker object into a "zombie" set, which the master thread can reap
-      // later on.  Threads that have terminated but that haven't been joined
-      // yet use up only a small amount of memory (I think), so it's okay if we
-      // don't reap it right away, as long as we don't try to spawn new threads
-      // while there's still lots of zombies.
-      DCHECK(!master_->shutting_down_);
-      DCHECK_EQ(0u, master_->zombies_.count(this));
-      master_->zombies_.insert(this);
-      // Terminate the thread.
-      return;
     }
 
-    // Otherwise, there must be at least one task available now, so pop the
-    // highest-priority task from the queue.  Note that smaller values
-    // correspond to higher priorities (SPDY draft 3 section 2.3.3), so
-    // task_queue_.begin() gets us the highest-priority pending task.
-    DCHECK(!master_->task_queue_.empty());
-    TaskQueue::iterator task_iter = master_->task_queue_.begin();
-    const Task task = task_iter->second;
-    master_->task_queue_.erase(task_iter);
-
-    // Increment the count of active tasks for the executor that owns this
-    // task; we'll decrement it again when the task completes.
-    ++(master_->active_task_counts_[task.owner]);
-
+    // Otherwise, there must be at least one task available now.  Grab one from
+    // the master, who will then treat us as busy until we complete it.
+    const Task task = master_->GetNextTask();
     // Release the lock while we execute the task.  Note that we use AutoUnlock
     // here rather than one AutoLock for the above code and another for the
     // below code, so that we don't have to release and reacquire the lock at
     // the edge of the while-loop.
-    ++(master_->num_busy_workers_);
-    DCHECK_LE(master_->num_busy_workers_, master_->workers_.size());
     {
       base::AutoUnlock autounlock(master_->lock_);
       task.function->CallRun();
     }
-    --(master_->num_busy_workers_);
-    DCHECK_GE(master_->num_busy_workers_, 0u);
-
-    // We've completed the task and reaquired the lock, so decrement the count
-    // of active tasks for this owner.
-    OwnerMap::iterator count_iter =
-        master_->active_task_counts_.find(task.owner);
-    DCHECK(count_iter != master_->active_task_counts_.end());
-    DCHECK(count_iter->second > 0);
-    --(count_iter->second);
-    // If this was the last active task for the owner, notify anyone who might
-    // be waiting for the owner to stop.
-    if (count_iter->second == 0) {
-      master_->active_task_counts_.erase(count_iter);
-      task.owner->stopping_condvar_.Broadcast();
-    }
+    // Inform the master we have completed the task and are no longer busy.
+    master_->OnTaskComplete(task);
   }
 }
 
@@ -442,6 +401,89 @@ void ThreadPool::JoinThreads(const std::set<WorkerThread*>& threads) {
     WorkerThread* thread = *iter;
     thread->Join();
     delete thread;
+  }
+}
+
+// Call when the worker thread has been idle for a while.  Either return false
+// (worker should continue waiting for tasks), or zombify the worker and return
+// true (worker thread should immediately terminate).
+bool ThreadPool::TryZombifyIdleThread(WorkerThread* thread) {
+  lock_.AssertAcquired();
+
+  // Don't terminate the thread if the thread pool is already at the minimum
+  // number of threads.
+  DCHECK_GE(workers_.size(), min_threads_);
+  if (workers_.size() <= min_threads_) {
+    return false;
+  }
+
+  // Remove this thread from the worker set.
+  DCHECK_EQ(1u, workers_.count(thread));
+  workers_.erase(thread);
+
+  // When a (joinable) thread terminates, it must still be cleaned up, either
+  // by another thread joining it, or by detatching it.  However, the thread
+  // pool's not shutting down here, so the master thread doesn't know to join
+  // this thread that we're in now, and the Chromium thread abstraction we're
+  // using doesn't currently allow us to detach a thread.  So instead, we place
+  // this WorkerThread object into a "zombie" set, which the master thread can
+  // reap later on.  Threads that have terminated but that haven't been joined
+  // yet use up only a small amount of memory (I think), so it's okay if we
+  // don't reap it right away, as long as we don't try to spawn new threads
+  // while there's still lots of zombies.
+  DCHECK(!shutting_down_);
+  DCHECK_EQ(0u, zombies_.count(thread));
+  zombies_.insert(thread);
+  return true;
+}
+
+// Get and return the next task from the queue (which must be non-empty), and
+// update our various counters to indicate that the calling worker is busy
+// executing this task.
+ThreadPool::Task ThreadPool::GetNextTask() {
+  lock_.AssertAcquired();
+
+  // Pop the highest-priority task from the queue.  Note that smaller values
+  // correspond to higher priorities (SPDY draft 3 section 2.3.3), so
+  // task_queue_.begin() gets us the highest-priority pending task.
+  DCHECK(!task_queue_.empty());
+  TaskQueue::iterator task_iter = task_queue_.begin();
+  const Task task = task_iter->second;
+  task_queue_.erase(task_iter);
+
+  // Increment the count of active tasks for the executor that owns this
+  // task; we'll decrement it again when the task completes.
+  ++(active_task_counts_[task.owner]);
+
+  // The worker that takes this task will be busy until it completes it.
+  DCHECK_LT(num_busy_workers_, workers_.size());
+  ++num_busy_workers_;
+
+  return task;
+}
+
+// Call to indicate that the task has been completed; update our various
+// counters to indicate that the calling worker is no longer busy executing
+// this task.
+void ThreadPool::OnTaskComplete(Task task) {
+  lock_.AssertAcquired();
+
+  // The worker that just finished this task is no longer busy.
+  DCHECK_GE(num_busy_workers_, 1u);
+  --num_busy_workers_;
+
+  // We've completed the task and reaquired the lock, so decrement the count
+  // of active tasks for this owner.
+  OwnerMap::iterator count_iter = active_task_counts_.find(task.owner);
+  DCHECK(count_iter != active_task_counts_.end());
+  DCHECK(count_iter->second > 0);
+  --(count_iter->second);
+
+  // If this was the last active task for the owner, notify anyone who might be
+  // waiting for the owner to stop.
+  if (count_iter->second == 0) {
+    active_task_counts_.erase(count_iter);
+    task.owner->stopping_condvar_.Broadcast();
   }
 }
 

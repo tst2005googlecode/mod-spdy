@@ -99,6 +99,12 @@ class ThreadPool {
   // this while holding the lock_.
   static void JoinThreads(const std::set<WorkerThread*>& threads);
 
+  // These calls are used to implement the WorkerThread's main function.  Must
+  // be holding lock_ when calling any of these.
+  bool TryZombifyIdleThread(WorkerThread* thread);
+  Task GetNextTask();
+  void OnTaskComplete(Task task);
+
   // The min and max number of threads passed to the constructor.  Although the
   // constructor takes signed ints (for convenience), we store these unsigned
   // to avoid the need for static_casts when comparing against workers_.size().
