@@ -298,18 +298,42 @@ TEST(ThreadPoolTest, CreateAndRetireWorkers) {
 
   // Allow the first group of tasks to finish.  There are now only three tasks
   // running, so one of our four threads should go idle.  If we wait for a
-  // while after that, that thread should shut down.
+  // while after that, that thread should terminate and enter zombie mode.
   done1.Set();
   ExpectWorkersWithinTimeout(4, 1, &thread_pool, idle_time_millis / 2);
   ExpectWorkersWithinTimeout(3, 0, &thread_pool, 2 * idle_time_millis);
+  EXPECT_EQ(1, thread_pool.GetNumZombiesForTest());
 
   // Allow the second group of tasks to finish.  There are no tasks left, so
   // all three threads should go idle.  If we wait for a while after that,
   // exactly one of the three should shut down, bringing us back down to the
-  // minimum number of threads.
+  // minimum number of threads.  We should now have two zombie threads.
   done2.Set();
   ExpectWorkersWithinTimeout(3, 3, &thread_pool, idle_time_millis / 2);
   ExpectWorkersWithinTimeout(2, 2, &thread_pool, 2 * idle_time_millis);
+  EXPECT_EQ(2, thread_pool.GetNumZombiesForTest());
+
+  // Start some new new tasks.  This should cause us to immediately reap the
+  // zombie threads, and soon, we should have three busy threads.
+  mod_spdy::testing::Notification done3;
+  executor->AddTask(new WaitFunction(&done3), 0);
+  executor->AddTask(new WaitFunction(&done3), 2);
+  executor->AddTask(new WaitFunction(&done3), 1);
+  EXPECT_EQ(0, thread_pool.GetNumZombiesForTest());
+  EXPECT_EQ(3, thread_pool.GetNumWorkersForTest());
+  ExpectWorkersWithinTimeout(3, 0, &thread_pool, 100);
+
+  // Let those tasks finish.  Once again, the threads should go idle, and then
+  // one of them should terminate and enter zombie mode.
+  done3.Set();
+  ExpectWorkersWithinTimeout(3, 3, &thread_pool, idle_time_millis / 2);
+  ExpectWorkersWithinTimeout(2, 2, &thread_pool, 2 * idle_time_millis);
+  EXPECT_EQ(1, thread_pool.GetNumZombiesForTest());
+
+  // When we exit the test, the thread pool's destructor should reap the zombie
+  // thread (as well as shutting down the still-running workers).  We can
+  // verify this by running this test under valgrind and making sure that no
+  // memory is leaked.
 }
 
 }  // namespace

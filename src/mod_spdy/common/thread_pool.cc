@@ -67,6 +67,23 @@ void ThreadPool::ThreadPoolExecutor::AddTask(net_instaweb::Function* task,
                                              net::SpdyPriority priority) {
   {
     base::AutoLock autolock(master_->lock_);
+
+    // Clean up any zombie WorkerThreads in the ThreadPool that are waiting for
+    // reaping.  If the OS process we're in accumulates too many unjoined
+    // zombie threads over time, the OS might not be able to spawn a new thread
+    // below.  So right now is a good time to clean them up.
+    if (!master_->zombies_.empty()) {
+      std::set<WorkerThread*> zombies;
+      zombies.swap(master_->zombies_);
+      base::AutoUnlock autounlock(master_->lock_);
+      ThreadPool::JoinThreads(zombies);
+    }
+
+    // The thread pool shouldn't be shutting down until all executors are
+    // destroyed.  Since this executor clearly still exists, the thread pool
+    // must still be open.
+    DCHECK(!master_->shutting_down_);
+
     // If the executor hasn't been stopped, add the task to the queue and
     // notify a worker that there's a new task ready to be taken.
     if (!stopped_) {
@@ -76,7 +93,9 @@ void ThreadPool::ThreadPoolExecutor::AddTask(net_instaweb::Function* task,
       return;
     }
   }
-  // If we've already stopped, just cancel the task (after releasing the lock).
+
+  // If this executor has already been stopped, just cancel the task (after
+  // releasing the lock).
   task->CallCancel();
 }
 
@@ -132,49 +151,65 @@ void ThreadPool::ThreadPoolExecutor::Stop() {
 // the method run by that thread (ThreadMain).
 class ThreadPool::WorkerThread : public base::PlatformThread::Delegate {
  public:
-  explicit WorkerThread(ThreadPool* master) : master_(master) {}
-  virtual ~WorkerThread() {}
+  explicit WorkerThread(ThreadPool* master);
+  virtual ~WorkerThread();
 
-  // Start the thread running.  Return false on failure.
-  bool Start() { return base::PlatformThread::Create(0, this, &thread_); }
+  // Start the thread running.  Return false on failure.  If this succeeds,
+  // then you must call Join() before deleting this object.
+  bool Start();
 
   // Block until the thread completes.  You must set master_->shutting_down_ to
   // true before calling this method, or the thread will never terminate.
-  void Join() { base::PlatformThread::Join(thread_); }
+  // You shouldn't be holding master_->lock_ when calling this.
+  void Join();
 
   // base::PlatformThread::Delegate method:
   virtual void ThreadMain();
 
  private:
-  // Return true if the worker should delete itself before terminating.
-  bool ThreadMainImpl();
+  enum ThreadState { NOT_STARTED, STARTED, JOINED };
 
   ThreadPool* const master_;
-  base::PlatformThreadHandle thread_;
+  // If two master threads are sharing the same ThreadPool, then Start() and
+  // Join() might get called by different threads.  So to be safe we use a lock
+  // to protect the two below fields.
+  base::Lock thread_lock_;
+  ThreadState state_;
+  base::PlatformThreadHandle thread_id_;
 
   DISALLOW_COPY_AND_ASSIGN(WorkerThread);
 };
 
+ThreadPool::WorkerThread::WorkerThread(ThreadPool* master)
+    : master_(master), state_(NOT_STARTED), thread_id_() {}
+
+ThreadPool::WorkerThread::~WorkerThread() {
+  base::AutoLock autolock(thread_lock_);
+  // If we started the thread, we _must_ join it before deleting this object,
+  // or else the thread won't get cleaned up by the OS.
+  DCHECK(state_ == NOT_STARTED || state_ == JOINED);
+}
+
+bool ThreadPool::WorkerThread::Start() {
+  base::AutoLock autolock(thread_lock_);
+  DCHECK_EQ(NOT_STARTED, state_);
+  if (base::PlatformThread::Create(0, this, &thread_id_)) {
+    state_ = STARTED;
+    return true;
+  }
+  return false;
+}
+
+void ThreadPool::WorkerThread::Join() {
+  base::AutoLock autolock(thread_lock_);
+  DCHECK_EQ(STARTED, state_);
+  base::PlatformThread::Join(thread_id_);
+  state_ = JOINED;
+}
+
 // This is the code executed by the thread; when this method returns, the
 // thread will terminate.
 void ThreadPool::WorkerThread::ThreadMain() {
-  const bool delete_ourselves = ThreadMainImpl();
-  if (delete_ourselves) {
-    // We are safe to delete ourselves here because:
-    //   1) If ThreadMainImpl() returns true, the worker has already been
-    //      removed from the master, so there is no one else pointing to us.
-    //   2) The thread will terminate as soon as we return from this method, so
-    //      obviously we won't be touching our instance fields ever again.
-    //   3) The thread won't be touching us or our instance fields either.  It
-    //      doesn't know about fields defined in this class, of course, and our
-    //      superclass has no instance fields.
-    //   4) Note that PlatformThreadHandle is just an integer (thread ID).
-    //      It's not some object that the thread needs, or any such thing.
-    delete this;
-  }
-}
-
-bool ThreadPool::WorkerThread::ThreadMainImpl() {
   // We start by grabbing the master lock, but we release it below whenever we
   // are 1) waiting for a new task or 2) executing a task.  So in fact most of
   // the time we are not holding the lock.
@@ -197,25 +232,40 @@ bool ThreadPool::WorkerThread::ThreadMainImpl() {
       }
     }
 
-    // If we're shutting down, exit the thread.  The master will delete us.
+    // If the thread pool is shutting down, terminate this thread; the master
+    // is about to join/delete us (in its destructor).
     if (master_->shutting_down_) {
-      return false;  // false = the worker should not delete itself
+      return;
     }
 
-    // If we ran out of time without getting a task, maybe we should shut this
-    // thread down.
+    // If we ran out of time without getting a task, maybe this thread should
+    // shut itself down.
     if (master_->task_queue_.empty()) {
       DCHECK_LE(time_remaining.InSecondsF(), 0.0);
       DCHECK_GE(master_->workers_.size(), master_->min_threads_);
-      // Don't shut down the thread if we're already at the minimum number of
-      // threads; just go back to the top of the while (true) loop.
+      // Don't shut us down if the thread pool is already at the minimum number
+      // of threads; just go back to the top of the while (true) loop.
       if (master_->workers_.size() <= master_->min_threads_) {
         continue;
       }
-      // Remove this thread from the pool and exit.
+      // Remove this thread from the worker set.
       DCHECK_EQ(1u, master_->workers_.count(this));
       master_->workers_.erase(this);
-      return true;  // true = the worker should delete itself
+      // When a (joinable) thread terminates, it must still be cleaned up,
+      // either by another thread joining it, or by detatching it.  However,
+      // the master's not shutting down here, so it doesn't know to join this
+      // thread, and the Chromium thread abstraction we're using doesn't
+      // currently allow us to detach a thread.  So instead, we place this
+      // worker object into a "zombie" set, which the master thread can reap
+      // later on.  Threads that have terminated but that haven't been joined
+      // yet use up only a small amount of memory (I think), so it's okay if we
+      // don't reap it right away, as long as we don't try to spawn new threads
+      // while there's still lots of zombies.
+      DCHECK(!master_->shutting_down_);
+      DCHECK_EQ(0u, master_->zombies_.count(this));
+      master_->zombies_.insert(this);
+      // Terminate the thread.
+      return;
     }
 
     // Otherwise, there must be at least one task available now, so pop the
@@ -291,31 +341,35 @@ ThreadPool::ThreadPool(int min_threads, int max_threads,
 }
 
 ThreadPool::~ThreadPool() {
-  std::vector<WorkerThread*> workers;
+  base::AutoLock autolock(lock_);
+
+  // If we're doing things right, all the Executors should have been
+  // destroyed before the ThreadPool is destroyed, so there should be no
+  // pending or active tasks.
+  DCHECK(task_queue_.empty());
+  DCHECK(active_task_counts_.empty());
+
+  // Wake up all the worker threads and tell them to shut down.
+  shutting_down_ = true;
+  worker_condvar_.Broadcast();
+
+  // Clean up all our threads.
+  std::set<WorkerThread*> threads;
+  zombies_.swap(threads);
+  threads.insert(workers_.begin(), workers_.end());
+  workers_.clear();
   {
-    base::AutoLock autolock(lock_);
-    // If we're doing things right, all the Executors should have been
-    // destroyed before the ThreadPool is destroyed, so there should be no
-    // pending or active tasks.
-    DCHECK(task_queue_.empty());
-    DCHECK(active_task_counts_.empty());
-    // Copy over the list of workers to shut down (so that we don't touch
-    // workers_ after releasing the lock and while the worker threads are
-    // still shutting down).
-    workers.assign(workers_.begin(), workers_.end());
-    workers_.clear();
-    // Wake up all the worker threads and tell them to shut down.
-    shutting_down_ = true;
-    worker_condvar_.Broadcast();
+    base::AutoUnlock autounlock(lock_);
+    JoinThreads(threads);
   }
 
-  // Stop all the worker threads and delete the WorkerThread objects.
-  for (std::vector<WorkerThread*>::const_iterator iter = workers.begin();
-       iter != workers.end(); ++iter) {
-    WorkerThread* worker = *iter;
-    worker->Join();
-    delete worker;
-  }
+  // Because we had shutting_down_ set to true, nothing should have been added
+  // to our WorkerThread sets while we were unlocked.  So we should be all
+  // cleaned up now.
+  DCHECK(workers_.empty());
+  DCHECK(zombies_.empty());
+  DCHECK(task_queue_.empty());
+  DCHECK(active_task_counts_.empty());
 }
 
 bool ThreadPool::Start() {
@@ -351,6 +405,11 @@ int ThreadPool::GetNumIdleWorkersForTest() {
   return workers_.size() - num_busy_workers_;
 }
 
+int ThreadPool::GetNumZombiesForTest() {
+  base::AutoLock autolock(lock_);
+  return zombies_.size();
+}
+
 // This method is called each time we add a new task to the thread pool.
 void ThreadPool::StartNewWorkerIfNeeded() {
   lock_.AssertAcquired();
@@ -373,6 +432,16 @@ void ThreadPool::StartNewWorkerIfNeeded() {
     workers_.insert(worker.release());
   } else {
     LOG(ERROR) << "Failed to start new worker thread.";
+  }
+}
+
+// static
+void ThreadPool::JoinThreads(const std::set<WorkerThread*>& threads) {
+  for (std::set<WorkerThread*>::const_iterator iter = threads.begin();
+       iter != threads.end(); ++iter) {
+    WorkerThread* thread = *iter;
+    thread->Join();
+    delete thread;
   }
 }
 

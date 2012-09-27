@@ -69,6 +69,9 @@ class ThreadPool {
   // Return the number of worker threads currently idle.  This is provided for
   // testing purposes only.
   int GetNumIdleWorkersForTest();
+  // Return the number of terminated (zombie) threads that have yet to be
+  // reaped.  This is provided for testing purposes only.
+  int GetNumZombiesForTest();
 
  private:
   class ThreadPoolExecutor;
@@ -91,6 +94,11 @@ class ThreadPool {
   // workers.  Otherwise, do nothing.  Must be holding lock_ when calling this.
   void StartNewWorkerIfNeeded();
 
+  // Join and delete all worker threads in the given set.  This will block
+  // until all the threads have terminated and been cleaned up, so don't call
+  // this while holding the lock_.
+  static void JoinThreads(const std::set<WorkerThread*>& threads);
+
   // The min and max number of threads passed to the constructor.  Although the
   // constructor takes signed ints (for convenience), we store these unsigned
   // to avoid the need for static_casts when comparing against workers_.size().
@@ -107,6 +115,9 @@ class ThreadPool {
   // The list of running worker threads.  We keep this around so that we can
   // join the threads on shutdown.
   std::set<WorkerThread*> workers_;
+  // Worker threads that have shut themselves down (due to being idle), and are
+  // awaiting cleanup by the master thread.
+  std::set<WorkerThread*> zombies_;
   // How many workers do we have that are actually executing tasks?
   unsigned int num_busy_workers_;
   // We set this to true to tell the worker threads to terminate.
