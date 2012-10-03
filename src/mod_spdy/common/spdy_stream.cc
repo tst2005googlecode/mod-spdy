@@ -16,6 +16,7 @@
 
 
 #include "base/logging.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "mod_spdy/common/protocol_util.h"
@@ -205,8 +206,13 @@ void SpdyStream::AdjustOutputWindowSize(int32 delta) {
   }
 }
 
-void SpdyStream::PostInputFrame(net::SpdyFrame* frame) {
+void SpdyStream::PostInputFrame(net::SpdyFrame* frame_ptr) {
   base::AutoLock autolock(lock_);
+
+  // Take ownership of the frame, so it will get deleted if we return early.
+  scoped_ptr<net::SpdyFrame> frame(frame_ptr);
+
+  // Once a stream has been aborted, nothing more goes into the queue.
   if (aborted_) {
     return;
   }
@@ -233,7 +239,7 @@ void SpdyStream::PostInputFrame(net::SpdyFrame* frame) {
 
   // Now that we've decreased the window size as necessary, we can make the
   // frame available for consumption by the stream thread.
-  input_queue_.Insert(frame);
+  input_queue_.Insert(frame.release());
 }
 
 bool SpdyStream::GetInputFrame(bool block, net::SpdyFrame** frame) {
