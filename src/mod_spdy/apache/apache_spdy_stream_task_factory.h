@@ -18,7 +18,6 @@
 #include "httpd.h"
 
 #include "base/basictypes.h"
-#include "mod_spdy/apache/slave_connection.h"
 #include "mod_spdy/common/spdy_stream_task_factory.h"
 
 namespace net_instaweb { class Function; }
@@ -32,15 +31,11 @@ class ApacheSpdyStreamTaskFactory : public SpdyStreamTaskFactory {
   explicit ApacheSpdyStreamTaskFactory(conn_rec* connection);
   ~ApacheSpdyStreamTaskFactory();
 
-  // This must be called from hooks registration to create the filters
-  // this class needs to route bytes between Apache & mod_spdy.
-  static void InitFilters();
-
   // SpdyStreamTaskFactory methods:
   virtual net_instaweb::Function* NewStreamTask(SpdyStream* stream);
 
  private:
-  SlaveConnectionFactory connection_factory_;
+  conn_rec* const connection_;
 
   DISALLOW_COPY_AND_ASSIGN(ApacheSpdyStreamTaskFactory);
 };

@@ -48,7 +48,8 @@ MasterConnectionContext* CreateMasterConnectionContext(
 // connection's pool, attach it to the connection's config vector, and return
 // it. Cannot be called on connection which previously was passed to
 // Create[Master|Slave]ConnectionContext.
-SlaveConnectionContext* CreateSlaveConnectionContext(conn_rec* connection);
+SlaveConnectionContext* CreateSlaveConnectionContext(
+      conn_rec* connection, bool using_ssl, SpdyStream* stream);
 
 // Returns true if the connection has had a master connection context set.
 // We expect the result to be true for outgoing connections for which

@@ -84,10 +84,7 @@
         'apache/log_message_handler.cc',
         'apache/master_connection_context.cc',
         'apache/pool_util.cc',
-        'apache/sockaddr_util.cc',
-        'apache/slave_connection.cc',
         'apache/slave_connection_context.cc',
-        'apache/ssl_util.cc',
       ],
     },
     {
@@ -183,7 +180,6 @@
         'apache/filters/spdy_to_http_filter_test.cc',
         'apache/id_pool_test.cc',
         'apache/pool_util_test.cc',
-        'apache/sockaddr_util_test.cc',
         'apache/testing/dummy_util_filter.cc',
         'apache/testing/spdy_apache_test_main.cc',
       ],

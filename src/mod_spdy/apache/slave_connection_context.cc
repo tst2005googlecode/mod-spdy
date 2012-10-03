@@ -19,28 +19,24 @@
 
 namespace mod_spdy {
 
-SlaveConnectionContext::SlaveConnectionContext()
-    : using_ssl_(false),
-      spdy_version_(0),
-      slave_stream_(NULL),
-      output_filter_handle_(NULL),
-      output_filter_context_(NULL),
-      input_filter_handle_(NULL),
-      input_filter_context_(NULL) {
+SlaveConnectionContext::SlaveConnectionContext(
+    bool using_ssl, SpdyStream* slave_stream)
+    : using_ssl_(using_ssl),
+      slave_stream_(slave_stream) {
+  DCHECK(slave_stream_);
 }
 
 SlaveConnectionContext::~SlaveConnectionContext() {}
 
-void SlaveConnectionContext::SetOutputFilter(
-    ap_filter_rec_t* handle, void* context) {
-  output_filter_handle_ = handle;
-  output_filter_context_ = context;
+SpdyStream* SlaveConnectionContext::slave_stream() const {
+  DCHECK(slave_stream_ != NULL);
+  return slave_stream_;
 }
 
-void SlaveConnectionContext::SetInputFilter(
-    ap_filter_rec_t* handle, void* context) {
-  input_filter_handle_ = handle;
-  input_filter_context_ = context;
+int SlaveConnectionContext::spdy_version() const {
+  int spdy_version = slave_stream()->spdy_version();
+  DCHECK_GT(spdy_version, 0);
+  return spdy_version;
 }
 
 }  // namespace mod_spdy

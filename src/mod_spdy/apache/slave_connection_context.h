@@ -20,8 +20,6 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 
-struct ap_filter_rec_t;
-
 namespace mod_spdy {
 
 class SpdyStream;
@@ -31,7 +29,10 @@ class SpdyStream;
 // the client, which has a ConnectionContext).
 class SlaveConnectionContext {
  public:
-  SlaveConnectionContext();
+  // Create a context object for a slave connection.  The context object does
+  // _not_ take ownership of the stream object.
+  SlaveConnectionContext(bool using_ssl, SpdyStream* slave_stream);
+
   ~SlaveConnectionContext();
 
   // Return true if the connection to the user is over SSL.  This is almost
@@ -39,56 +40,16 @@ class SlaveConnectionContext {
   // connections (for debugging).  Note that for a slave connection, this
   // refers to whether the master network connection is using SSL.
   bool is_using_ssl() const { return using_ssl_; }
-  void set_is_using_ssl(bool ssl_on) { using_ssl_ = ssl_on; }
 
   // Return the SpdyStream object associated with this slave connection.
-  // Note that this may be NULL in case mod_spdy is acting on behalf of
-  // another module. Not owned.
-  SpdyStream* slave_stream() const { return slave_stream_; }
-  void set_slave_stream(SpdyStream* stream) { slave_stream_ = stream; }
+  SpdyStream* slave_stream() const;
 
-  // Return the SPDY version number we will be using, or 0 if we're not using
-  // SPDY.
-  int spdy_version() const { return spdy_version_; }
-  void set_spdy_version(int version) { spdy_version_ = version; }
-
-  // See SlaveConnection documentation for description of these.
-  void SetOutputFilter(ap_filter_rec_t* handle, void* context);
-  void SetInputFilter(ap_filter_rec_t* handle, void* context);
-
-  ap_filter_rec_t* output_filter_handle() const {
-    return output_filter_handle_;
-  }
-
-  void* output_filter_context() const {
-    return output_filter_context_;
-  }
-
-  ap_filter_rec_t* input_filter_handle() const {
-    return input_filter_handle_;
-  }
-
-  void* input_filter_context() const {
-    return input_filter_context_;
-  }
+  // Return the SPDY version number we will be using.
+  int spdy_version() const;
 
  private:
-  // These are used to properly inform modules running on slave connections
-  // on whether the connection should be treated as using SPDY and SSL.
-  bool using_ssl_;
-  int spdy_version_;
-
-  // Used for SPDY push.
-  SpdyStream* slave_stream_;
-
-  // Filters to attach. These are set by clients of SlaveConnection
-  // between creation and Run(), and read by mod_spdy's PreConnection hook,
-  // where they are installed in Apache's filter chains.
-  ap_filter_rec_t* output_filter_handle_;
-  void* output_filter_context_;
-
-  ap_filter_rec_t* input_filter_handle_;
-  void* input_filter_context_;
+  const bool using_ssl_;
+  SpdyStream* const slave_stream_;
 
   DISALLOW_COPY_AND_ASSIGN(SlaveConnectionContext);
 };

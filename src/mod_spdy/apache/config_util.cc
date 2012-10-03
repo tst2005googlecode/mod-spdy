@@ -108,9 +108,11 @@ MasterConnectionContext* CreateMasterConnectionContext(conn_rec* connection,
   return context->master_context.get();
 }
 
-SlaveConnectionContext* CreateSlaveConnectionContext(conn_rec* connection) {
+SlaveConnectionContext* CreateSlaveConnectionContext(conn_rec* connection,
+                                                     bool using_ssl,
+                                                     SpdyStream* stream) {
   ConnectionContext* context = SetConnContextInternal(
-      connection, NULL, new SlaveConnectionContext());
+      connection, NULL, new SlaveConnectionContext(using_ssl, stream));
   return context->slave_context.get();
 }
 
