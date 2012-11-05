@@ -43,6 +43,7 @@
 #include "mod_spdy/apache/master_connection_context.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/apache/slave_connection_context.h"
+#include "mod_spdy/apache/slave_connection_api.h"
 #include "mod_spdy/apache/ssl_util.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/protocol_util.h"
@@ -778,6 +779,7 @@ void RegisterHooks(apr_pool_t* pool) {
   // Register our optional functions, so that other modules can retrieve and
   // use them.  See TAMB 10.1.2.
   APR_REGISTER_OPTIONAL_FN(spdy_get_version);
+  ModSpdyExportSlaveConnectionFunctions();
 }
 
 }  // namespace
