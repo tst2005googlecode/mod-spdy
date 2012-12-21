@@ -26,6 +26,7 @@
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
+#include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "mod_spdy/common/version.h"
@@ -166,9 +167,10 @@ TEST_P(HttpToSpdyFilterTest, ResponseWithContentLength) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
       &pusher_);
-  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  mod_spdy::SpdyServerConfig config;
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
   // Send part of the header data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
@@ -250,9 +252,10 @@ TEST_P(HttpToSpdyFilterTest, ChunkedResponse) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
       &pusher_);
-  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  mod_spdy::SpdyServerConfig config;
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
   // Send part of the header data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
@@ -323,9 +326,10 @@ TEST_P(HttpToSpdyFilterTest, RedirectResponse) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
       &pusher_);
-  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  mod_spdy::SpdyServerConfig config;
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
   // Send part of the header data into the filter:
   AddImmortalBucket("HTTP/1.1 301 Moved Permanently\r\n"
@@ -364,7 +368,8 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
       stream_id, associated_stream_id, initial_server_push_depth, priority,
       net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
       &pusher_);
-  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  mod_spdy::SpdyServerConfig config;
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
   // Send the header data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
@@ -413,9 +418,10 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   const net::SpdyPriority priority = framer_.GetLowestPriority();
   mod_spdy::SpdyStream stream(
       stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
       &pusher_);
-  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  mod_spdy::SpdyServerConfig config;
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
   // Send the header data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
@@ -460,9 +466,10 @@ TEST_P(HttpToSpdyFilterTest, ServerPushedStream) {
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
       &pusher_);
-  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&stream);
+  mod_spdy::SpdyServerConfig config;
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
   // Send the response data into the filter:
   AddImmortalBucket("HTTP/1.1 200 OK\r\n"
@@ -486,6 +493,37 @@ TEST_P(HttpToSpdyFilterTest, ServerPushedStream) {
   ExpectHeaders(stream_id, expected_headers, false);
   // And also the pushed data:
   ExpectDataFrame(stream_id, "BODY { color: red; }", true);
+  ExpectOutputQueueEmpty();
+}
+
+TEST_P(HttpToSpdyFilterTest, DoNotSendVersionHeaderWhenAskedNotTo) {
+  // Set up our data structures that we're testing:
+  const net::SpdyStreamId stream_id = 5;
+  const net::SpdyStreamId associated_stream_id = 0;
+  const int32 initial_server_push_depth = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
+  mod_spdy::SpdyStream stream(
+      stream_id, associated_stream_id, initial_server_push_depth, priority,
+      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
+      &pusher_);
+  mod_spdy::SpdyServerConfig config;
+  config.set_send_version_header(false);
+  mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
+
+  // Send the response into the filter:
+  AddImmortalBucket("HTTP/1.1 301 Moved Permanently\r\n"
+                    "Location: http://www.example.net/\r\n"
+                    "\r\n");
+  ASSERT_EQ(APR_SUCCESS, WriteBrigade(&http_to_spdy_filter));
+  EXPECT_TRUE(APR_BRIGADE_EMPTY(brigade_));
+
+  // Expect to get a single SYN_REPLY frame out.  This response has no body, so
+  // FLAG_FIN should be set.  There should be no version header.
+  net::SpdyHeaderBlock expected_headers;
+  expected_headers["location"] = "http://www.example.net/";
+  expected_headers[status_header_name()] = "301";
+  expected_headers[version_header_name()] = "HTTP/1.1";
+  ExpectSynReply(stream_id, expected_headers, true);
   ExpectOutputQueueEmpty();
 }
 

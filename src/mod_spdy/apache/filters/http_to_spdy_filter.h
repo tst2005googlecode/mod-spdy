@@ -25,6 +25,7 @@
 
 namespace mod_spdy {
 
+class SpdyServerConfig;
 class SpdyStream;
 
 // An Apache filter for converting HTTP data into SPDY frames and sending them
@@ -44,7 +45,7 @@ class SpdyStream;
 // that try to use connection-level filters.
 class HttpToSpdyFilter {
  public:
-  explicit HttpToSpdyFilter(SpdyStream* stream);
+  HttpToSpdyFilter(const SpdyServerConfig* config, SpdyStream* stream);
   ~HttpToSpdyFilter();
 
   // Read data from the given brigade and write the result through the given
@@ -55,13 +56,14 @@ class HttpToSpdyFilter {
  private:
   class ReceiverImpl : public HttpToSpdyConverter::SpdyReceiver {
    public:
-    explicit ReceiverImpl(SpdyStream* stream);
+    ReceiverImpl(const SpdyServerConfig* config, SpdyStream* stream);
     virtual ~ReceiverImpl();
     virtual void ReceiveSynReply(net::SpdyHeaderBlock* headers, bool flag_fin);
     virtual void ReceiveData(base::StringPiece data, bool flag_fin);
 
    private:
     friend class HttpToSpdyFilter;
+    const SpdyServerConfig* config_;
     SpdyStream* const stream_;
 
     DISALLOW_COPY_AND_ASSIGN(ReceiverImpl);

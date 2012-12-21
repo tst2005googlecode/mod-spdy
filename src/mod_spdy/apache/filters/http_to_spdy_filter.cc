@@ -51,6 +51,7 @@
 #include "base/logging.h"
 #include "mod_spdy/apache/pool_util.h"  // for AprStatusString
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/version.h"
 #include "net/spdy/spdy_protocol.h"
@@ -63,8 +64,9 @@ const char* kModSpdyVersion = MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
 
 namespace mod_spdy {
 
-HttpToSpdyFilter::HttpToSpdyFilter(SpdyStream* stream)
-    : receiver_(stream),
+HttpToSpdyFilter::HttpToSpdyFilter(const SpdyServerConfig* config,
+                                   SpdyStream* stream)
+    : receiver_(config, stream),
       converter_(stream->spdy_version(), &receiver_),
       eos_bucket_received_(false) {}
 
@@ -187,8 +189,10 @@ apr_status_t HttpToSpdyFilter::Write(ap_filter_t* filter,
   return APR_SUCCESS;
 }
 
-HttpToSpdyFilter::ReceiverImpl::ReceiverImpl(SpdyStream* stream)
-    : stream_(stream) {
+HttpToSpdyFilter::ReceiverImpl::ReceiverImpl(const SpdyServerConfig* config,
+                                             SpdyStream* stream)
+    : config_(config), stream_(stream) {
+  DCHECK(config_);
   DCHECK(stream_);
 }
 
@@ -197,7 +201,9 @@ HttpToSpdyFilter::ReceiverImpl::~ReceiverImpl() {}
 void HttpToSpdyFilter::ReceiverImpl::ReceiveSynReply(
     net::SpdyHeaderBlock* headers, bool flag_fin) {
   DCHECK(headers);
-  (*headers)[http::kXModSpdy] = kModSpdyVersion;
+  if (config_->send_version_header()) {
+    (*headers)[http::kXModSpdy] = kModSpdyVersion;
+  }
   // For client-requested streams, we should send a SYN_REPLY.  For
   // server-pushed streams, the SpdySession has already sent an initial
   // SYN_STREAM with FLAG_UNIDIRECTIONAL and minimal server push headers, so we

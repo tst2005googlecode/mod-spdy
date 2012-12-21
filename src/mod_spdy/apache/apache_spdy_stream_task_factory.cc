@@ -21,6 +21,7 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
+#include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/filters/http_to_spdy_filter.h"
 #include "mod_spdy/apache/filters/spdy_to_http_filter.h"
 #include "mod_spdy/apache/log_message_handler.h"
@@ -85,6 +86,9 @@ ApacheStreamTask::ApacheStreamTask(SlaveConnectionFactory* conn_factory,
                                    SpdyStream* stream)
     : stream_(stream),
       slave_connection_(conn_factory->Create()) {
+  const SpdyServerConfig* config =
+      GetServerConfig(slave_connection_->apache_connection());
+
   // SlaveConnectionFactory::Create must have attached a slave context.
   SlaveConnectionContext* slave_context =
       slave_connection_->GetSlaveConnectionContext();
@@ -96,7 +100,7 @@ ApacheStreamTask::ApacheStreamTask(SlaveConnectionFactory* conn_factory,
                      spdy_to_http_filter);
   slave_context->SetInputFilter(gSpdyToHttpFilterHandle, spdy_to_http_filter);
 
-  HttpToSpdyFilter* http_to_spdy_filter = new HttpToSpdyFilter(stream);
+  HttpToSpdyFilter* http_to_spdy_filter = new HttpToSpdyFilter(config, stream);
   PoolRegisterDelete(slave_connection_->apache_connection()->pool,
                      http_to_spdy_filter);
   slave_context->SetOutputFilter(gHttpToSpdyFilterHandle, http_to_spdy_filter);

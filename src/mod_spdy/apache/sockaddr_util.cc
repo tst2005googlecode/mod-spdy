@@ -14,6 +14,7 @@
 
 #include "mod_spdy/apache/sockaddr_util.h"
 
+#include <cstddef> // for ptrdiff_t
 #include <cstring>
 
 #include "apr_strings.h"

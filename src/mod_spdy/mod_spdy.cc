@@ -75,6 +75,9 @@ const char kFakeModSpdyProtocolName[] =
     "x-mod-spdy/" MOD_SPDY_VERSION_STRING "-" LASTCHANGE_STRING;
 COMPILE_ASSERT(arraysize(kFakeModSpdyProtocolName) <= 255,
                fake_protocol_name_is_not_too_long_for_npn);
+const char kFakeModSpdyProtocolNameNoVersion[] = "x-mod-spdy/no-version";
+COMPILE_ASSERT(arraysize(kFakeModSpdyProtocolNameNoVersion) <= 255,
+               fake_protocol_name_no_version_is_not_too_long_for_npn);
 
 const char* const kHttpProtocolName = "http/1.1";
 const char* const kSpdy2ProtocolName = "spdy/2";
@@ -485,8 +488,10 @@ int AdvertiseSpdy(conn_rec* connection, apr_array_header_t* protos) {
 // Negotiation (NPN).  These two functions are separate so that AdvertiseSpdy
 // can run early in the hook order, and AdvertiseHttp can run late.
 int AdvertiseHttp(conn_rec* connection, apr_array_header_t* protos) {
+  const mod_spdy::SpdyServerConfig* config =
+      mod_spdy::GetServerConfig(connection);
   // If mod_spdy is disabled on this server, don't do anything.
-  if (!mod_spdy::GetServerConfig(connection)->spdy_enabled()) {
+  if (!config->spdy_enabled()) {
     return DECLINED;
   }
 
@@ -508,7 +513,13 @@ int AdvertiseHttp(conn_rec* connection, apr_array_header_t* protos) {
 
   // Advertise a fake protocol, indicating the mod_spdy version in use.  We
   // push this last, so the client doesn't think we prefer it to HTTP.
-  APR_ARRAY_PUSH(protos, const char*) = kFakeModSpdyProtocolName;
+  if (config->send_version_header()) {
+    APR_ARRAY_PUSH(protos, const char*) = kFakeModSpdyProtocolName;
+  } else {
+    // If the user prefers not to send a version number, leave out the version
+    // number.
+    APR_ARRAY_PUSH(protos, const char*) = kFakeModSpdyProtocolNameNoVersion;
+  }
 
   return OK;
 }

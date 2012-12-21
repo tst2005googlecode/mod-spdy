@@ -21,6 +21,7 @@ const int kDefaultMaxStreamsPerConnection = 100;
 const int kDefaultMinThreadsPerProcess = 2;
 const int kDefaultMaxThreadsPerProcess = 10;
 const int kDefaultMaxServerPushDepth = 1;
+const bool kDefaultSendVersionHeader = true;
 const int kDefaultUseSpdyVersionWithoutSsl = 0;
 const int kDefaultVlogLevel = 0;
 
@@ -34,6 +35,7 @@ SpdyServerConfig::SpdyServerConfig()
       min_threads_per_process_(kDefaultMinThreadsPerProcess),
       max_threads_per_process_(kDefaultMaxThreadsPerProcess),
       max_server_push_depth_(kDefaultMaxServerPushDepth),
+      send_version_header_(kDefaultSendVersionHeader),
       use_spdy_version_without_ssl_(kDefaultUseSpdyVersionWithoutSsl),
       vlog_level_(kDefaultVlogLevel) {}
 
@@ -50,6 +52,8 @@ void SpdyServerConfig::MergeFrom(const SpdyServerConfig& a,
                                      b.max_threads_per_process_);
   max_server_push_depth_.MergeFrom(a.max_server_push_depth_,
                                    b.max_server_push_depth_);
+  send_version_header_.MergeFrom(
+      a.send_version_header_, b.send_version_header_);
   use_spdy_version_without_ssl_.MergeFrom(
       a.use_spdy_version_without_ssl_, b.use_spdy_version_without_ssl_);
   vlog_level_.MergeFrom(a.vlog_level_, b.vlog_level_);

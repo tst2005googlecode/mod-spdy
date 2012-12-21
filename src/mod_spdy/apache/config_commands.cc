@@ -154,6 +154,10 @@ const command_rec kSpdyConfigCommands[] = {
       SetNonNegativeInt<
         &SpdyServerConfig::set_max_server_push_depth>,
       "Maximum number of recursive levels to follow X-Associated-Content header. 0 Disables. Defaults to 1."),
+  SPDY_CONFIG_COMMAND(
+      "SpdySendVersionHeader",
+      SetBoolean<&SpdyServerConfig::set_send_version_header>,
+      "Send an x-mod-spdy header with the module version number"),
   // Debugging commands, which should not be used in production:
   SPDY_CONFIG_COMMAND(
       "SpdyDebugLoggingVerbosity",
