@@ -56,11 +56,13 @@ class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
                      const net::SpdyHeaderBlock& request_headers));
 };
 
-class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
+class HttpToSpdyFilterTest :
+      public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
   HttpToSpdyFilterTest()
-      : framer_(GetParam()),
-        buffered_framer_(GetParam()),
+      : spdy_version_(GetParam()),
+        framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
+        buffered_framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         ap_filter_(static_cast<ap_filter_t*>(
@@ -139,15 +141,16 @@ class HttpToSpdyFilterTest : public testing::TestWithParam<int> {
   }
 
   const char* status_header_name() const {
-    return (framer_.protocol_version() < 3 ? mod_spdy::spdy::kSpdy2Status :
-            mod_spdy::spdy::kSpdy3Status);
+    return (spdy_version_ < mod_spdy::spdy::SPDY_VERSION_3 ?
+            mod_spdy::spdy::kSpdy2Status : mod_spdy::spdy::kSpdy3Status);
   }
 
   const char* version_header_name() const {
-    return (framer_.protocol_version() < 3 ? mod_spdy::spdy::kSpdy2Version :
-            mod_spdy::spdy::kSpdy3Version);
+    return (spdy_version_ < mod_spdy::spdy::SPDY_VERSION_3 ?
+            mod_spdy::spdy::kSpdy2Version : mod_spdy::spdy::kSpdy3Version);
   }
 
+  const mod_spdy::spdy::SpdyVersion spdy_version_;
   net::SpdyFramer framer_;
   net::BufferedSpdyFramer buffered_framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
@@ -166,9 +169,9 @@ TEST_P(HttpToSpdyFilterTest, ResponseWithContentLength) {
   const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -251,9 +254,9 @@ TEST_P(HttpToSpdyFilterTest, ChunkedResponse) {
   const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -325,9 +328,9 @@ TEST_P(HttpToSpdyFilterTest, RedirectResponse) {
   const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -365,9 +368,9 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -417,9 +420,9 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetLowestPriority();
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -465,9 +468,9 @@ TEST_P(HttpToSpdyFilterTest, ServerPushedStream) {
   const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -503,9 +506,9 @@ TEST_P(HttpToSpdyFilterTest, DoNotSendVersionHeaderWhenAskedNotTo) {
   const int32 initial_server_push_depth = 0;
   const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_,
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   config.set_send_version_header(false);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
@@ -528,7 +531,8 @@ TEST_P(HttpToSpdyFilterTest, DoNotSendVersionHeaderWhenAskedNotTo) {
 }
 
 // Run each test over both SPDY v2 and SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy2And3, HttpToSpdyFilterTest,
-                        testing::Values(2, 3));
+INSTANTIATE_TEST_CASE_P(Spdy2And3, HttpToSpdyFilterTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_2, mod_spdy::spdy::SPDY_VERSION_3,
+    mod_spdy::spdy::SPDY_VERSION_3_1));
 
 }  // namespace

@@ -15,6 +15,7 @@
 #include "mod_spdy/apache/master_connection_context.h"
 
 #include "base/logging.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_stream.h"
 
 namespace mod_spdy {
@@ -23,7 +24,7 @@ MasterConnectionContext::MasterConnectionContext(bool using_ssl)
     : using_ssl_(using_ssl),
       npn_state_(NOT_DONE_YET),
       assume_spdy_(false),
-      spdy_version_(0) {}
+      spdy_version_(spdy::SPDY_VERSION_NONE) {}
 
 MasterConnectionContext::~MasterConnectionContext() {}
 
@@ -48,16 +49,17 @@ void MasterConnectionContext::set_assume_spdy(bool assume) {
   assume_spdy_ = assume;
 }
 
-int MasterConnectionContext::spdy_version() const {
+spdy::SpdyVersion MasterConnectionContext::spdy_version() const {
   DCHECK(is_using_spdy());
-  DCHECK_GT(spdy_version_, 0);
+  DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version_);
   return spdy_version_;
 }
 
-void MasterConnectionContext::set_spdy_version(int spdy_version) {
+void MasterConnectionContext::set_spdy_version(
+    spdy::SpdyVersion spdy_version) {
   DCHECK(is_using_spdy());
-  DCHECK_EQ(spdy_version_, 0);
-  DCHECK_GT(spdy_version, 0);
+  DCHECK_EQ(spdy::SPDY_VERSION_NONE, spdy_version_);
+  DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version);
   spdy_version_ = spdy_version;
 }
 

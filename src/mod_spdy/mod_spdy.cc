@@ -31,7 +31,6 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/string_number_conversions.h"  // for IntToString
 #include "base/string_piece.h"
 #include "mod_spdy/apache/apache_spdy_session_io.h"
 #include "mod_spdy/apache/apache_spdy_stream_task_factory.h"
@@ -82,6 +81,7 @@ COMPILE_ASSERT(arraysize(kFakeModSpdyProtocolNameNoVersion) <= 255,
 const char* const kHttpProtocolName = "http/1.1";
 const char* const kSpdy2ProtocolName = "spdy/2";
 const char* const kSpdy3ProtocolName = "spdy/3";
+const char* const kSpdy31ProtocolName = "spdy/3.1";
 const char* const kSpdyVersionEnvironmentVariable = "SPDY_VERSION";
 
 const char* const kPhpModuleNames[] = {
@@ -118,14 +118,16 @@ int spdy_get_version(conn_rec* connection) {
     mod_spdy::MasterConnectionContext* master_context =
         mod_spdy::GetMasterConnectionContext(connection);
     if (master_context->is_using_spdy()) {
-      return master_context->spdy_version();
+      return mod_spdy::SpdyVersionToFramerVersion(
+          master_context->spdy_version());
     }
   }
 
   if (mod_spdy::HasSlaveConnectionContext(connection)) {
     mod_spdy::SlaveConnectionContext* slave_context =
         mod_spdy::GetSlaveConnectionContext(connection);
-    return slave_context->spdy_version();
+    return mod_spdy::SpdyVersionToFramerVersion(
+        slave_context->spdy_version());
   }
   return 0;
 }
@@ -263,7 +265,7 @@ int DisableSslForSlaves(conn_rec* connection, void* csd) {
     // non-SSL connections.  Let's check if that's the case, and LOG(DFATAL) if
     // it's not.
     if (mod_spdy::GetServerConfig(connection)->
-        use_spdy_version_without_ssl() == 0) {
+        use_spdy_version_without_ssl() == mod_spdy::spdy::SPDY_VERSION_NONE) {
       LOG(DFATAL) << "mod_ssl missing for slave connection";
     }
   }
@@ -292,7 +294,8 @@ int PreConnection(conn_rec* connection, void* csd) {
 
     // We'll set this to a nonzero SPDY version number momentarily if we're
     // configured to assume a particular SPDY version for this connection.
-    int assume_spdy_version = 0;
+    mod_spdy::spdy::SpdyVersion assume_spdy_version =
+        mod_spdy::spdy::SPDY_VERSION_NONE;
 
     // Check if this connection is over SSL; if not, we can't do NPN, so we
     // definitely won't be using SPDY (unless we're configured to assume SPDY
@@ -303,7 +306,7 @@ int PreConnection(conn_rec* connection, void* csd) {
       // have opted to assume SPDY over non-SSL connections (presumably for
       // debugging purposes; this would normally break browsers).
       assume_spdy_version = config->use_spdy_version_without_ssl();
-      if (assume_spdy_version == 0) {
+      if (assume_spdy_version == mod_spdy::spdy::SPDY_VERSION_NONE) {
         return DECLINED;
       }
     }
@@ -315,7 +318,7 @@ int PreConnection(conn_rec* connection, void* csd) {
         mod_spdy::CreateMasterConnectionContext(connection, using_ssl);
     // If we're assuming SPDY for this connection, it means we know NPN won't
     // happen at all, and we're just going to assume a particular SPDY version.
-    if (assume_spdy_version != 0) {
+    if (assume_spdy_version != mod_spdy::spdy::SPDY_VERSION_NONE) {
       master_context->set_assume_spdy(true);
       master_context->set_spdy_version(assume_spdy_version);
     }
@@ -446,8 +449,10 @@ int ProcessConnection(conn_rec* connection) {
     return DECLINED;
   }
 
-  const int spdy_version = master_context->spdy_version();
-  LOG(INFO) << "Starting SPDY/" << spdy_version << " session";
+  const mod_spdy::spdy::SpdyVersion spdy_version =
+      master_context->spdy_version();
+  LOG(INFO) << "Starting SPDY/" <<
+      mod_spdy::SpdyVersionNumberString(spdy_version) << " session";
 
   // At this point, we and the client have agreed to use SPDY (either that, or
   // we've been configured to use SPDY regardless of what the client says), so
@@ -461,7 +466,8 @@ int ProcessConnection(conn_rec* connection) {
   // This call will block until the session has closed down.
   spdy_session.Run();
 
-  LOG(INFO) << "Terminating SPDY/" << spdy_version << " session";
+  LOG(INFO) << "Terminating SPDY/" <<
+      mod_spdy::SpdyVersionNumberString(spdy_version) << " session";
 
   // Return OK to tell Apache that we handled this connection.
   return OK;
@@ -476,8 +482,9 @@ int AdvertiseSpdy(conn_rec* connection, apr_array_header_t* protos) {
     return DECLINED;
   }
 
-  // Advertise SPDY to the client.  We prefer SPDY v3 to SPDY v2, so we push it
-  // first.
+  // Advertise SPDY to the client.  We push protocol names in descending order
+  // of preference; the one we'd most prefer comes first.
+  // TODO(mdsteele): Advertise SPDY/3.1 once we fully support it.
   APR_ARRAY_PUSH(protos, const char*) = kSpdy3ProtocolName;
   APR_ARRAY_PUSH(protos, const char*) = kSpdy2ProtocolName;
   return OK;
@@ -568,11 +575,15 @@ int OnNextProtocolNegotiated(conn_rec* connection, const char* proto_name,
   if (protocol_name == kSpdy2ProtocolName) {
     master_context->set_npn_state(
         mod_spdy::MasterConnectionContext::USING_SPDY);
-    master_context->set_spdy_version(2);
+    master_context->set_spdy_version(mod_spdy::spdy::SPDY_VERSION_2);
   } else if (protocol_name == kSpdy3ProtocolName) {
     master_context->set_npn_state(
         mod_spdy::MasterConnectionContext::USING_SPDY);
-    master_context->set_spdy_version(3);
+    master_context->set_spdy_version(mod_spdy::spdy::SPDY_VERSION_3);
+  } else if (protocol_name == kSpdy31ProtocolName) {
+    master_context->set_npn_state(
+        mod_spdy::MasterConnectionContext::USING_SPDY);
+    master_context->set_spdy_version(mod_spdy::spdy::SPDY_VERSION_3_1);
   }
   // Otherwise, explicitly mark this connection as not using SPDY.
   else {
@@ -604,10 +615,9 @@ int SetUpSubprocessEnv(request_rec* request) {
   // request is over SPDY (and what SPDY version is being used), allowing them
   // to optimize the response for SPDY.
   // See http://code.google.com/p/mod-spdy/issues/detail?id=27 for details.
-  const std::string version_number(
-      base::IntToString(slave_context->spdy_version()));
-  apr_table_set(request->subprocess_env, kSpdyVersionEnvironmentVariable,
-                version_number.c_str());
+  apr_table_set(
+      request->subprocess_env, kSpdyVersionEnvironmentVariable,
+      mod_spdy::SpdyVersionNumberString(slave_context->spdy_version()));
 
   // Normally, mod_ssl sets the HTTPS environment variable to "on" for requests
   // served over SSL.  We turn mod_ssl off for our slave connections, but those

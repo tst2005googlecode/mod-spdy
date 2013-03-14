@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef MOD_SPDY_COMMON_PROTOCOL_UTIL_H_
-#define MOD_SPDY_COMMON_PROTOCOL_UTIL_H_
-
 #include "mod_spdy/common/protocol_util.h"
 
 #include "base/string_piece.h"
@@ -61,6 +58,32 @@ extern const char* const kSpdy3Version = ":version";
 
 }  // namespace spdy
 
+int SpdyVersionToFramerVersion(spdy::SpdyVersion version) {
+  switch (version) {
+    case spdy::SPDY_VERSION_NONE:
+      return 0;
+    case spdy::SPDY_VERSION_2:
+      return 2;
+    case spdy::SPDY_VERSION_3:
+    case spdy::SPDY_VERSION_3_1:
+      return 3;
+    default:
+      LOG(DFATAL) << "Invalid SpdyVersion value: " << version;
+      return -1;
+  }
+}
+
+const char* SpdyVersionNumberString(spdy::SpdyVersion version) {
+  switch (version) {
+    case spdy::SPDY_VERSION_2:   return "2";
+    case spdy::SPDY_VERSION_3:   return "3";
+    case spdy::SPDY_VERSION_3_1: return "3.1";
+    default:
+      LOG(DFATAL) << "Invalid SpdyVersion value: " << version;
+      return "?";
+  }
+}
+
 const char* GoAwayStatusCodeToString(net::SpdyGoAwayStatus status) {
   switch (status) {
     case net::GOAWAY_OK:             return "OK";
@@ -99,8 +122,9 @@ bool IsInvalidSpdyResponseHeader(base::StringPiece key) {
                                http::kTransferEncoding));
 }
 
-net::SpdyPriority LowestSpdyPriorityForVersion(int spdy_version) {
-  return (spdy_version < 3 ? 3u : 7u);
+net::SpdyPriority LowestSpdyPriorityForVersion(
+    spdy::SpdyVersion spdy_version) {
+  return (spdy_version < spdy::SPDY_VERSION_3 ? 3u : 7u);
 }
 
 void MergeInHeader(base::StringPiece key, base::StringPiece value,
@@ -120,5 +144,3 @@ void MergeInHeader(base::StringPiece key, base::StringPiece value,
 }
 
 }  // namespace mod_spdy
-
-#endif  // MOD_SPDY_COMMON_PROTOCOL_UTIL_H_

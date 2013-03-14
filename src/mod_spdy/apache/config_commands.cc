@@ -21,6 +21,7 @@
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
+#include "mod_spdy/common/protocol_util.h"
 
 namespace mod_spdy {
 
@@ -88,21 +89,18 @@ const char* SetNonNegativeInt(cmd_parms* cmd, void* dir, const char* arg) {
 
 const char* SetUseSpdyForNonSslConnections(cmd_parms* cmd, void* dir,
                                            const char* arg) {
-  int value;
-  if (!base::StringToInt(arg, &value) || value < 2 || value > 3) {
-    if (0 == apr_strnatcasecmp(arg, "off")) {
-      value = 0;
-    } else if (0 == apr_strnatcasecmp(arg, "on")) {
-      value = 2;
-      LOG(WARNING) << "Passing \"on\" to " << cmd->cmd->name
-                   << " is deprecated and will eventually be disallowed.  "
-                   << "Instead, specify the SPDY version number to use "
-                   << "(2, 3, or off).  For backwards compatibility, \"on\" "
-                   << "specifies SPDY/2.";
-    } else {
-      return apr_pstrcat(cmd->pool, cmd->cmd->name,
-                         " must be 2, 3, or off", NULL);
-    }
+  spdy::SpdyVersion value;
+  if (0 == apr_strnatcasecmp(arg, "off")) {
+    value = spdy::SPDY_VERSION_NONE;
+  } else if (0 == apr_strnatcasecmp(arg, "2")) {
+    value = spdy::SPDY_VERSION_2;
+  } else if (0 == apr_strnatcasecmp(arg, "3")) {
+    value = spdy::SPDY_VERSION_3;
+  } else if (0 == apr_strnatcasecmp(arg, "3.1")) {
+    value = spdy::SPDY_VERSION_3_1;
+  } else {
+    return apr_pstrcat(cmd->pool, cmd->cmd->name,
+                       " must be 2, 3, 3.1, or off", NULL);
   }
   GetServerConfig(cmd)->set_use_spdy_version_without_ssl(value);
   return NULL;

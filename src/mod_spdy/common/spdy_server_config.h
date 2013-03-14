@@ -16,6 +16,7 @@
 #define MOD_SPDY_COMMON_SPDY_SERVER_CONFIG_H_
 
 #include "base/basictypes.h"
+#include "mod_spdy/common/protocol_util.h"
 
 namespace mod_spdy {
 
@@ -57,7 +58,7 @@ class SpdyServerConfig {
   // If nonzero, assume (unencrypted) SPDY/x for non-SSL connections, where x
   // is the version number returned here.  This will most likely break normal
   // browsers, but is useful for testing.
-  int use_spdy_version_without_ssl() const {
+  spdy::SpdyVersion use_spdy_version_without_ssl() const {
     return use_spdy_version_without_ssl_.get();
   }
 
@@ -73,8 +74,8 @@ class SpdyServerConfig {
   void set_max_threads_per_process(int n) { max_threads_per_process_.set(n); }
   void set_max_server_push_depth(int n) { max_server_push_depth_.set(n); }
   void set_send_version_header(bool b) { send_version_header_.set(b); }
-  void set_use_spdy_version_without_ssl(int n) {
-    use_spdy_version_without_ssl_.set(n);
+  void set_use_spdy_version_without_ssl(spdy::SpdyVersion v) {
+    use_spdy_version_without_ssl_.set(v);
   }
   void set_vlog_level(int n) { vlog_level_.set(n); }
 
@@ -107,7 +108,7 @@ class SpdyServerConfig {
   Option<int> max_threads_per_process_;
   Option<int> max_server_push_depth_;
   Option<bool> send_version_header_;
-  Option<int> use_spdy_version_without_ssl_;
+  Option<spdy::SpdyVersion> use_spdy_version_without_ssl_;
   Option<int> vlog_level_;
   // Note: Add more config options here as needed; be sure to also update the
   //   MergeFrom method in spdy_server_config.cc.

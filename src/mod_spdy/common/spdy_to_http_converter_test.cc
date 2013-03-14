@@ -54,15 +54,16 @@ class MockHttpRequestVisitor: public mod_spdy::HttpRequestVisitorInterface {
   MOCK_METHOD0(OnComplete, void());
 };
 
-class SpdyToHttpConverterTest : public testing::TestWithParam<int> {
+class SpdyToHttpConverterTest :
+      public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
   SpdyToHttpConverterTest() :
       converter_(GetParam(), &visitor_),
-      framer_(GetParam()) {}
+      framer_(mod_spdy::SpdyVersionToFramerVersion(GetParam())) {}
 
  protected:
   void AddRequiredHeaders() {
-    if (framer_.protocol_version() < 3) {
+    if (converter_.spdy_version() < mod_spdy::spdy::SPDY_VERSION_3) {
       headers_[mod_spdy::spdy::kSpdy2Method] = kMethod;
       headers_[mod_spdy::spdy::kSpdy2Scheme] = kScheme;
       headers_[mod_spdy::http::kHost] = kHost;
@@ -374,7 +375,8 @@ TEST_P(SpdyToHttpConverterTest, DataFrameBeforeSynStreamFrame) {
 }
 
 // Run each test over both SPDY v2 and SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdyToHttpConverterTest,
-                        testing::Values(2, 3));
+INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdyToHttpConverterTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_2, mod_spdy::spdy::SPDY_VERSION_3,
+    mod_spdy::spdy::SPDY_VERSION_3_1));
 
 }  // namespace

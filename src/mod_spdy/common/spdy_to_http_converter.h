@@ -16,6 +16,7 @@
 #define MOD_SPDY_SPDY_TO_HTTP_CONVERTER_H_
 
 #include "base/basictypes.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
@@ -27,7 +28,7 @@ class HttpRequestVisitorInterface;
 // stream to the specified HttpRequestVisitorInterface.
 class SpdyToHttpConverter {
  public:
-  SpdyToHttpConverter(int spdy_version,
+  SpdyToHttpConverter(spdy::SpdyVersion spdy_version,
                       HttpRequestVisitorInterface* visitor);
   ~SpdyToHttpConverter();
 
@@ -43,7 +44,7 @@ class SpdyToHttpConverter {
   static const char* StatusString(Status status);
 
   // Return the SPDY version from which we are converting.
-  int spdy_version() const { return framer_.protocol_version(); }
+  spdy::SpdyVersion spdy_version() const { return spdy_version_; }
 
   // Convert the SPDY frame to HTTP and make appropriate calls to the visitor.
   // In some cases data may be buffered, but everything will get flushed out to
@@ -70,6 +71,7 @@ private:
     RECEIVED_FLAG_FIN     // We've seen the FLAG_FIN; no more frames allowed.
   };
 
+  const spdy::SpdyVersion spdy_version_;
   HttpRequestVisitorInterface* const visitor_;
   net::SpdyFramer framer_;
   net::SpdyHeaderBlock trailing_headers_;

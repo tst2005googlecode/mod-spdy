@@ -53,11 +53,13 @@ class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
                      const net::SpdyHeaderBlock& request_headers));
 };
 
-class ServerPushFilterTest : public testing::TestWithParam<int> {
+class ServerPushFilterTest :
+      public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
   ServerPushFilterTest()
-      : framer_(GetParam()),
-        buffered_framer_(GetParam()),
+      : spdy_version_(GetParam()),
+        framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
+        buffered_framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         request_(static_cast<request_rec*>(
@@ -94,15 +96,16 @@ class ServerPushFilterTest : public testing::TestWithParam<int> {
   }
 
   const char* status_header_name() const {
-    return (framer_.protocol_version() < 3 ? mod_spdy::spdy::kSpdy2Status :
-            mod_spdy::spdy::kSpdy3Status);
+    return (spdy_version_ < mod_spdy::spdy::SPDY_VERSION_3 ?
+            mod_spdy::spdy::kSpdy2Status : mod_spdy::spdy::kSpdy3Status);
   }
 
   const char* version_header_name() const {
-    return (framer_.protocol_version() < 3 ? mod_spdy::spdy::kSpdy2Version :
-            mod_spdy::spdy::kSpdy3Version);
+    return (spdy_version_ < mod_spdy::spdy::SPDY_VERSION_3 ?
+            mod_spdy::spdy::kSpdy2Version : mod_spdy::spdy::kSpdy3Version);
   }
 
+  const mod_spdy::spdy::SpdyVersion spdy_version_;
   net::SpdyFramer framer_;
   net::BufferedSpdyFramer buffered_framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
@@ -122,9 +125,9 @@ TEST_P(ServerPushFilterTest, SimpleXAssociatedContent) {
   const net::SpdyPriority priority = 1;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   net::SpdyHeaderBlock headers1;
@@ -134,7 +137,8 @@ TEST_P(ServerPushFilterTest, SimpleXAssociatedContent) {
   headers1[mod_spdy::spdy::kSpdy3Scheme] = "https";
   headers1[mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
   headers1[mod_spdy::http::kReferer] = kRefererUrl;
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), Eq(initial_server_push_depth+1), Eq(2u), Eq(headers1)));
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(2u), Eq(headers1)));
 
   net::SpdyHeaderBlock headers2;
   headers2[mod_spdy::spdy::kSpdy3Host] = "cdn.example.com:8080";
@@ -143,7 +147,8 @@ TEST_P(ServerPushFilterTest, SimpleXAssociatedContent) {
   headers2[mod_spdy::spdy::kSpdy3Scheme] = "https";
   headers2[mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
   headers2[mod_spdy::http::kReferer] = kRefererUrl;
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), Eq(initial_server_push_depth+1), Eq(7u), Eq(headers2)));
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(7u), Eq(headers2)));
 
   net::SpdyHeaderBlock headers3;
   headers3[mod_spdy::spdy::kSpdy3Host] = "www.example.com";
@@ -152,7 +157,8 @@ TEST_P(ServerPushFilterTest, SimpleXAssociatedContent) {
   headers3[mod_spdy::spdy::kSpdy3Scheme] = "https";
   headers3[mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
   headers3[mod_spdy::http::kReferer] = kRefererUrl;
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), Eq(initial_server_push_depth+1), Eq(0u), Eq(headers3)));
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(0u), Eq(headers3)));
 
   apr_table_setn(request_->headers_out, mod_spdy::http::kXAssociatedContent,
                  "\"https://www.example.com/foo/bar.css?q=12\":2,"
@@ -173,9 +179,9 @@ TEST_P(ServerPushFilterTest, MultipleXAssociatedContentHeaders) {
   const net::SpdyPriority priority = 1;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
   const net::SpdyPriority lowest =
       mod_spdy::LowestSpdyPriorityForVersion(stream.spdy_version());
@@ -240,9 +246,9 @@ TEST_P(ServerPushFilterTest, CaseInsensitive) {
   const net::SpdyPriority priority = 1;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), _, _, Contains(
@@ -278,9 +284,9 @@ TEST_P(ServerPushFilterTest, CopyApplicableHeaders) {
   const net::SpdyPriority priority = 0;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // Set some extra headers on the original request (which was evidentally a
@@ -297,9 +303,8 @@ TEST_P(ServerPushFilterTest, CopyApplicableHeaders) {
   headers1[mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
   headers1[mod_spdy::http::kReferer] = kRefererUrl;
   headers1["accept-language"] = "en-US";
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1), Eq(2u), 
-                                       Eq(headers1)));
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(2u), Eq(headers1)));
 
   apr_table_setn(request_->headers_out, mod_spdy::http::kXAssociatedContent,
                  " \"https://www.example.com/foo/bar.css\" : 2 ");
@@ -313,17 +318,17 @@ TEST_P(ServerPushFilterTest, StopPushingAfterPushError) {
   const net::SpdyPriority priority = 1;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // When the filter tries to push the first resource, we reply that pushes are
   // no longer possible on this connection.  The filter should not attempt any
   // more pushes, even though more were specified.
   EXPECT_CALL(pusher_, StartServerPush(
-      Eq(stream_id), 
-      Eq(initial_server_push_depth+1), 
+      Eq(stream_id),
+      Eq(initial_server_push_depth + 1),
       Eq(2u), _)).WillOnce(
           Return(mod_spdy::SpdyServerPushInterface::CANNOT_PUSH_EVER_AGAIN));
 
@@ -344,15 +349,15 @@ TEST_P(ServerPushFilterTest, StopPushingAfterParseError) {
   const net::SpdyPriority priority = 1;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // The filter should push the first resource, but then stop when it gets to
   // the parse error.
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), 
-                                       Eq(initial_server_push_depth+1), Eq(2u), _));
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(2u), _));
 
   apr_table_setn(request_->headers_out, mod_spdy::http::kXAssociatedContent,
                  "\"https://www.example.com/foo/bar.css?q=12\":2,"
@@ -371,17 +376,17 @@ TEST_P(ServerPushFilterTest, SkipInvalidQuotedUrl) {
   const net::SpdyPriority priority = 1;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // The filter should push the first and third resources, but skip the second
   // one because its quoted URL is invalid.
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), Eq(initial_server_push_depth+1),
-      Eq(2u), _));
-  EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), Eq(initial_server_push_depth+1),
-      Eq(0u), _));
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(2u), _));
+  EXPECT_CALL(pusher_, StartServerPush(
+      Eq(stream_id), Eq(initial_server_push_depth + 1), Eq(0u), _));
 
   apr_table_setn(request_->headers_out, mod_spdy::http::kXAssociatedContent,
                  " \"https://www.example.com/foo/bar.css?q=12\" : 2, "
@@ -402,9 +407,9 @@ TEST_P(ServerPushFilterTest, MaxServerPushDepthLimit) {
 
   server_cfg.set_max_server_push_depth(0);
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // We should not get any calls to StartServerPush, because we do not allow
@@ -427,11 +432,11 @@ TEST_P(ServerPushFilterTest, MaxServerPushDepthLimit) {
   mod_spdy::SpdyServerConfig server_cfg_2;
   server_cfg.set_max_server_push_depth(5);
   mod_spdy::SpdyStream stream_2(
-      stream_id, associated_stream_id, initial_server_push_depth_2, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
-  mod_spdy::ServerPushFilter server_push_filter_2(&stream_2, request_, 
-                                                  &server_cfg_2);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth_2, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
+  mod_spdy::ServerPushFilter server_push_filter_2(
+      &stream_2, request_, &server_cfg_2);
 
   // We should not get any calls to StartServerPush, because we do not allow
   // server-pushed resources to push any more resources.
@@ -448,7 +453,8 @@ TEST_P(ServerPushFilterTest, MaxServerPushDepthLimit) {
 }
 
 // Run server push tests only over SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy3, ServerPushFilterTest, testing::Values(3));
+INSTANTIATE_TEST_CASE_P(Spdy3, ServerPushFilterTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_3, mod_spdy::spdy::SPDY_VERSION_3_1));
 
 // Create a type alias so that we can instantiate some of our
 // SpdySessionTest-based tests using a different set of parameters.
@@ -461,9 +467,9 @@ TEST_P(ServerPushFilterSpdy2Test, NoPushesForSpdy2) {
   const net::SpdyPriority priority = 1;
   const mod_spdy::SpdyServerConfig server_cfg;
   mod_spdy::SpdyStream stream(
-      stream_id, associated_stream_id, initial_server_push_depth, priority,
-      net::kSpdyStreamInitialWindowSize, &output_queue_, &buffered_framer_, 
-      &pusher_);
+      spdy_version_, stream_id, associated_stream_id,
+      initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // We should not get any calls to StartServerPush when we're on SPDY/2.
@@ -478,6 +484,7 @@ TEST_P(ServerPushFilterSpdy2Test, NoPushesForSpdy2) {
                             mod_spdy::http::kXAssociatedContent) == NULL);
 }
 
-INSTANTIATE_TEST_CASE_P(Spdy2, ServerPushFilterSpdy2Test, testing::Values(2));
+INSTANTIATE_TEST_CASE_P(Spdy2, ServerPushFilterSpdy2Test, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_2));
 
 }  // namespace

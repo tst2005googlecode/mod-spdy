@@ -44,11 +44,12 @@ SlaveConnectionFactory::SlaveConnectionFactory(conn_rec* master_connection) {
     MasterConnectionContext* master_context =
         GetMasterConnectionContext(master_connection);
     is_using_ssl_ = master_context->is_using_ssl();
-    spdy_version_ =
-        master_context->is_using_spdy() ? master_context->spdy_version() : 0;
+    spdy_version_ = (master_context->is_using_spdy() ?
+                     master_context->spdy_version() :
+                     spdy::SPDY_VERSION_NONE);
   } else {
     is_using_ssl_ = IsUsingSslForConnection(master_connection);
-    spdy_version_ = 0;
+    spdy_version_ = spdy::SPDY_VERSION_NONE;
   }
 
   base_server_ = master_connection->base_server;

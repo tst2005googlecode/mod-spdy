@@ -14,6 +14,8 @@
 
 #include "mod_spdy/common/spdy_server_config.h"
 
+#include "mod_spdy/common/protocol_util.h"
+
 namespace {
 
 const bool kDefaultSpdyEnabled = false;
@@ -22,7 +24,8 @@ const int kDefaultMinThreadsPerProcess = 2;
 const int kDefaultMaxThreadsPerProcess = 10;
 const int kDefaultMaxServerPushDepth = 1;
 const bool kDefaultSendVersionHeader = true;
-const int kDefaultUseSpdyVersionWithoutSsl = 0;
+const mod_spdy::spdy::SpdyVersion kDefaultUseSpdyVersionWithoutSsl =
+    mod_spdy::spdy::SPDY_VERSION_NONE;
 const int kDefaultVlogLevel = 0;
 
 }  // namespace

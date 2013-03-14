@@ -18,6 +18,7 @@
 
 #include "base/basictypes.h"
 #include "mod_spdy/apache/pool_util.h"
+#include "mod_spdy/common/protocol_util.h"
 
 struct apr_sockaddr_t;
 struct apr_socket_t;
@@ -62,7 +63,7 @@ class SlaveConnectionFactory {
 
   // Saved information from master_connection
   bool is_using_ssl_;
-  int spdy_version_;
+  spdy::SpdyVersion spdy_version_;
   server_rec* base_server_;
   LocalPool pool_;
   // All of these are in pool_:

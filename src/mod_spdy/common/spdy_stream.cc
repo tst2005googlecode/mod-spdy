@@ -35,7 +35,8 @@ const size_t kMinWindowUpdateSize =
 
 namespace mod_spdy {
 
-SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
+SpdyStream::SpdyStream(spdy::SpdyVersion spdy_version,
+                       net::SpdyStreamId stream_id,
                        net::SpdyStreamId associated_stream_id,
                        int32 server_push_depth,
                        net::SpdyPriority priority,
@@ -43,7 +44,8 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
                        SpdyFramePriorityQueue* output_queue,
                        net::BufferedSpdyFramer* framer,
                        SpdyServerPushInterface* pusher)
-    : stream_id_(stream_id),
+    : spdy_version_(spdy_version),
+      stream_id_(stream_id),
       associated_stream_id_(associated_stream_id),
       server_push_depth_(server_push_depth),
       priority_(priority),
@@ -57,14 +59,14 @@ SpdyStream::SpdyStream(net::SpdyStreamId stream_id,
       //   would send the chosen value to the client with a SETTINGS frame).
       input_window_size_(net::kSpdyStreamInitialWindowSize),
       input_bytes_consumed_(0) {
+  DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version);
   DCHECK(output_queue_);
   DCHECK(framer_);
   DCHECK(pusher_);
   DCHECK_GT(output_window_size_, 0);
   // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
   DCHECK_GE(priority, 0u);
-  DCHECK_LE(priority,
-            LowestSpdyPriorityForVersion(framer_->protocol_version()));
+  DCHECK_LE(priority, LowestSpdyPriorityForVersion(spdy_version));
 }
 
 SpdyStream::~SpdyStream() {}
@@ -92,13 +94,13 @@ void SpdyStream::AbortWithRstStream(net::SpdyStatusCodes status) {
 
 int32 SpdyStream::current_input_window_size() const {
   base::AutoLock autolock(lock_);
-  DCHECK_GE(spdy_version(), 3);
+  DCHECK_GE(spdy_version(), spdy::SPDY_VERSION_3);
   return input_window_size_;
 }
 
 int32 SpdyStream::current_output_window_size() const {
   base::AutoLock autolock(lock_);
-  DCHECK_GE(spdy_version(), 3);
+  DCHECK_GE(spdy_version(), spdy::SPDY_VERSION_3);
   return output_window_size_;
 }
 
@@ -109,7 +111,7 @@ void SpdyStream::OnInputDataConsumed(size_t size) {
 
   // Flow control only exists for SPDY v3 and up, so for SPDY v2 we don't need
   // to bother tracking this.
-  if (spdy_version() < 3) {
+  if (spdy_version() < spdy::SPDY_VERSION_3) {
     return;
   }
 
@@ -179,7 +181,7 @@ void SpdyStream::AdjustOutputWindowSize(int32 delta) {
   base::AutoLock autolock(lock_);
 
   // Flow control only exists for SPDY v3 and up.
-  DCHECK_GE(spdy_version(), 3);
+  DCHECK_GE(spdy_version(), spdy::SPDY_VERSION_3);
 
   if (aborted_) {
     return;
@@ -219,7 +221,7 @@ void SpdyStream::PostInputFrame(net::SpdyFrame* frame_ptr) {
 
   // If this is a data frame (and we're using SPDY v3 or above) we need to
   // track flow control.
-  if (!frame->is_control_frame() && spdy_version() >= 3) {
+  if (!frame->is_control_frame() && spdy_version() >= spdy::SPDY_VERSION_3) {
     DCHECK_GE(input_window_size_, 0);
     const int32 size = frame->length();
     // If receiving this much data would overflow the window size, then abort
@@ -318,7 +320,7 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
   // Flow control only exists for SPDY v3 and up; for SPDY v2, we can just send
   // the data without regard to the window size.  Even with flow control, we
   // can of course send empty DATA frames at will.
-  if (spdy_version() < 3 || data.empty()) {
+  if (spdy_version() < spdy::SPDY_VERSION_3 || data.empty()) {
     // Suppress empty DATA frames (unless we're setting FLAG_FIN).
     if (!data.empty() || flag_fin) {
       const net::SpdyDataFlags flags =
@@ -362,8 +364,9 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
 SpdyServerPushInterface::PushStatus SpdyStream::StartServerPush(
     net::SpdyPriority priority,
     const net::SpdyHeaderBlock& request_headers) {
-  DCHECK_GE(spdy_version(), 3);
-  return pusher_->StartServerPush(stream_id_, server_push_depth_+1, priority, request_headers);
+  DCHECK_GE(spdy_version(), spdy::SPDY_VERSION_3);
+  return pusher_->StartServerPush(stream_id_, server_push_depth_ + 1, priority,
+                                  request_headers);
 }
 
 void SpdyStream::SendOutputFrame(net::SpdyFrame* frame) {

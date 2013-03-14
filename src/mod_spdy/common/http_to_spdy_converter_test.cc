@@ -35,17 +35,20 @@ class MockSpdyReceiver : public mod_spdy::HttpToSpdyConverter::SpdyReceiver {
   MOCK_METHOD2(ReceiveData, void(base::StringPiece data, bool flag_fin));
 };
 
-class HttpToSpdyConverterTest : public testing::TestWithParam<int> {
+class HttpToSpdyConverterTest :
+      public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
   HttpToSpdyConverterTest() : converter_(GetParam(), &receiver_) {}
 
  protected:
   const char* status_header_name() const {
-    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Status :
+    return (GetParam() < mod_spdy::spdy::SPDY_VERSION_3 ?
+            mod_spdy::spdy::kSpdy2Status :
             mod_spdy::spdy::kSpdy3Status);
   }
   const char* version_header_name() const {
-    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Version :
+    return (GetParam() < mod_spdy::spdy::SPDY_VERSION_3 ?
+            mod_spdy::spdy::kSpdy2Version :
             mod_spdy::spdy::kSpdy3Version);
   }
 
@@ -249,7 +252,8 @@ TEST_P(HttpToSpdyConverterTest, FlushAfterEndDoesNothing) {
 }
 
 // Run each test over both SPDY v2 and SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy2And3, HttpToSpdyConverterTest,
-                        testing::Values(2, 3));
+INSTANTIATE_TEST_CASE_P(Spdy2And3, HttpToSpdyConverterTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_2, mod_spdy::spdy::SPDY_VERSION_3,
+    mod_spdy::spdy::SPDY_VERSION_3_1));
 
 }  // namespace

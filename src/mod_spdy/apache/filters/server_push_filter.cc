@@ -113,7 +113,7 @@ apr_status_t ServerPushFilter::Write(ap_filter_t* filter,
   // We only do server pushes for SPDY v3 and later.  Also, to avoid infinite
   // push loops, we don't allow push streams to invoke further push streams
   // beyond a specified depth.
-  if (stream_->spdy_version() >= 3 &&
+  if (stream_->spdy_version() >= spdy::SPDY_VERSION_3 &&
       stream_->server_push_depth() < server_cfg_->max_server_push_depth()) {
     // Parse and start pushes for each X-Associated-Content header, if any.
     // (Note that APR tables allow multiple entries with the same key, just

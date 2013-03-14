@@ -21,6 +21,7 @@
 #include "base/synchronization/lock.h"
 #include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
 #include "mod_spdy/common/spdy_server_push_interface.h"
 
@@ -41,7 +42,8 @@ class SpdyStream {
   // frames; its state will never by modified by the SpdyStream (unfortunately,
   // however, we do need to call some non-const methods on it that don't
   // actually mutate state, so we require a non-const pointer here).
-  SpdyStream(net::SpdyStreamId stream_id,
+  SpdyStream(spdy::SpdyVersion spdy_version,
+             net::SpdyStreamId stream_id,
              net::SpdyStreamId associated_stream_id_,
              int32 server_push_depth,
              net::SpdyPriority priority,
@@ -52,7 +54,7 @@ class SpdyStream {
   ~SpdyStream();
 
   // What version of SPDY is being used for this connection?
-  int spdy_version() const { return framer_->protocol_version(); }
+  spdy::SpdyVersion spdy_version() const { return spdy_version_; }
 
   // Return true if this stream was initiated by the server, false if it was
   // initiated by the client.
@@ -163,6 +165,7 @@ class SpdyStream {
   // additional synchronization.  In the case of framer_, we are careful to
   // only call certain methods, in a thread-safe way (even though some of those
   // methods are marked as non-const).
+  const spdy::SpdyVersion spdy_version_;
   const net::SpdyStreamId stream_id_;
   const net::SpdyStreamId associated_stream_id_;
   const int32 server_push_depth_;

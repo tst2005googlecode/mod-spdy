@@ -45,6 +45,16 @@ extern const char* const kGzipDeflate;
 
 namespace spdy {
 
+// Represents a specific SPDY version, including experimental versions such as
+// SPDY/3.1 (which uses version 3 frames, but has extra semantics borrowed from
+// SPDY/4).
+enum SpdyVersion {
+  SPDY_VERSION_NONE,  // not using SPDY
+  SPDY_VERSION_2,     // SPDY/2
+  SPDY_VERSION_3,     // SPDY/3
+  SPDY_VERSION_3_1    // SPDY/3.1 (SPDY/3 framing, but with new flow control)
+};
+
 // Magic header names for SPDY v2.
 extern const char* const kSpdy2Method;
 extern const char* const kSpdy2Scheme;
@@ -62,6 +72,14 @@ extern const char* const kSpdy3Version;
 
 }  // namespace spdy
 
+// Given a SpdyVersion enum value, return the framer version number to use.
+// Returns zero for SPDY_VERSION_NONE.
+int SpdyVersionToFramerVersion(spdy::SpdyVersion version);
+
+// Given a SpdyVersion enum value (other than SPDY_VERSION_NONE), return a
+// string for the version number (e.g. "3" or "3.1").
+const char* SpdyVersionNumberString(spdy::SpdyVersion version);
+
 // Convert various SPDY enum types to strings.
 const char* GoAwayStatusCodeToString(net::SpdyGoAwayStatus status);
 inline const char* RstStreamStatusCodeToString(net::SpdyStatusCodes status) {
@@ -78,7 +96,7 @@ bool IsInvalidSpdyResponseHeader(base::StringPiece key);
 // Return the SpdyPriority representing the least important priority for the
 // given SPDY version.  For SPDY v2 and below, it's 3; for SPDY v3 and above,
 // it's 7.  (The most important SpdyPriority is always 0.)
-net::SpdyPriority LowestSpdyPriorityForVersion(int spdy_version);
+net::SpdyPriority LowestSpdyPriorityForVersion(spdy::SpdyVersion spdy_version);
 
 // Add a header to a header table, lower-casing and merging if necessary.
 void MergeInHeader(base::StringPiece key, base::StringPiece value,

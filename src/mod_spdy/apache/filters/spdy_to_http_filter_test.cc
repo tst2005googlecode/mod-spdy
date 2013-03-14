@@ -48,14 +48,17 @@ class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
                      const net::SpdyHeaderBlock& request_headers));
 };
 
-class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
+class SpdyToHttpFilterTest :
+      public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
   SpdyToHttpFilterTest()
-      : framer_(GetParam()),
+      : spdy_version_(GetParam()),
+        framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
         stream_id_(1),
         priority_(framer_.GetHighestPriority()),
-        stream_(stream_id_, 0, 0, priority_, net::kSpdyStreamInitialWindowSize,
-                &output_queue_, &framer_, &pusher_),
+        stream_(spdy_version_, stream_id_, 0, 0, priority_,
+                net::kSpdyStreamInitialWindowSize, &output_queue_, &framer_,
+                &pusher_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
     connection_ = static_cast<conn_rec*>(
@@ -146,26 +149,29 @@ class SpdyToHttpFilterTest : public testing::TestWithParam<int> {
     EXPECT_TRUE(output_queue_.IsEmpty());
   }
 
+  bool is_spdy2() const { return GetParam() < mod_spdy::spdy::SPDY_VERSION_3; }
+
   const char* host_header_name() const {
-    return GetParam() < 3 ? mod_spdy::http::kHost : mod_spdy::spdy::kSpdy3Host;
+    return is_spdy2() ? mod_spdy::http::kHost : mod_spdy::spdy::kSpdy3Host;
   }
   const char* method_header_name() const {
-    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Method :
+    return (is_spdy2() ? mod_spdy::spdy::kSpdy2Method :
             mod_spdy::spdy::kSpdy3Method);
   }
   const char* path_header_name() const {
-    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Url :
+    return (is_spdy2() ? mod_spdy::spdy::kSpdy2Url :
             mod_spdy::spdy::kSpdy3Path);
   }
   const char* scheme_header_name() const {
-    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Scheme :
+    return (is_spdy2() ? mod_spdy::spdy::kSpdy2Scheme :
             mod_spdy::spdy::kSpdy3Scheme);
   }
   const char* version_header_name() const {
-    return (GetParam() < 3 ? mod_spdy::spdy::kSpdy2Version :
+    return (is_spdy2() ? mod_spdy::spdy::kSpdy2Version :
             mod_spdy::spdy::kSpdy3Version);
   }
 
+  const mod_spdy::spdy::SpdyVersion spdy_version_;
   net::BufferedSpdyFramer framer_;
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
@@ -599,7 +605,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
   // header appears in a slightly different place for SPDY v2 and SPDY v3.
   // This is beacuse in SPDY v3 the host header is ":host", which sorts
   // earlier, and which we transform into the HTTP header "host".
-  if (GetParam() < 3) {
+  if (is_spdy2()) {
     ExpectTransientBucket("POST /do/some/stuff.py HTTP/1.1\r\n"
                           "content-length: 22\r\n"
                           "host: www.example.org\r\n"
@@ -655,7 +661,8 @@ TEST_P(SpdyToHttpFilterTest, ExtraSynStream) {
 }
 
 // Run each test over both SPDY v2 and SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdyToHttpFilterTest,
-                        testing::Values(2, 3));
+INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdyToHttpFilterTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_2, mod_spdy::spdy::SPDY_VERSION_3,
+    mod_spdy::spdy::SPDY_VERSION_3_1));
 
 }  // namespace

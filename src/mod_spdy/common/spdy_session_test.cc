@@ -106,9 +106,11 @@ ACTION_P5(StartServerPush, session, stream_id, pri, url, expected_status) {
 
 ACTION_P(SendResponseHeaders, task) {
   net::SpdyHeaderBlock headers;
-  headers[task->stream->spdy_version() < 3 ? mod_spdy::spdy::kSpdy2Status :
+  const bool spdy2 =
+      task->stream->spdy_version() < mod_spdy::spdy::SPDY_VERSION_3;
+  headers[spdy2 ? mod_spdy::spdy::kSpdy2Status :
           mod_spdy::spdy::kSpdy3Status] = "200";
-  headers[task->stream->spdy_version() < 3 ? mod_spdy::spdy::kSpdy2Version :
+  headers[spdy2 ? mod_spdy::spdy::kSpdy2Version :
           mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
   if (task->stream->is_server_push()) {
     task->stream->SendOutputHeaders(headers, false);
@@ -163,9 +165,10 @@ void FakeStreamTask::Run() {
 
   {
     net::SpdyHeaderBlock headers;
-    headers[stream_->spdy_version() < 3 ? mod_spdy::spdy::kSpdy2Status :
+    bool spdy2 = stream_->spdy_version() < mod_spdy::spdy::SPDY_VERSION_3;
+    headers[spdy2 ? mod_spdy::spdy::kSpdy2Status :
             mod_spdy::spdy::kSpdy3Status] = "200";
-    headers[stream_->spdy_version() < 3 ? mod_spdy::spdy::kSpdy2Version :
+    headers[spdy2 ? mod_spdy::spdy::kSpdy2Version :
             mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
     if (stream_->is_server_push()) {
       stream_->SendOutputHeaders(headers, false);
@@ -236,9 +239,13 @@ class InlineExecutor : public mod_spdy::Executor {
 };
 
 // Base class for SpdySession tests.
-class SpdySessionTestBase : public testing::TestWithParam<int> {
+class SpdySessionTestBase :
+      public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
-  SpdySessionTestBase() : framer_(GetParam()), close_after_input_(false) {
+  SpdySessionTestBase()
+      : spdy_version_(GetParam()),
+        framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
+        close_after_input_(false) {
     ON_CALL(session_io_, IsConnectionAborted()).WillByDefault(Return(false));
     ON_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
         .WillByDefault(Invoke(this, &SpdySessionTestBase::ReadNextInputChunk));
@@ -311,6 +318,7 @@ class SpdySessionTestBase : public testing::TestWithParam<int> {
     PushFrame(*frame);
   }
 
+  const mod_spdy::spdy::SpdyVersion spdy_version_;
   net::SpdyFramer framer_;
   mod_spdy::SpdyServerConfig config_;
   MockSpdySessionIO session_io_;
@@ -328,8 +336,8 @@ ACTION_P3(ReceiveSettingsFrame, test, key, value) {
 class SpdySessionTest : public SpdySessionTestBase {
  public:
   SpdySessionTest()
-      : session_(framer_.protocol_version(), &config_, &session_io_,
-                 &task_factory_, &executor_) {}
+      : session_(spdy_version_, &config_, &session_io_, &task_factory_,
+                 &executor_) {}
 
   FakeStreamTask* ResponseWithServerPush(
       mod_spdy::SpdyStream* stream) {
@@ -342,7 +350,8 @@ class SpdySessionTest : public SpdySessionTestBase {
       const net::SpdyFrame& frame) {
     // For SPDY v3 and above, send back a WINDOW_UPDATE frame saying we
     // consumed the data frame.
-    if (session_.spdy_version() >= 3 && !frame.is_control_frame()) {
+    if (session_.spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3 &&
+        !frame.is_control_frame()) {
       const net::SpdyDataFrame& data_frame =
           *static_cast<const net::SpdyDataFrame*>(&frame);
       scoped_ptr<net::SpdyWindowUpdateControlFrame> window_update_frame(
@@ -601,7 +610,9 @@ TEST_P(SpdySessionTest, SendGoawayForDuplicateStreamId) {
 }
 
 // Run each test over both SPDY v2 and SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdySessionTest, testing::Values(2, 3));
+INSTANTIATE_TEST_CASE_P(Spdy2And3, SpdySessionTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_2, mod_spdy::spdy::SPDY_VERSION_3,
+    mod_spdy::spdy::SPDY_VERSION_3_1));
 
 // Create a type alias so that we can instantiate some of our
 // SpdySessionTest-based tests using a different set of parameters.
@@ -627,8 +638,8 @@ TEST_P(SpdySessionNoFlowControlTest, SendGoawayForInitialWindowSize) {
 }
 
 // Only run no-flow-control tests for SPDY v2.
-INSTANTIATE_TEST_CASE_P(Spdy2, SpdySessionNoFlowControlTest,
-                        testing::Values(2));
+INSTANTIATE_TEST_CASE_P(Spdy2, SpdySessionNoFlowControlTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_2));
 
 // Test class for flow-control tests.  This uses a ThreadPool Executor, so that
 // we can test concurrency behavior.
@@ -644,7 +655,7 @@ class SpdySessionFlowControlTest : public SpdySessionTestBase {
     ASSERT_TRUE(thread_pool_.Start());
     executor_.reset(thread_pool_.NewExecutor());
     session_.reset(new mod_spdy::SpdySession(
-        framer_.protocol_version(), &config_, &session_io_, &task_factory_,
+        spdy_version_, &config_, &session_io_, &task_factory_,
         executor_.get()));
   }
 
@@ -654,7 +665,8 @@ class SpdySessionFlowControlTest : public SpdySessionTestBase {
       const net::SpdyFrame& frame) {
     // For SPDY v3 and above, send back a WINDOW_UPDATE frame saying we
     // consumed the data frame.
-    if (session_->spdy_version() >= 3 && !frame.is_control_frame()) {
+    if (session_->spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3 &&
+        !frame.is_control_frame()) {
       const net::SpdyDataFrame& data_frame =
           *static_cast<const net::SpdyDataFrame*>(&frame);
       scoped_ptr<net::SpdyWindowUpdateControlFrame> window_update_frame(
@@ -800,7 +812,8 @@ TEST_P(SpdySessionFlowControlTest, SendGoawayForTooLargeInitialWindowSize) {
 }
 
 // Only run flow control tests for SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy3, SpdySessionFlowControlTest, testing::Values(3));
+INSTANTIATE_TEST_CASE_P(Spdy3, SpdySessionFlowControlTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_3, mod_spdy::spdy::SPDY_VERSION_3_1));
 
 // Create a type alias so that we can instantiate some of our
 // SpdySessionTest-based tests using a different set of parameters.
@@ -962,6 +975,7 @@ TEST_P(SpdySessionServerPushTest, TooManyConcurrentPushes) {
 }
 
 // Only run server push tests for SPDY v3.
-INSTANTIATE_TEST_CASE_P(Spdy3, SpdySessionServerPushTest, testing::Values(3));
+INSTANTIATE_TEST_CASE_P(Spdy3, SpdySessionServerPushTest, testing::Values(
+    mod_spdy::spdy::SPDY_VERSION_3, mod_spdy::spdy::SPDY_VERSION_3_1));
 
 }  // namespace

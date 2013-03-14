@@ -43,16 +43,17 @@ const uint32 kInitMaxConcurrentPushes = 100u;
 
 namespace mod_spdy {
 
-SpdySession::SpdySession(int spdy_version,
+SpdySession::SpdySession(spdy::SpdyVersion spdy_version,
                          const SpdyServerConfig* config,
                          SpdySessionIO* session_io,
                          SpdyStreamTaskFactory* task_factory,
                          Executor* executor)
-    : config_(config),
+    : spdy_version_(spdy_version),
+      config_(config),
       session_io_(session_io),
       task_factory_(task_factory),
       executor_(executor),
-      framer_(spdy_version),
+      framer_(SpdyVersionToFramerVersion(spdy_version)),
       session_stopped_(false),
       already_sent_goaway_(false),
       last_client_stream_id_(0u),
@@ -60,6 +61,7 @@ SpdySession::SpdySession(int spdy_version,
       max_concurrent_pushes_(kInitMaxConcurrentPushes),
       last_server_push_stream_id_(0u),
       received_goaway_(false) {
+  DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version);
   framer_.set_visitor(this);
 }
 
@@ -202,7 +204,7 @@ SpdyServerPushInterface::PushStatus SpdySession::StartServerPush(
     net::SpdyPriority priority,
     const net::SpdyHeaderBlock& request_headers) {
   // Server push is pretty ill-defined in SPDY v2, so we require v3 or higher.
-  DCHECK_GE(spdy_version(), 3);
+  DCHECK_GE(spdy_version(), spdy::SPDY_VERSION_3);
 
   // Grab the headers that we are required to send with the initial SYN_STREAM.
   const net::SpdyHeaderBlock::const_iterator host_iter =
@@ -497,9 +499,10 @@ void SpdySession::OnSetting(net::SpdySettingsIds id,
       break;
     case net::SETTINGS_INITIAL_WINDOW_SIZE:
       // Flow control only exists for SPDY v3 and up.
-      if (spdy_version() < 3) {
+      if (spdy_version() < spdy::SPDY_VERSION_3) {
         LOG(ERROR) << "Client sent INITIAL_WINDOW_SIZE setting over "
-                   << "SPDY v" << spdy_version() << ".  Sending GOAWAY.";
+                   << "SPDY/" << SpdyVersionNumberString(spdy_version())
+                   << ".  Sending GOAWAY.";
         SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
       } else {
         SetInitialWindowSize(value);
@@ -610,8 +613,9 @@ void SpdySession::OnControlFrameCompressed(
 void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
                                  int delta_window_size) {
   // Flow control only exists for SPDY v3 and up.
-  if (spdy_version() < 3) {
-    LOG(ERROR) << "Got a WINDOW_UPDATE frame over SPDY v" << spdy_version();
+  if (spdy_version() < spdy::SPDY_VERSION_3) {
+    LOG(ERROR) << "Got a WINDOW_UPDATE frame over SPDY/"
+               << SpdyVersionNumberString(spdy_version());
     SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
     return;
   }
@@ -632,8 +636,9 @@ void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
 void SpdySession::SetInitialWindowSize(uint32 new_init_window_size) {
   // Flow control only exists for SPDY v3 and up.  We shouldn't be calling this
   // method for SPDY v2.
-  if (spdy_version() < 3) {
-    LOG(DFATAL) << "SetInitialWindowSize called for SPDY v" << spdy_version();
+  if (spdy_version() < spdy::SPDY_VERSION_3) {
+    LOG(DFATAL) << "SetInitialWindowSize called for SPDY/"
+                << SpdyVersionNumberString(spdy_version());
     return;
   }
 
@@ -784,8 +789,8 @@ SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     int32 server_push_depth,
     net::SpdyPriority priority)
     : spdy_session_(spdy_session),
-      stream_(stream_id, associated_stream_id, server_push_depth, priority,
-              spdy_session_->initial_window_size_,
+      stream_(spdy_session->spdy_version(), stream_id, associated_stream_id,
+              server_push_depth, priority, spdy_session_->initial_window_size_,
               &spdy_session_->output_queue_, &spdy_session_->framer_,
               spdy_session_),
       subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {

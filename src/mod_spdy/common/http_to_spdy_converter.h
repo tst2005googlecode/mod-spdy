@@ -21,6 +21,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/string_piece.h"
 #include "mod_spdy/common/http_response_parser.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_framer.h"  // for SpdyHeaderBlock
 
 namespace mod_spdy {
@@ -51,7 +52,7 @@ class HttpToSpdyConverter {
 
   // Create a converter that will send frame data to the given receiver.  The
   // converter does *not* gain ownership of the receiver.
-  HttpToSpdyConverter(int spdy_version, SpdyReceiver* receiver);
+  HttpToSpdyConverter(spdy::SpdyVersion spdy_version, SpdyReceiver* receiver);
   ~HttpToSpdyConverter();
 
   // Parse and process the next chunk of input; return true on success, false

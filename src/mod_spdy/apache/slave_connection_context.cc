@@ -21,7 +21,7 @@ namespace mod_spdy {
 
 SlaveConnectionContext::SlaveConnectionContext()
     : using_ssl_(false),
-      spdy_version_(0),
+      spdy_version_(spdy::SPDY_VERSION_NONE),
       slave_stream_(NULL),
       output_filter_handle_(NULL),
       output_filter_context_(NULL),

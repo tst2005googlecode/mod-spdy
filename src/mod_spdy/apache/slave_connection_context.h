@@ -19,6 +19,7 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
+#include "mod_spdy/common/protocol_util.h"
 
 struct ap_filter_rec_t;
 
@@ -49,8 +50,8 @@ class SlaveConnectionContext {
 
   // Return the SPDY version number we will be using, or 0 if we're not using
   // SPDY.
-  int spdy_version() const { return spdy_version_; }
-  void set_spdy_version(int version) { spdy_version_ = version; }
+  spdy::SpdyVersion spdy_version() const { return spdy_version_; }
+  void set_spdy_version(spdy::SpdyVersion version) { spdy_version_ = version; }
 
   // See SlaveConnection documentation for description of these.
   void SetOutputFilter(ap_filter_rec_t* handle, void* context);
@@ -76,7 +77,7 @@ class SlaveConnectionContext {
   // These are used to properly inform modules running on slave connections
   // on whether the connection should be treated as using SPDY and SSL.
   bool using_ssl_;
-  int spdy_version_;
+  spdy::SpdyVersion spdy_version_;
 
   // Used for SPDY push.
   SpdyStream* slave_stream_;

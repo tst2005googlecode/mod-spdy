@@ -20,6 +20,7 @@
 #include "base/basictypes.h"
 #include "base/synchronization/lock.h"
 #include "mod_spdy/common/executor.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_server_push_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -42,7 +43,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
                     public SpdyServerPushInterface {
  public:
   // The SpdySession does _not_ take ownership of any of these arguments.
-  SpdySession(int spdy_version,
+  SpdySession(spdy::SpdyVersion spdy_version,
               const SpdyServerConfig* config,
               SpdySessionIO* session_io,
               SpdyStreamTaskFactory* task_factory,
@@ -50,9 +51,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   virtual ~SpdySession();
 
   // What SPDY version is being used for this session?
-  // TODO(mdsteele): This method should be const, but it isn't beacuse
-  //   BufferedSpdyFramer::protocol_version() isn't const, for no reason.
-  int spdy_version() { return framer_.protocol_version(); }
+  spdy::SpdyVersion spdy_version() const { return spdy_version_; }
 
   // Process the session; don't return until the session is finished.
   void Run();
@@ -94,7 +93,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // SYN_STREAM with the given headers.  To repeat: the headers argument is
   // _not_ the headers that the server will send to the client, but rather the
   // headers to _pretend_ that the client sent to the server.  Requires that
-  // spdy_version() >= 3.
+  // spdy_version() >= SPDY/3.
   // Note that unlike most other methods of this class, StartServerPush may be
   // called by stream threads, not just by the connection thread.
   virtual SpdyServerPushInterface::PushStatus StartServerPush(
@@ -219,6 +218,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
 
   // These fields are accessed only by the main connection thread, so they need
   // not be protected by a lock:
+  const spdy::SpdyVersion spdy_version_;
   const SpdyServerConfig* const config_;
   SpdySessionIO* const session_io_;
   SpdyStreamTaskFactory* const task_factory_;

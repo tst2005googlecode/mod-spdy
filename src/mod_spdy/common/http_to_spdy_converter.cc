@@ -38,7 +38,7 @@ namespace mod_spdy {
 
 class HttpToSpdyConverter::ConverterImpl : public HttpResponseVisitorInterface{
  public:
-  ConverterImpl(int spdy_version, SpdyReceiver* receiver);
+  ConverterImpl(spdy::SpdyVersion spdy_version, SpdyReceiver* receiver);
   virtual ~ConverterImpl();
 
   void Flush();
@@ -56,7 +56,7 @@ class HttpToSpdyConverter::ConverterImpl : public HttpResponseVisitorInterface{
   void SendDataIfNecessary(bool flush, bool fin);
   void SendDataFrame(const char* data, size_t size, bool flag_fin);
 
-  const int spdy_version_;
+  const spdy::SpdyVersion spdy_version_;
   SpdyReceiver* const receiver_;
   net::SpdyHeaderBlock headers_;
   std::string data_buffer_;
@@ -69,7 +69,7 @@ HttpToSpdyConverter::SpdyReceiver::SpdyReceiver() {}
 
 HttpToSpdyConverter::SpdyReceiver::~SpdyReceiver() {}
 
-HttpToSpdyConverter::HttpToSpdyConverter(int spdy_version,
+HttpToSpdyConverter::HttpToSpdyConverter(spdy::SpdyVersion spdy_version,
                                          SpdyReceiver* receiver)
     : impl_(new ConverterImpl(spdy_version, receiver)),
       parser_(impl_.get()) {}
@@ -85,10 +85,11 @@ void HttpToSpdyConverter::Flush() {
 }
 
 HttpToSpdyConverter::ConverterImpl::ConverterImpl(
-    int spdy_version, SpdyReceiver* receiver)
+    spdy::SpdyVersion spdy_version, SpdyReceiver* receiver)
     : spdy_version_(spdy_version),
       receiver_(receiver),
       sent_flag_fin_(false) {
+  DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version);
   CHECK(receiver_);
 }
 
@@ -104,9 +105,10 @@ void HttpToSpdyConverter::ConverterImpl::OnStatusLine(
     const base::StringPiece& status_code,
     const base::StringPiece& status_phrase) {
   DCHECK(headers_.empty());
-  headers_[spdy_version_ < 3 ? spdy::kSpdy2Version : spdy::kSpdy3Version] =
+  const bool spdy2 = spdy_version_ < spdy::SPDY_VERSION_3;
+  headers_[spdy2 ? spdy::kSpdy2Version : spdy::kSpdy3Version] =
       version.as_string();
-  headers_[spdy_version_ < 3 ? spdy::kSpdy2Status : spdy::kSpdy3Status] =
+  headers_[spdy2 ? spdy::kSpdy2Status : spdy::kSpdy3Status] =
       status_code.as_string();
 }
 
