@@ -32,7 +32,7 @@
         'packaging_files_deb': [
           '<(install_path)/debian/build.sh',
           '<(install_path)/debian/changelog.template',
-          '<(install_path)/debian/conffiles',
+          '<(install_path)/debian/conffiles.template',
           '<(install_path)/debian/control.template',
           '<(install_path)/debian/postinst',
           '<(install_path)/debian/postrm',

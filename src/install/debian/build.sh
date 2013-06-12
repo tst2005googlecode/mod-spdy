@@ -66,8 +66,9 @@ stage_install_debian() {
   process_template "${BUILDDIR}/install/debian/postrm" \
     "${STAGEDIR}/DEBIAN/postrm"
   chmod 755 "${STAGEDIR}/DEBIAN/postrm"
-  install -m 644 "${BUILDDIR}/install/debian/conffiles" \
+  process_template "${BUILDDIR}/install/debian/conffiles.template" \
     "${STAGEDIR}/DEBIAN/conffiles"
+  chmod 644 "${STAGEDIR}/DEBIAN/conffiles"
   process_template "${BUILDDIR}/install/common/spdy.load.template" \
     "${STAGEDIR}${APACHE_CONFDIR}/spdy.load"
   chmod 644 "${STAGEDIR}${APACHE_CONFDIR}/spdy.load"
