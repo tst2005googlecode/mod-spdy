@@ -48,8 +48,8 @@ class SlaveConnectionContext {
   SpdyStream* slave_stream() const { return slave_stream_; }
   void set_slave_stream(SpdyStream* stream) { slave_stream_ = stream; }
 
-  // Return the SPDY version number we will be using, or 0 if we're not using
-  // SPDY.
+  // Return the SPDY version will be using, or SPDY_VERSION_NONE if we're not
+  // using SPDY.
   spdy::SpdyVersion spdy_version() const { return spdy_version_; }
   void set_spdy_version(spdy::SpdyVersion version) { spdy_version_ = version; }
 

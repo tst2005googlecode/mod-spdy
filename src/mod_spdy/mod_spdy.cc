@@ -610,14 +610,18 @@ int SetUpSubprocessEnv(request_rec* request) {
   mod_spdy::SlaveConnectionContext* slave_context =
       mod_spdy::GetSlaveConnectionContext(connection);
 
-  // For the benefit of CGI scripts, which have no way of calling
-  // spdy_get_version(), set an environment variable indicating that this
-  // request is over SPDY (and what SPDY version is being used), allowing them
-  // to optimize the response for SPDY.
+  // If this request is over SPDY (which it might not be, if this slave
+  // connection is being used by another module through the slave connection
+  // API), then for the benefit of CGI scripts, which have no way of calling
+  // spdy_get_version(), set an environment variable indicating what SPDY
+  // version is being used, allowing them to optimize the response for SPDY.
   // See http://code.google.com/p/mod-spdy/issues/detail?id=27 for details.
-  apr_table_set(
-      request->subprocess_env, kSpdyVersionEnvironmentVariable,
-      mod_spdy::SpdyVersionNumberString(slave_context->spdy_version()));
+  const mod_spdy::spdy::SpdyVersion spdy_version =
+      slave_context->spdy_version();
+  if (spdy_version != mod_spdy::spdy::SPDY_VERSION_NONE) {
+    apr_table_set(request->subprocess_env, kSpdyVersionEnvironmentVariable,
+                  mod_spdy::SpdyVersionNumberString(spdy_version));
+  }
 
   // Normally, mod_ssl sets the HTTPS environment variable to "on" for requests
   // served over SSL.  We turn mod_ssl off for our slave connections, but those
