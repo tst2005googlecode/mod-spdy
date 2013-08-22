@@ -18,53 +18,44 @@
 #include "base/threading/platform_thread.h"
 #include "mod_spdy/common/testing/async_task_runner.h"
 #include "mod_spdy/common/testing/notification.h"
-#include "net/spdy/spdy_framer.h"
+#include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "net/spdy/spdy_protocol.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
 const int kSpdyVersion = 2;
 
-net::SpdyStreamId GetPingId(net::SpdyFrame* frame) {
-  if (!frame->is_control_frame() ||
-      static_cast<net::SpdyControlFrame*>(frame)->type() != net::PING) {
-    ADD_FAILURE() << "Frame is not a PING frame.";
-    return 0;
-  }
-  return static_cast<net::SpdyPingControlFrame*>(frame)->unique_id();
-}
-
 void ExpectPop(bool block, net::SpdyStreamId expected,
                mod_spdy::SpdyFrameQueue* queue) {
-  net::SpdyFrame* raw_frame = NULL;
+  net::SpdyFrameIR* raw_frame = NULL;
   const bool success = queue->Pop(block, &raw_frame);
-  scoped_ptr<net::SpdyFrame> scoped_frame(raw_frame);
+  scoped_ptr<net::SpdyFrameIR> scoped_frame(raw_frame);
   EXPECT_TRUE(success);
   ASSERT_TRUE(scoped_frame != NULL);
-  ASSERT_EQ(expected, GetPingId(scoped_frame.get()));
+  EXPECT_THAT(*scoped_frame, mod_spdy::testing::IsPing(expected));
 }
 
 void ExpectEmpty(mod_spdy::SpdyFrameQueue* queue) {
-  net::SpdyFrame* frame = NULL;
+  net::SpdyFrameIR* frame = NULL;
   EXPECT_FALSE(queue->Pop(false, &frame));
   EXPECT_TRUE(frame == NULL);
 }
 
 TEST(SpdyFrameQueueTest, Simple) {
-  net::SpdyFramer framer(kSpdyVersion);
   mod_spdy::SpdyFrameQueue queue;
   ExpectEmpty(&queue);
 
-  queue.Insert(framer.CreatePingFrame(4));
-  queue.Insert(framer.CreatePingFrame(1));
-  queue.Insert(framer.CreatePingFrame(3));
+  queue.Insert(new net::SpdyPingIR(4));
+  queue.Insert(new net::SpdyPingIR(1));
+  queue.Insert(new net::SpdyPingIR(3));
 
   ExpectPop(false, 4, &queue);
   ExpectPop(false, 1, &queue);
 
-  queue.Insert(framer.CreatePingFrame(2));
-  queue.Insert(framer.CreatePingFrame(5));
+  queue.Insert(new net::SpdyPingIR(2));
+  queue.Insert(new net::SpdyPingIR(5));
 
   ExpectPop(false, 3, &queue);
   ExpectPop(false, 2, &queue);
@@ -73,14 +64,13 @@ TEST(SpdyFrameQueueTest, Simple) {
 }
 
 TEST(SpdyFrameQueueTest, AbortEmptiesQueue) {
-  net::SpdyFramer framer(kSpdyVersion);
   mod_spdy::SpdyFrameQueue queue;
   ASSERT_FALSE(queue.is_aborted());
   ExpectEmpty(&queue);
 
-  queue.Insert(framer.CreatePingFrame(4));
-  queue.Insert(framer.CreatePingFrame(1));
-  queue.Insert(framer.CreatePingFrame(3));
+  queue.Insert(new net::SpdyPingIR(4));
+  queue.Insert(new net::SpdyPingIR(1));
+  queue.Insert(new net::SpdyPingIR(3));
 
   ExpectPop(false, 4, &queue);
 
@@ -100,7 +90,6 @@ class BlockingPopTask : public mod_spdy::testing::AsyncTaskRunner::Task {
 };
 
 TEST(SpdyFrameQueueTest, BlockingPop) {
-  net::SpdyFramer framer(kSpdyVersion);
   mod_spdy::SpdyFrameQueue queue;
 
   // Start a task that will do a blocking pop from the queue.
@@ -115,7 +104,7 @@ TEST(SpdyFrameQueueTest, BlockingPop) {
 
   // Now, if we push something into the queue, the task should soon unblock and
   // complete, and the queue should then be empty.
-  queue.Insert(framer.CreatePingFrame(7));
+  queue.Insert(new net::SpdyPingIR(7));
   runner.notification()->ExpectSetWithinMillis(100);
   ExpectEmpty(&queue);
 }

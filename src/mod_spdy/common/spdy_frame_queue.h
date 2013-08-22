@@ -21,7 +21,7 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 
-namespace net { class SpdyFrame; }
+namespace net { class SpdyFrameIR; }
 
 namespace mod_spdy {
 
@@ -46,13 +46,13 @@ class SpdyFrameQueue {
   // Insert a frame into the queue.  The queue takes ownership of the frame,
   // and will delete it if the queue is deleted or aborted before the frame is
   // removed from the queue by the Pop method.
-  void Insert(net::SpdyFrame* frame);
+  void Insert(net::SpdyFrameIR* frame);
 
   // Remove and provide a frame from the queue and return true, or return false
   // if the queue is empty or has been aborted.  If the block argument is true,
   // block until a frame becomes available (or the queue is aborted).  The
   // caller gains ownership of the provided frame object.
-  bool Pop(bool block, net::SpdyFrame** frame);
+  bool Pop(bool block, net::SpdyFrameIR** frame);
 
  private:
   // This is a pretty naive implementation of a thread-safe queue, but it's
@@ -60,7 +60,7 @@ class SpdyFrameQueue {
   // rolling our own class, but it lacks the ownership semantics that we want.
   mutable base::Lock lock_;
   base::ConditionVariable condvar_;
-  std::list<net::SpdyFrame*> queue_;
+  std::list<net::SpdyFrameIR*> queue_;
   bool is_aborted_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyFrameQueue);

@@ -14,7 +14,7 @@
 
 #include "mod_spdy/common/http_to_spdy_converter.h"
 
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"

@@ -22,6 +22,7 @@
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
+#include "net/spdy/spdy_protocol.h"
 
 namespace {
 
@@ -30,6 +31,41 @@ namespace {
 // WINDOW_UPDATE frame (so that we don't end up sending lots of little ones).
 const size_t kMinWindowUpdateSize =
     static_cast<size_t>(net::kSpdyStreamInitialWindowSize) / 8;
+
+class DataLengthVisitor : public net::SpdyFrameVisitor {
+ public:
+  DataLengthVisitor() : length_(0) {}
+  virtual ~DataLengthVisitor() {}
+
+  size_t length() const { return length_; }
+
+  virtual void VisitSynStream(const net::SpdySynStreamIR& frame) {}
+  virtual void VisitSynReply(const net::SpdySynReplyIR& frame) {}
+  virtual void VisitRstStream(const net::SpdyRstStreamIR& frame) {}
+  virtual void VisitSettings(const net::SpdySettingsIR& frame) {}
+  virtual void VisitPing(const net::SpdyPingIR& frame) {}
+  virtual void VisitGoAway(const net::SpdyGoAwayIR& frame) {}
+  virtual void VisitHeaders(const net::SpdyHeadersIR& frame) {}
+  virtual void VisitWindowUpdate(const net::SpdyWindowUpdateIR& frame) {}
+  virtual void VisitCredential(const net::SpdyCredentialIR& frame) {}
+  virtual void VisitBlocked(const net::SpdyBlockedIR& frame) {}
+  virtual void VisitData(const net::SpdyDataIR& frame) {
+    length_ = frame.data().size();
+  }
+
+ private:
+  size_t length_;
+
+  DISALLOW_COPY_AND_ASSIGN(DataLengthVisitor);
+};
+
+// For data frames, return the size of the data payload; for control frames,
+// return zero.
+size_t DataFrameLength(const net::SpdyFrameIR& frame) {
+  DataLengthVisitor visitor;
+  frame.Visit(&visitor);
+  return visitor.length();
+}
 
 }  // namespace
 
@@ -42,7 +78,6 @@ SpdyStream::SpdyStream(spdy::SpdyVersion spdy_version,
                        net::SpdyPriority priority,
                        int32 initial_output_window_size,
                        SpdyFramePriorityQueue* output_queue,
-                       net::BufferedSpdyFramer* framer,
                        SpdyServerPushInterface* pusher)
     : spdy_version_(spdy_version),
       stream_id_(stream_id),
@@ -50,7 +85,6 @@ SpdyStream::SpdyStream(spdy::SpdyVersion spdy_version,
       server_push_depth_(server_push_depth),
       priority_(priority),
       output_queue_(output_queue),
-      framer_(framer),
       pusher_(pusher),
       condvar_(&lock_),
       aborted_(false),
@@ -61,7 +95,6 @@ SpdyStream::SpdyStream(spdy::SpdyVersion spdy_version,
       input_bytes_consumed_(0) {
   DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version);
   DCHECK(output_queue_);
-  DCHECK(framer_);
   DCHECK(pusher_);
   DCHECK_GT(output_window_size_, 0);
   // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
@@ -87,7 +120,7 @@ void SpdyStream::AbortSilently() {
   InternalAbortSilently();
 }
 
-void SpdyStream::AbortWithRstStream(net::SpdyStatusCodes status) {
+void SpdyStream::AbortWithRstStream(net::SpdyRstStreamStatus status) {
   base::AutoLock autolock(lock_);
   InternalAbortWithRstStream(status);
 }
@@ -164,14 +197,14 @@ void SpdyStream::OnInputDataConsumed(size_t size) {
   // positive as well.
   DCHECK_GT(input_bytes_consumed_, 0u);
   // Make sure there won't be any overflow shenanigans.
-  COMPILE_ASSERT(sizeof(size_t) >= sizeof(net::kSpdyStreamMaximumWindowSize),
+  COMPILE_ASSERT(sizeof(size_t) >= sizeof(net::kSpdyMaximumWindowSize),
                  size_t_is_at_least_32_bits);
   DCHECK_LE(input_bytes_consumed_,
-            static_cast<size_t>(net::kSpdyStreamMaximumWindowSize));
+            static_cast<size_t>(net::kSpdyMaximumWindowSize));
 
   // Send a WINDOW_UPDATE frame to the client and update our window size.
-  SendOutputFrame(framer_->CreateWindowUpdate(
-      stream_id_, static_cast<uint32>(input_bytes_consumed_)));
+  SendOutputFrame(new net::SpdyWindowUpdateIR(
+      stream_id_, input_bytes_consumed_));
   input_window_size_ += input_bytes_consumed_;
   DCHECK_LE(input_window_size_, net::kSpdyStreamInitialWindowSize);
   input_bytes_consumed_ = 0;
@@ -192,9 +225,9 @@ void SpdyStream::AdjustOutputWindowSize(int32 delta) {
   // can also be negative, so we check for both overflow and underflow.
   const int64 new_size =
       static_cast<int64>(output_window_size_) + static_cast<int64>(delta);
-  if (new_size > static_cast<int64>(net::kSpdyStreamMaximumWindowSize) ||
-      new_size < -static_cast<int64>(net::kSpdyStreamMaximumWindowSize)) {
-    InternalAbortWithRstStream(net::FLOW_CONTROL_ERROR);
+  if (new_size > static_cast<int64>(net::kSpdyMaximumWindowSize) ||
+      new_size < -static_cast<int64>(net::kSpdyMaximumWindowSize)) {
+    InternalAbortWithRstStream(net::RST_STREAM_FLOW_CONTROL_ERROR);
     return;
   }
 
@@ -208,34 +241,36 @@ void SpdyStream::AdjustOutputWindowSize(int32 delta) {
   }
 }
 
-void SpdyStream::PostInputFrame(net::SpdyFrame* frame_ptr) {
+void SpdyStream::PostInputFrame(net::SpdyFrameIR* frame_ptr) {
   base::AutoLock autolock(lock_);
 
   // Take ownership of the frame, so it will get deleted if we return early.
-  scoped_ptr<net::SpdyFrame> frame(frame_ptr);
+  scoped_ptr<net::SpdyFrameIR> frame(frame_ptr);
 
   // Once a stream has been aborted, nothing more goes into the queue.
   if (aborted_) {
     return;
   }
 
-  // If this is a data frame (and we're using SPDY v3 or above) we need to
-  // track flow control.
-  if (!frame->is_control_frame() && spdy_version() >= spdy::SPDY_VERSION_3) {
+  // If this is a nonempty data frame (and we're using SPDY v3 or above) we
+  // need to track flow control.
+  if (spdy_version() >= spdy::SPDY_VERSION_3) {
     DCHECK_GE(input_window_size_, 0);
-    const int32 size = frame->length();
-    // If receiving this much data would overflow the window size, then abort
-    // the stream with a flow control error.
-    if (size > input_window_size_) {
-      LOG(WARNING) << "Client violated flow control by sending too much data "
-                   << "to stream " << stream_id_ << ".  Aborting stream.";
-      InternalAbortWithRstStream(net::FLOW_CONTROL_ERROR);
-      return;  // Quit without posting the frame to the queue.
-    }
-    // Otherwise, decrease the window size.  It will be increased again once
-    // the data has been comsumed (by OnInputDataConsumed()).
-    else {
-      input_window_size_ -= size;
+    const int size = DataFrameLength(*frame);  // returns zero for ctrl frames
+    if (size > 0) {
+      // If receiving this much data would overflow the window size, then abort
+      // the stream with a flow control error.
+      if (size > input_window_size_) {
+        LOG(WARNING) << "Client violated flow control by sending too much data "
+                     << "to stream " << stream_id_ << ".  Aborting stream.";
+        InternalAbortWithRstStream(net::RST_STREAM_FLOW_CONTROL_ERROR);
+        return;  // Quit without posting the frame to the queue.
+      }
+      // Otherwise, decrease the window size.  It will be increased again once
+      // the data has been comsumed (by OnInputDataConsumed()).
+      else {
+        input_window_size_ -= size;
+      }
     }
   }
 
@@ -244,7 +279,7 @@ void SpdyStream::PostInputFrame(net::SpdyFrame* frame_ptr) {
   input_queue_.Insert(frame.release());
 }
 
-bool SpdyStream::GetInputFrame(bool block, net::SpdyFrame** frame) {
+bool SpdyStream::GetInputFrame(bool block, net::SpdyFrameIR** frame) {
   return input_queue_.Pop(block, frame);
 }
 
@@ -256,22 +291,13 @@ void SpdyStream::SendOutputSynStream(const net::SpdyHeaderBlock& headers,
     return;
   }
 
-  const net::SpdyControlFlags flags = static_cast<net::SpdyControlFlags>(
-      (flag_fin ? net::CONTROL_FLAG_FIN : net::CONTROL_FLAG_NONE) |
-      net::CONTROL_FLAG_UNIDIRECTIONAL);
-  // Don't compress the headers in the frame here; it will be compressed later
-  // by the master connection (which maintains the shared header compression
-  // state for all streams).  We need to send this SYN_STREAM right away,
-  // before any more frames on the associated stream are sent, to ensure that
-  // the pushed stream gets started while the associated stream is still open,
-  // so we insert this frame with kTopPriority.
-  output_queue_->Insert(
-      SpdyFramePriorityQueue::kTopPriority, framer_->CreateSynStream(
-          stream_id_, associated_stream_id_, priority_,
-          0,  // 0 = no credential slot
-          flags,
-          false,  // false = uncompressed
-          &headers));
+  scoped_ptr<net::SpdySynStreamIR> frame(new net::SpdySynStreamIR(stream_id_));
+  frame->set_associated_to_stream_id(associated_stream_id_);
+  frame->set_priority(priority_);
+  frame->set_fin(flag_fin);
+  frame->set_unidirectional(true);
+  frame->GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+  output_queue_->Insert(SpdyFramePriorityQueue::kTopPriority, frame.release());
 }
 
 void SpdyStream::SendOutputSynReply(const net::SpdyHeaderBlock& headers,
@@ -282,15 +308,10 @@ void SpdyStream::SendOutputSynReply(const net::SpdyHeaderBlock& headers,
     return;
   }
 
-  const net::SpdyControlFlags flags =
-      flag_fin ? net::CONTROL_FLAG_FIN : net::CONTROL_FLAG_NONE;
-  // Don't compress the headers in the frame here; it will be compressed later
-  // by the master connection (which maintains the shared header compression
-  // state for all streams).
-  SendOutputFrame(framer_->CreateSynReply(
-      stream_id_, flags,
-      false,  // false = uncompressed
-      &headers));
+  scoped_ptr<net::SpdySynReplyIR> frame(new net::SpdySynReplyIR(stream_id_));
+  frame->set_fin(flag_fin);
+  frame->GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+  SendOutputFrame(frame.release());
 }
 
 void SpdyStream::SendOutputHeaders(const net::SpdyHeaderBlock& headers,
@@ -300,15 +321,10 @@ void SpdyStream::SendOutputHeaders(const net::SpdyHeaderBlock& headers,
     return;
   }
 
-  const net::SpdyControlFlags flags =
-      flag_fin ? net::CONTROL_FLAG_FIN : net::CONTROL_FLAG_NONE;
-  // Don't compress the headers in the frame here; it will be compressed later
-  // by the master connection (which maintains the shared header compression
-  // state for all streams).
-  SendOutputFrame(framer_->CreateHeaders(
-      stream_id_, flags,
-      false,  // false = uncompressed
-      &headers));
+  scoped_ptr<net::SpdyHeadersIR> frame(new net::SpdyHeadersIR(stream_id_));
+  frame->set_fin(flag_fin);
+  frame->GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+  SendOutputFrame(frame.release());
 }
 
 void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
@@ -323,10 +339,9 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
   if (spdy_version() < spdy::SPDY_VERSION_3 || data.empty()) {
     // Suppress empty DATA frames (unless we're setting FLAG_FIN).
     if (!data.empty() || flag_fin) {
-      const net::SpdyDataFlags flags =
-          flag_fin ? net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
-      SendOutputFrame(framer_->CreateDataFrame(
-          stream_id_, data.data(), data.size(), flags));
+      scoped_ptr<net::SpdyDataIR> frame(new net::SpdyDataIR(stream_id_, data));
+      frame->set_fin(flag_fin);
+      SendOutputFrame(frame.release());
     }
     return;
   }
@@ -350,11 +365,10 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
     DCHECK_GT(output_window_size_, 0);
     const size_t length = std::min(
         data.size(), static_cast<size_t>(output_window_size_));
-    const net::SpdyDataFlags flags =
-        flag_fin && length == data.size() ?
-        net::DATA_FLAG_FIN : net::DATA_FLAG_NONE;
-    SendOutputFrame(framer_->CreateDataFrame(
-        stream_id_, data.data(), length, flags));
+    scoped_ptr<net::SpdyDataIR> frame(
+        new net::SpdyDataIR(stream_id_, data.substr(0, length)));
+    frame->set_fin(flag_fin && length == data.size());
+    SendOutputFrame(frame.release());
     data = data.substr(length);
     output_window_size_ -= length;
     DCHECK_GE(output_window_size_, 0);
@@ -369,7 +383,7 @@ SpdyServerPushInterface::PushStatus SpdyStream::StartServerPush(
                                   request_headers);
 }
 
-void SpdyStream::SendOutputFrame(net::SpdyFrame* frame) {
+void SpdyStream::SendOutputFrame(net::SpdyFrameIR* frame) {
   lock_.AssertAcquired();
   DCHECK(!aborted_);
   output_queue_->Insert(static_cast<int>(priority_), frame);
@@ -382,10 +396,10 @@ void SpdyStream::InternalAbortSilently() {
   condvar_.Broadcast();
 }
 
-void SpdyStream::InternalAbortWithRstStream(net::SpdyStatusCodes status) {
+void SpdyStream::InternalAbortWithRstStream(net::SpdyRstStreamStatus status) {
   lock_.AssertAcquired();
   output_queue_->Insert(SpdyFramePriorityQueue::kTopPriority,
-                        framer_->CreateRstStream(stream_id_, status));
+                        new net::SpdyRstStreamIR(stream_id_, status));
   // InternalAbortSilently will set aborted_ to true, which will prevent the
   // stream thread from sending any more frames on this stream after the
   // RST_STREAM.

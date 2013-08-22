@@ -15,8 +15,8 @@
 #include "mod_spdy/common/spdy_to_http_converter.h"
 
 #include "base/logging.h"
-#include "base/string_number_conversions.h"  // for Int64ToString
-#include "base/string_piece.h"
+#include "base/strings/string_number_conversions.h"  // for Int64ToString
+#include "base/strings/string_piece.h"
 #include "mod_spdy/common/http_request_visitor_interface.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_frame_builder.h"
@@ -26,16 +26,6 @@
 namespace mod_spdy {
 
 namespace {
-
-// Functions to test for FLAG_FIN.  Using these functions instead of testing
-// flags() directly helps guard against mixing up & with && or mixing up
-// CONTROL_FLAG_FIN with DATA_FLAG_FIN.
-bool HasControlFlagFinSet(const net::SpdyControlFrame& frame) {
-  return bool(frame.flags() & net::CONTROL_FLAG_FIN);
-}
-bool HasDataFlagFinSet(const net::SpdyDataFrame& frame) {
-  return bool(frame.flags() & net::DATA_FLAG_FIN);
-}
 
 // Generate an HTTP request line from the given SPDY header block by calling
 // the OnStatusLine() method of the given visitor, and return true.  If there's
@@ -96,7 +86,6 @@ SpdyToHttpConverter::SpdyToHttpConverter(spdy::SpdyVersion spdy_version,
                                          HttpRequestVisitorInterface* visitor)
     : spdy_version_(spdy_version),
       visitor_(visitor),
-      framer_(SpdyVersionToFramerVersion(spdy_version)),
       state_(NO_FRAMES_YET),
       use_chunking_(true),
       seen_accept_encoding_(false) {
@@ -122,17 +111,13 @@ const char* SpdyToHttpConverter::StatusString(Status status) {
 }
 
 SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertSynStreamFrame(
-    const net::SpdySynStreamControlFrame& frame) {
+    const net::SpdySynStreamIR& frame) {
   if (state_ != NO_FRAMES_YET) {
     return EXTRA_SYN_STREAM;
   }
   state_ = RECEIVED_SYN_STREAM;
 
-  net::SpdyHeaderBlock block;
-  if (!framer_.ParseHeaderBlockInBuffer(
-          frame.header_block(), frame.header_block_len(), &block)) {
-    return INVALID_HEADER_BLOCK;
-  }
+  const net::SpdyHeaderBlock& block = frame.name_value_block();
 
   if (!GenerateRequestLine(spdy_version(), block, visitor_)) {
     return BAD_REQUEST;
@@ -143,7 +128,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertSynStreamFrame(
 
   // If this is the last (i.e. only) frame on this stream, finish off the HTTP
   // request.
-  if (HasControlFlagFinSet(frame)) {
+  if (frame.fin()) {
     FinishRequest();
   }
 
@@ -151,7 +136,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertSynStreamFrame(
 }
 
 SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
-    const net::SpdyHeadersControlFrame& frame) {
+    const net::SpdyHeadersIR& frame) {
   if (state_ == RECEIVED_FLAG_FIN) {
     return FRAME_AFTER_FIN;
   } else if (state_ == NO_FRAMES_YET) {
@@ -163,11 +148,8 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
   // trailing headers.  Otherwise, we can send them immediately.
   if (state_ == RECEIVED_DATA) {
     if (use_chunking_) {
-      if (!framer_.ParseHeaderBlockInBuffer(
-              frame.header_block(), frame.header_block_len(),
-              &trailing_headers_)) {
-        return INVALID_HEADER_BLOCK;
-      }
+      const net::SpdyHeaderBlock& block = frame.name_value_block();
+      trailing_headers_.insert(block.begin(), block.end());
     } else {
       LOG(WARNING) << "Client sent trailing headers, "
                    << "but we had to ignore them.";
@@ -175,18 +157,12 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
   } else {
     DCHECK(state_ == RECEIVED_SYN_STREAM);
     DCHECK(trailing_headers_.empty());
-    net::SpdyHeaderBlock block;
-    if (!framer_.ParseHeaderBlockInBuffer(
-            frame.header_block(), frame.header_block_len(), &block)) {
-      return INVALID_HEADER_BLOCK;
-    }
-
     // Translate the headers to HTTP.
-    GenerateLeadingHeaders(block);
+    GenerateLeadingHeaders(frame.name_value_block());
   }
 
   // If this is the last frame on this stream, finish off the HTTP request.
-  if (HasControlFlagFinSet(frame)) {
+  if (frame.fin()) {
     FinishRequest();
   }
 
@@ -194,7 +170,7 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertHeadersFrame(
 }
 
 SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
-    const net::SpdyDataFrame& frame) {
+    const net::SpdyDataIR& frame) {
   if (state_ == RECEIVED_FLAG_FIN) {
     return FRAME_AFTER_FIN;
   } else if (state_ == NO_FRAMES_YET) {
@@ -223,17 +199,16 @@ SpdyToHttpConverter::Status SpdyToHttpConverter::ConvertDataFrame(
   // Translate the SPDY data frame into an HTTP data chunk.  However, we must
   // not emit a zero-length chunk, as that would be interpreted as the
   // data-chunks-complete marker.
-  if (frame.length() > 0) {
-    const base::StringPiece data(frame.payload(), frame.length());
+  if (frame.data().size() > 0) {
     if (use_chunking_) {
-      visitor_->OnDataChunk(data);
+      visitor_->OnDataChunk(frame.data());
     } else {
-      visitor_->OnRawData(data);
+      visitor_->OnRawData(frame.data());
     }
   }
 
   // If this is the last frame on this stream, finish off the HTTP request.
-  if (HasDataFlagFinSet(frame)) {
+  if (frame.fin()) {
     FinishRequest();
   }
 

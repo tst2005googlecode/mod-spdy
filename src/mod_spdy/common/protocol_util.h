@@ -15,7 +15,7 @@
 #ifndef MOD_SPDY_COMMON_PROTOCOL_UTIL_H_
 #define MOD_SPDY_COMMON_PROTOCOL_UTIL_H_
 
-#include "base/string_piece.h"
+#include "base/strings/string_piece.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
@@ -73,8 +73,8 @@ extern const char* const kSpdy3Version;
 }  // namespace spdy
 
 // Given a SpdyVersion enum value, return the framer version number to use.
-// Returns zero for SPDY_VERSION_NONE.
-int SpdyVersionToFramerVersion(spdy::SpdyVersion version);
+// The argument must not be SPDY_VERSION_NONE.
+net::SpdyMajorVersion SpdyVersionToFramerVersion(spdy::SpdyVersion version);
 
 // Given a SpdyVersion enum value (other than SPDY_VERSION_NONE), return a
 // string for the version number (e.g. "3" or "3.1").
@@ -82,13 +82,11 @@ const char* SpdyVersionNumberString(spdy::SpdyVersion version);
 
 // Convert various SPDY enum types to strings.
 const char* GoAwayStatusCodeToString(net::SpdyGoAwayStatus status);
-inline const char* RstStreamStatusCodeToString(net::SpdyStatusCodes status) {
+inline const char* RstStreamStatusCodeToString(
+    net::SpdyRstStreamStatus status) {
   return net::SpdyFramer::StatusCodeToString(status);
 }
 const char* SettingsIdToString(net::SpdySettingsIds id);
-
-// Return a view of the raw bytes of the frame.
-base::StringPiece FrameData(const net::SpdyFrame& frame);
 
 // Return true if this header is forbidden in SPDY responses (ignoring case).
 bool IsInvalidSpdyResponseHeader(base::StringPiece key);

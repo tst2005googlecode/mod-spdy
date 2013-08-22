@@ -44,6 +44,7 @@
         '<(chromium_root)/net/spdy/spdy_frame_builder.cc',
         '<(chromium_root)/net/spdy/spdy_frame_reader.cc',
         '<(chromium_root)/net/spdy/spdy_framer.cc',
+        '<(chromium_root)/net/spdy/spdy_protocol.cc',
       ],
     },
   ],

@@ -53,9 +53,7 @@ AsyncTaskRunner::Task::Task() {}
 AsyncTaskRunner::Task::~Task() {}
 
 AsyncTaskRunner::AsyncTaskRunner(Task* task)
-    : task_(task),
-      thread_pool_(1, 1),
-      executor_(NULL) {}
+    : task_(task), thread_pool_(1, 1) {}
 
 AsyncTaskRunner::~AsyncTaskRunner() {}
 

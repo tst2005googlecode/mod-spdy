@@ -23,7 +23,6 @@
 #include "base/basictypes.h"
 #include "mod_spdy/common/http_string_builder.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
-#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
@@ -47,6 +46,35 @@ class SpdyToHttpFilter {
                     apr_off_t readbytes);
 
  private:
+  friend class DecodeFrameVisitor;
+  class DecodeFrameVisitor : public net::SpdyFrameVisitor {
+   public:
+    explicit DecodeFrameVisitor(SpdyToHttpFilter* filter);
+    virtual ~DecodeFrameVisitor() {}
+
+    bool success() { return success_; }
+
+    virtual void VisitSynStream(const net::SpdySynStreamIR& frame);
+    virtual void VisitSynReply(const net::SpdySynReplyIR& frame);
+    virtual void VisitRstStream(const net::SpdyRstStreamIR& frame);
+    virtual void VisitSettings(const net::SpdySettingsIR& frame);
+    virtual void VisitPing(const net::SpdyPingIR& frame);
+    virtual void VisitGoAway(const net::SpdyGoAwayIR& frame);
+    virtual void VisitHeaders(const net::SpdyHeadersIR& frame);
+    virtual void VisitWindowUpdate(const net::SpdyWindowUpdateIR& frame);
+    virtual void VisitCredential(const net::SpdyCredentialIR& frame);
+    virtual void VisitBlocked(const net::SpdyBlockedIR& blocked);
+    virtual void VisitData(const net::SpdyDataIR& frame);
+
+   private:
+    void BadFrameType(const char* frame_type);
+
+    SpdyToHttpFilter* filter_;
+    bool success_;
+
+    DISALLOW_COPY_AND_ASSIGN(DecodeFrameVisitor);
+  };
+
   // Return true if we've received a FLAG_FIN (i.e. EOS has been reached).
   bool end_of_stream_reached() const { return visitor_.is_complete(); }
 
@@ -58,12 +86,12 @@ class SpdyToHttpFilter {
 
   // Pass the given frame to the SpdyToHttpConverter, and deal with the return
   // code appropriately.
-  bool DecodeSynStreamFrame(const net::SpdySynStreamControlFrame& frame);
-  bool DecodeHeadersFrame(const net::SpdyHeadersControlFrame& frame);
-  bool DecodeDataFrame(const net::SpdyDataFrame& frame);
+  bool DecodeSynStreamFrame(const net::SpdySynStreamIR& frame);
+  bool DecodeHeadersFrame(const net::SpdyHeadersIR& frame);
+  bool DecodeDataFrame(const net::SpdyDataIR& frame);
 
   // Send a RST_STREAM frame and abort the stream.
-  void AbortStream(net::SpdyStatusCodes status);
+  void AbortStream(net::SpdyRstStreamStatus status);
 
   SpdyStream* const stream_;
   std::string data_buffer_;

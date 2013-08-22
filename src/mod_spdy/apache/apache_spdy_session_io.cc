@@ -142,7 +142,7 @@ SpdySessionIO::ReadStatus ApacheSpdySessionIO::ProcessAvailableInput(
 }
 
 SpdySessionIO::WriteStatus ApacheSpdySessionIO::SendFrameRaw(
-    const net::SpdyFrame& frame) {
+    const net::SpdySerializedFrame& frame) {
   // Make sure the output brigade we're using is empty.
   if (!APR_BRIGADE_EMPTY(output_brigade_)) {
     LOG(DFATAL) << "output_brigade_ should be empty";
@@ -150,9 +150,8 @@ SpdySessionIO::WriteStatus ApacheSpdySessionIO::SendFrameRaw(
   }
 
   // Put the frame data into the output brigade.
-  const base::StringPiece data = FrameData(frame);
   APR_BRIGADE_INSERT_TAIL(output_brigade_, apr_bucket_transient_create(
-      data.data(), data.size(), output_brigade_->bucket_alloc));
+      frame.data(), frame.size(), output_brigade_->bucket_alloc));
 
   // Append a flush bucket to the end of the brigade, to make sure that this
   // frame makes it all the way out to the client.

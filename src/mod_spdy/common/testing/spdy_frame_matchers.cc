@@ -17,26 +17,173 @@
 #include <iostream>
 #include <string>
 
-#include "base/stringprintf.h"
+#include "base/basictypes.h"
+#include "base/strings/stringprintf.h"
+#include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace {
 
-std::string HeadersString(const net::SpdyHeaderBlock& headers) {
-  std::string ret = "{ ";
+void AppendHeadersString(const net::SpdyNameValueBlock& headers,
+                         std::string* out) {
+  out->append("{ ");
   bool comma = false;
-  for (net::SpdyHeaderBlock::const_iterator iter = headers.begin();
+  for (net::SpdyNameValueBlock::const_iterator iter = headers.begin();
        iter != headers.end(); ++iter) {
     if (comma) {
-      ret += ", ";
+      out->append(", ");
     }
-    ret += "'" + iter->first + "': '" + iter->second + "'";
+    base::StringAppendF(out, "'%s': '%s'", iter->first.c_str(),
+                        iter->second.c_str());
     comma = true;
   }
-  ret += " }";
-  return ret;
+  out->append(" }");
+}
+
+class FrameToStringVisitor : public net::SpdyFrameVisitor {
+ public:
+  explicit FrameToStringVisitor(std::string* out)
+      : out_(out) {
+    CHECK(out_);
+  }
+  virtual ~FrameToStringVisitor() {}
+
+  virtual void VisitSynStream(const net::SpdySynStreamIR& syn_stream) {
+    // TODO(mdsteele): include other fields
+    base::StringAppendF(
+        out_, "SYN_STREAM(%u p%u%s%s)",
+        static_cast<unsigned>(syn_stream.stream_id()),
+        static_cast<unsigned>(syn_stream.priority()),
+        (syn_stream.fin() ? " fin" : ""),
+        (syn_stream.unidirectional() ? " unidirectional" : ""));
+    AppendHeadersString(syn_stream.name_value_block(), out_);
+  }
+  virtual void VisitSynReply(const net::SpdySynReplyIR& syn_reply) {
+    base::StringAppendF(
+        out_, "SYN_REPLY(%u%s)",
+        static_cast<unsigned>(syn_reply.stream_id()),
+        (syn_reply.fin() ? " fin" : ""));
+    AppendHeadersString(syn_reply.name_value_block(), out_);
+  }
+  virtual void VisitRstStream(const net::SpdyRstStreamIR& rst_stream) {
+    base::StringAppendF(
+        out_, "RST_STREAM(%u %s)",
+        static_cast<unsigned>(rst_stream.stream_id()),
+        mod_spdy::RstStreamStatusCodeToString(rst_stream.status()));
+  }
+  virtual void VisitSettings(const net::SpdySettingsIR& settings) {
+    base::StringAppendF(
+        out_, "SETTINGS(%s",
+        (settings.clear_settings() ? "clear " : ""));
+    bool comma = false;
+    for (net::SpdySettingsIR::ValueMap::const_iterator iter =
+             settings.values().begin(), end = settings.values().end();
+         iter != end; ++iter) {
+      if (comma) {
+        out_->append(", ");
+      }
+      base::StringAppendF(
+          out_, "%s%s%s: %d",
+          (iter->second.persist_value ? "persist " : ""),
+          (iter->second.persisted ? "persisted " : ""),
+          mod_spdy::SettingsIdToString(iter->first),
+          static_cast<int>(iter->second.value));
+    }
+    out_->append(")");
+  }
+  virtual void VisitPing(const net::SpdyPingIR& ping) {
+    base::StringAppendF(
+        out_, "PING(%u)", static_cast<unsigned>(ping.id()));
+  }
+  virtual void VisitGoAway(const net::SpdyGoAwayIR& goaway) {
+    base::StringAppendF(
+        out_, "GOAWAY(%u %s)",
+        static_cast<unsigned>(goaway.last_good_stream_id()),
+        mod_spdy::GoAwayStatusCodeToString(goaway.status()));
+  }
+  virtual void VisitHeaders(const net::SpdyHeadersIR& headers) {
+    base::StringAppendF(
+        out_, "HEADERS(%u%s)", static_cast<unsigned>(headers.stream_id()),
+        (headers.fin() ? " fin" : ""));
+    AppendHeadersString(headers.name_value_block(), out_);
+  }
+  virtual void VisitWindowUpdate(const net::SpdyWindowUpdateIR& window) {
+    base::StringAppendF(
+        out_, "WINDOW_UPDATE(%u %+d)",
+        static_cast<unsigned>(window.stream_id()),
+        static_cast<int>(window.delta()));
+  }
+  virtual void VisitCredential(const net::SpdyCredentialIR& credential) {
+    // TODO(mdsteele): include other fields
+    base::StringAppendF(
+        out_, "CREDENTIAL(%d)", static_cast<int>(credential.slot()));
+  }
+  virtual void VisitBlocked(const net::SpdyBlockedIR& blocked) {
+    base::StringAppendF(
+        out_, "BLOCKED(%u)", static_cast<unsigned>(blocked.stream_id()));
+  }
+  virtual void VisitData(const net::SpdyDataIR& data) {
+    base::StringAppendF(
+        out_, "DATA(%u%s \"", static_cast<unsigned>(data.stream_id()),
+        (data.fin() ? " fin" : ""));
+    out_->append(data.data().data(), data.data().size());
+    out_->append("\")");
+  }
+
+ private:
+  std::string* out_;
+
+  DISALLOW_COPY_AND_ASSIGN(FrameToStringVisitor);
+};
+
+void AppendSpdyFrameToString(const net::SpdyFrameIR& frame, std::string* out) {
+  FrameToStringVisitor visitor(out);
+  frame.Visit(&visitor);
+}
+
+class IsEquivalentFrameMatcher :
+      public ::testing::MatcherInterface<const net::SpdyFrameIR&> {
+ public:
+  explicit IsEquivalentFrameMatcher(const net::SpdyFrameIR& frame);
+  virtual ~IsEquivalentFrameMatcher();
+  virtual bool MatchAndExplain(const net::SpdyFrameIR& frame,
+                               ::testing::MatchResultListener* listener) const;
+  virtual void DescribeTo(std::ostream* out) const;
+  virtual void DescribeNegationTo(std::ostream* out) const;
+
+ private:
+  std::string expected_;
+
+  DISALLOW_COPY_AND_ASSIGN(IsEquivalentFrameMatcher);
+};
+
+IsEquivalentFrameMatcher::IsEquivalentFrameMatcher(
+    const net::SpdyFrameIR& frame) {
+  AppendSpdyFrameToString(frame, &expected_);
+}
+
+IsEquivalentFrameMatcher::~IsEquivalentFrameMatcher() {}
+
+bool IsEquivalentFrameMatcher::MatchAndExplain(
+    const net::SpdyFrameIR& frame,
+    ::testing::MatchResultListener* listener) const {
+  std::string actual;
+  AppendSpdyFrameToString(frame, &actual);
+  if (actual != expected_) {
+    *listener << "is a " << actual << " frame";
+    return false;
+  }
+  return true;
+}
+
+void IsEquivalentFrameMatcher::DescribeTo(std::ostream* out) const {
+  *out << "is a " << expected_ << " frame";
+}
+
+void IsEquivalentFrameMatcher::DescribeNegationTo(std::ostream* out) const {
+  *out << "isn't a " << expected_ << " frame";
 }
 
 }  // namespace
@@ -45,398 +192,72 @@ namespace mod_spdy {
 
 namespace testing {
 
-bool IsControlFrameOfTypeMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const net::SpdyControlFrame* ctrl_frame =
-      static_cast<const net::SpdyControlFrame*>(&frame);
-  if (ctrl_frame->type() != type_) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(
-        ctrl_frame->type()) << " frame";
-    return false;
-  }
-  return true;
+::testing::Matcher<const net::SpdyFrameIR&> IsSynStream(
+     net::SpdyStreamId stream_id, net::SpdyStreamId assoc_stream_id,
+     net::SpdyPriority priority, bool fin, bool unidirectional,
+     const net::SpdyNameValueBlock& headers) {
+  net::SpdySynStreamIR frame(stream_id);
+  frame.set_associated_to_stream_id(assoc_stream_id);
+  frame.set_priority(priority);
+  frame.set_fin(fin);
+  frame.set_unidirectional(unidirectional);
+  frame.GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-void IsControlFrameOfTypeMatcher::DescribeTo(std::ostream* out) const {
-  *out << "is a " << net::SpdyFramer::ControlTypeToString(type_) << " frame";
+::testing::Matcher<const net::SpdyFrameIR&> IsSynReply(
+     net::SpdyStreamId stream_id, bool fin,
+     const net::SpdyNameValueBlock& headers) {
+  net::SpdySynReplyIR frame(stream_id);
+  frame.set_fin(fin);
+  frame.GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-void IsControlFrameOfTypeMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "isn't a " << net::SpdyFramer::ControlTypeToString(type_)
-       << " frame";
+::testing::Matcher<const net::SpdyFrameIR&> IsRstStream(
+     net::SpdyStreamId stream_id, net::SpdyRstStreamStatus status) {
+  net::SpdyRstStreamIR frame(stream_id, status);
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-bool IsDataFrameMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (frame.is_control_frame()) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(
-        static_cast<const net::SpdyControlFrame*>(&frame)->type())
-              << " frame";
-    return false;
-  }
-  return true;
+::testing::Matcher<const net::SpdyFrameIR&> IsSettings(
+     net::SpdySettingsIds id, int32 value) {
+  net::SpdySettingsIR frame;
+  frame.AddSetting(id, false, false, value);
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-void IsDataFrameMatcher::DescribeTo(std::ostream* out) const {
-  *out << "is a data frame";
+::testing::Matcher<const net::SpdyFrameIR&> IsPing(net::SpdyPingId ping_id) {
+  net::SpdyPingIR frame(ping_id);
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-void IsDataFrameMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "isn't a data frame";
+::testing::Matcher<const net::SpdyFrameIR&> IsGoAway(
+     net::SpdyStreamId last_good_stream_id, net::SpdyGoAwayStatus status) {
+  net::SpdyGoAwayIR frame(last_good_stream_id, status);
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-bool IsDataFrameWithMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (frame.is_control_frame()) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(
-        static_cast<const net::SpdyControlFrame*>(&frame)->type())
-              << " frame";
-    return false;
-  }
-  const base::StringPiece actual_payload(
-      static_cast<const net::SpdyDataFrame*>(&frame)->payload(),
-      frame.length());
-  if (actual_payload != payload_) {
-    *listener << "is a data frame with payload \"" << actual_payload << "\"";
-    return false;
-  }
-  return true;
+::testing::Matcher<const net::SpdyFrameIR&> IsHeaders(
+     net::SpdyStreamId stream_id, bool fin,
+     const net::SpdyNameValueBlock& headers) {
+  net::SpdyHeadersIR frame(stream_id);
+  frame.set_fin(fin);
+  frame.GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-void IsDataFrameWithMatcher::DescribeTo(std::ostream* out) const {
-  *out << "is a data frame with payload \"" << payload_ << "\"";
+::testing::Matcher<const net::SpdyFrameIR&> IsWindowUpdate(
+     net::SpdyStreamId stream_id, uint32 delta) {
+  net::SpdyWindowUpdateIR frame(stream_id, delta);
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
-void IsDataFrameWithMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "isn't a data frame with payload \"" << payload_ << "\"";
-}
-
-bool IsGoAwayMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const net::SpdyControlFrame* ctrl_frame =
-      static_cast<const net::SpdyControlFrame*>(&frame);
-  if (ctrl_frame->type() != net::GOAWAY) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(
-        ctrl_frame->type()) << " frame";
-    return false;
-  }
-  // The GOAWAY status field only exists for SPDY v3 and later, so for earlier
-  // versions just skip this check.
-  if (ctrl_frame->version() >= 3) {
-    const net::SpdyGoAwayControlFrame* go_away_frame =
-        static_cast<const net::SpdyGoAwayControlFrame*>(ctrl_frame);
-    if (go_away_frame->status() != status_) {
-      *listener << "is a GOAWAY frame with status " << go_away_frame->status();
-      return false;
-    }
-  }
-  return true;
-}
-
-void IsGoAwayMatcher::DescribeTo(std::ostream* out) const {
-  *out << "is a GOAWAY frame with status " << status_;
-}
-
-void IsGoAwayMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "isn't a GOAWAY frame with status " << status_;
-}
-
-bool IsRstStreamMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const net::SpdyControlFrame* ctrl_frame =
-      static_cast<const net::SpdyControlFrame*>(&frame);
-  if (ctrl_frame->type() != net::RST_STREAM) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(
-        ctrl_frame->type()) << " frame";
-    return false;
-  }
-  const net::SpdyRstStreamControlFrame* rst_stream_frame =
-      static_cast<const net::SpdyRstStreamControlFrame*>(ctrl_frame);
-  if (rst_stream_frame->status() != status_) {
-    *listener << "is a RST_STREAM frame with status "
-              << rst_stream_frame->status();
-    return false;
-  }
-  return true;
-}
-
-void IsRstStreamMatcher::DescribeTo(std::ostream* out) const {
-  *out << "is a RST_STREAM frame with status " << status_;
-}
-
-void IsRstStreamMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "isn't a RST_STREAM frame with status " << status_;
-}
-
-bool IsWindowUpdateMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const net::SpdyControlFrame* ctrl_frame =
-      static_cast<const net::SpdyControlFrame*>(&frame);
-  if (ctrl_frame->type() != net::WINDOW_UPDATE) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(
-        ctrl_frame->type()) << " frame";
-    return false;
-  }
-  const net::SpdyWindowUpdateControlFrame* window_update_frame =
-      static_cast<const net::SpdyWindowUpdateControlFrame*>(ctrl_frame);
-  if (window_update_frame->delta_window_size() != delta_) {
-    *listener << "is a WINDOW_UPDATE frame with delta="
-              << window_update_frame->delta_window_size();
-    return false;
-  }
-  return true;
-}
-
-void IsWindowUpdateMatcher::DescribeTo(std::ostream* out) const {
-  *out << "is a WINDOW_UPDATE frame with delta=" << delta_;
-}
-
-void IsWindowUpdateMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "isn't a WINDOW_UPDATE frame with delta=" << delta_;
-}
-
-bool FlagFinIsMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  const bool fin = frame.is_control_frame() ?
-      (frame.flags() & net::CONTROL_FLAG_FIN) :
-      (frame.flags() & net::DATA_FLAG_FIN);
-  if (fin != fin_) {
-    *listener << (fin ? "has FLAG_FIN set" : "doesn't have FLAG_FIN set");
-    return false;
-  }
-  return true;
-}
-
-void FlagFinIsMatcher::DescribeTo(std::ostream* out) const {
-  *out << (fin_ ? "has FLAG_FIN set" : "doesn't have FLAG_FIN set");
-}
-
-void FlagFinIsMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << (fin_ ? "doesn't have FLAG_FIN set" : "has FLAG_FIN set");
-}
-
-bool FlagUnidirectionalIsMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const bool unidirectional =
-      (frame.flags() & net::CONTROL_FLAG_UNIDIRECTIONAL);
-  if (unidirectional != unidirectional_) {
-    *listener << (unidirectional ? "has FLAG_UNIDIRECTIONAL set" :
-                  "doesn't have FLAG_UNIDIRECTIONAL set");
-    return false;
-  }
-  return true;
-}
-
-void FlagUnidirectionalIsMatcher::DescribeTo(std::ostream* out) const {
-  *out << (unidirectional_ ? "has FLAG_UNIDIRECTIONAL set" :
-           "doesn't have FLAG_UNIDIRECTIONAL set");
-}
-
-void FlagUnidirectionalIsMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << (unidirectional_ ? "doesn't have FLAG_UNIDIRECTIONAL set" :
-           "has FLAG_UNIDIRECTIONAL set");
-}
-
-bool StreamIdIsMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  net::SpdyStreamId id;
-  if (frame.is_control_frame()) {
-    net::SpdyControlType type =
-        static_cast<const net::SpdyControlFrame*>(&frame)->type();
-    switch (type) {
-      case net::SYN_STREAM:
-        id = static_cast<const net::SpdySynStreamControlFrame*>(
-            &frame)->stream_id();
-        break;
-      case net::SYN_REPLY:
-        id = static_cast<const net::SpdySynReplyControlFrame*>(
-            &frame)->stream_id();
-        break;
-      case net::RST_STREAM:
-        id = static_cast<const net::SpdyRstStreamControlFrame*>(
-            &frame)->stream_id();
-        break;
-      case net::HEADERS:
-        id = static_cast<const net::SpdyHeadersControlFrame*>(
-            &frame)->stream_id();
-        break;
-      case net::WINDOW_UPDATE:
-        id = static_cast<const net::SpdyWindowUpdateControlFrame*>(
-            &frame)->stream_id();
-        break;
-      default:
-        *listener << "is a " << net::SpdyFramer::ControlTypeToString(type)
-                  << " frame";
-        return false;
-    }
-  } else {
-    id = static_cast<const net::SpdyDataFrame*>(&frame)->stream_id();
-  }
-  if (id != stream_id_) {
-    *listener << "has stream ID " << id;
-    return false;
-  }
-  return true;
-}
-
-void StreamIdIsMatcher::DescribeTo(std::ostream* out) const {
-  *out << "has stream ID " << stream_id_;
-}
-
-void StreamIdIsMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "doesn't have stream ID " << stream_id_;
-}
-
-bool AssociatedStreamIdIsMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const net::SpdyControlType type =
-      static_cast<const net::SpdyControlFrame*>(&frame)->type();
-  if (type != net::SYN_STREAM) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(type)
-              << " frame";
-    return false;
-  }
-  const net::SpdyStreamId id =
-      static_cast<const net::SpdySynStreamControlFrame*>(
-          &frame)->associated_stream_id();
-  if (id != associated_stream_id_) {
-    *listener << "has associated stream ID " << id;
-    return false;
-  }
-  return true;
-}
-
-void AssociatedStreamIdIsMatcher::DescribeTo(std::ostream* out) const {
-  *out << "has associated stream ID " << associated_stream_id_;
-}
-
-void AssociatedStreamIdIsMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "doesn't have associated stream ID " << associated_stream_id_;
-}
-
-bool PriorityIsMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const net::SpdyControlType type =
-      static_cast<const net::SpdyControlFrame*>(&frame)->type();
-  if (type != net::SYN_STREAM) {
-    *listener << "is a " << net::SpdyFramer::ControlTypeToString(type)
-              << " frame";
-    return false;
-  }
-  const net::SpdyPriority pri =
-      static_cast<const net::SpdySynStreamControlFrame*>(
-          &frame)->priority();
-  if (pri != priority_) {
-    *listener << "has priority " << pri;
-    return false;
-  }
-  return true;
-}
-
-void PriorityIsMatcher::DescribeTo(std::ostream* out) const {
-  *out << "has priority " << priority_;
-}
-
-void PriorityIsMatcher::DescribeNegationTo(std::ostream* out) const {
-  *out << "doesn't have priority " << priority_;
-}
-
-bool UncompressedHeadersAreMatcher::MatchAndExplain(
-    const net::SpdyFrame& frame,
-    ::testing::MatchResultListener* listener) const {
-  if (!frame.is_control_frame()) {
-    *listener << "is a data frame";
-    return false;
-  }
-  const net::SpdyControlFrame* ctrl_frame =
-      static_cast<const net::SpdyControlFrame*>(&frame);
-  const char* header_block;
-  size_t header_block_len;
-  net::SpdyControlType type = ctrl_frame->type();
-  switch (type) {
-    case net::SYN_STREAM:
-      header_block = static_cast<const net::SpdySynStreamControlFrame*>(
-          ctrl_frame)->header_block();
-      header_block_len = static_cast<const net::SpdySynStreamControlFrame*>(
-          ctrl_frame)->header_block_len();
-      break;
-    case net::SYN_REPLY:
-      header_block = static_cast<const net::SpdySynReplyControlFrame*>(
-          ctrl_frame)->header_block();
-      header_block_len = static_cast<const net::SpdySynReplyControlFrame*>(
-          ctrl_frame)->header_block_len();
-      break;
-    case net::HEADERS:
-      header_block = static_cast<const net::SpdyHeadersControlFrame*>(
-          ctrl_frame)->header_block();
-      header_block_len = static_cast<const net::SpdyHeadersControlFrame*>(
-          ctrl_frame)->header_block_len();
-      break;
-    default:
-      *listener << "is a " << net::SpdyFramer::ControlTypeToString(type)
-                << " frame";
-      return false;
-  }
-  net::SpdyFramer framer(ctrl_frame->version());
-  net::SpdyHeaderBlock actual_headers;
-  if (!framer.ParseHeaderBlockInBuffer(header_block, header_block_len,
-                                       &actual_headers)) {
-    *listener << "headers data is compressed/corrupted";
-    return false;
-  }
-  if (actual_headers != headers_) {
-    *listener << "has uncompressed headers " << HeadersString(actual_headers);
-    return false;
-  }
-  return true;
-}
-
-void UncompressedHeadersAreMatcher::DescribeTo(std::ostream* out) const {
-  *out << "has uncompressed headers " << HeadersString(headers_);
-}
-
-void UncompressedHeadersAreMatcher::DescribeNegationTo(
-    std::ostream* out) const {
-  *out << "doesn't have uncompressed headers " << HeadersString(headers_);
+::testing::Matcher<const net::SpdyFrameIR&> IsDataFrame(
+    net::SpdyStreamId stream_id, bool fin, base::StringPiece payload) {
+  net::SpdyDataIR frame(stream_id, payload);
+  frame.set_fin(fin);
+  return ::testing::MakeMatcher(new IsEquivalentFrameMatcher(frame));
 }
 
 }  // namespace testing

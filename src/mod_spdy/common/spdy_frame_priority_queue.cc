@@ -45,7 +45,7 @@ bool SpdyFramePriorityQueue::IsEmpty() const {
 
 const int SpdyFramePriorityQueue::kTopPriority = -1;
 
-void SpdyFramePriorityQueue::Insert(int priority, net::SpdyFrame* frame) {
+void SpdyFramePriorityQueue::Insert(int priority, net::SpdyFrameIR* frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 
@@ -67,13 +67,13 @@ void SpdyFramePriorityQueue::Insert(int priority, net::SpdyFrame* frame) {
   condvar_.Signal();
 }
 
-bool SpdyFramePriorityQueue::Pop(net::SpdyFrame** frame) {
+bool SpdyFramePriorityQueue::Pop(net::SpdyFrameIR** frame) {
   base::AutoLock autolock(lock_);
   return InternalPop(frame);
 }
 
 bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
-                                         net::SpdyFrame** frame) {
+                                         net::SpdyFrameIR** frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 
@@ -94,7 +94,7 @@ bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
   return InternalPop(frame);
 }
 
-bool SpdyFramePriorityQueue::InternalPop(net::SpdyFrame** frame) {
+bool SpdyFramePriorityQueue::InternalPop(net::SpdyFrameIR** frame) {
   lock_.AssertAcquired();
   DCHECK(frame);
   if (queue_map_.empty()) {

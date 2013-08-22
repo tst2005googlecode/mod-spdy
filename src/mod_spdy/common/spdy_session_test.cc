@@ -33,15 +33,13 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using mod_spdy::testing::AssociatedStreamIdIs;
-using mod_spdy::testing::FlagFinIs;
-using mod_spdy::testing::FlagUnidirectionalIs;
-using mod_spdy::testing::IsControlFrameOfType;
-using mod_spdy::testing::IsDataFrameWith;
+using mod_spdy::testing::IsDataFrame;
 using mod_spdy::testing::IsGoAway;
-using mod_spdy::testing::IsRstStream;
-using mod_spdy::testing::PriorityIs;
-using mod_spdy::testing::StreamIdIs;
+using mod_spdy::testing::IsHeaders;
+using mod_spdy::testing::IsPing;
+using mod_spdy::testing::IsSettings;
+using mod_spdy::testing::IsSynReply;
+using mod_spdy::testing::IsSynStream;
 using testing::_;
 using testing::AllOf;
 using testing::AtLeast;
@@ -56,12 +54,36 @@ using testing::WithArg;
 
 namespace {
 
-void AddRequiredHeaders(net::SpdyHeaderBlock* headers) {
-  (*headers)["host"] = "www.example.com";
-  (*headers)["method"] = "GET";
-  (*headers)["scheme"] = "https";
-  (*headers)["url"] = "/foo/index.html";
-  (*headers)["version"] = "HTTP/1.1";
+void AddRequestHeaders(mod_spdy::spdy::SpdyVersion version,
+                       net::SpdyNameValueBlock *headers) {
+  const bool spdy2 = version < mod_spdy::spdy::SPDY_VERSION_3;
+  (*headers)[spdy2 ? mod_spdy::http::kHost :
+             mod_spdy::spdy::kSpdy3Host] = "www.example.com";
+  (*headers)[spdy2 ? mod_spdy::spdy::kSpdy2Method :
+             mod_spdy::spdy::kSpdy3Method] = "GET";
+  (*headers)[spdy2 ? mod_spdy::spdy::kSpdy2Scheme :
+             mod_spdy::spdy::kSpdy3Scheme] = "https";
+  (*headers)[spdy2 ? mod_spdy::spdy::kSpdy2Url :
+             mod_spdy::spdy::kSpdy3Path] = "/foo/index.html";
+  (*headers)[spdy2 ? mod_spdy::spdy::kSpdy2Version :
+             mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
+}
+
+void AddResponseHeaders(mod_spdy::spdy::SpdyVersion version,
+                        net::SpdyNameValueBlock *headers) {
+  const bool spdy2 = version < mod_spdy::spdy::SPDY_VERSION_3;
+  (*headers)[spdy2 ? mod_spdy::spdy::kSpdy2Status :
+             mod_spdy::spdy::kSpdy3Status] = "200";
+  (*headers)[spdy2 ? mod_spdy::spdy::kSpdy2Version :
+             mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
+  (*headers)[mod_spdy::http::kContentType] = "text/html";
+}
+
+void AddInitialServerPushHeaders(const std::string& path,
+                                 net::SpdyNameValueBlock *headers) {
+  (*headers)[mod_spdy::spdy::kSpdy3Host] = "www.example.com";
+  (*headers)[mod_spdy::spdy::kSpdy3Path] = path;
+  (*headers)[mod_spdy::spdy::kSpdy3Scheme] = "https";
 }
 
 class MockSpdySessionIO : public mod_spdy::SpdySessionIO {
@@ -69,7 +91,7 @@ class MockSpdySessionIO : public mod_spdy::SpdySessionIO {
   MOCK_METHOD0(IsConnectionAborted, bool());
   MOCK_METHOD2(ProcessAvailableInput,
                ReadStatus(bool, net::BufferedSpdyFramer*));
-  MOCK_METHOD1(SendFrameRaw, WriteStatus(const net::SpdyFrame&));
+  MOCK_METHOD1(SendFrameRaw, WriteStatus(const net::SpdySerializedFrame&));
 };
 
 class MockSpdyStreamTaskFactory : public mod_spdy::SpdyStreamTaskFactory {
@@ -93,25 +115,18 @@ ACTION_P(ReturnMockTask, task) {
   return task;
 }
 
-ACTION_P5(StartServerPush, session, stream_id, pri, url, expected_status) {
+// gMock action to be used with MockStreamTask::Run.
+ACTION_P4(StartServerPush, task, priority, path, expected_status) {
   net::SpdyHeaderBlock push_headers;
-  push_headers[":host"] = "www.example.com";
-  push_headers[":method"] = "GET";
-  push_headers[":path"] = url;
-  push_headers[":scheme"] = "https";
-  push_headers[":version"] = "HTTP/1.1";
+  AddInitialServerPushHeaders(path, &push_headers);
   EXPECT_EQ(expected_status,
-            session->StartServerPush(stream_id, 0, pri, push_headers));
+            task->stream->StartServerPush(priority, push_headers));
 }
 
+// gMock action to be used with MockStreamTask::Run.
 ACTION_P(SendResponseHeaders, task) {
   net::SpdyHeaderBlock headers;
-  const bool spdy2 =
-      task->stream->spdy_version() < mod_spdy::spdy::SPDY_VERSION_3;
-  headers[spdy2 ? mod_spdy::spdy::kSpdy2Status :
-          mod_spdy::spdy::kSpdy3Status] = "200";
-  headers[spdy2 ? mod_spdy::spdy::kSpdy2Version :
-          mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
+  AddResponseHeaders(task->stream->spdy_version(), &headers);
   if (task->stream->is_server_push()) {
     task->stream->SendOutputHeaders(headers, false);
   } else {
@@ -119,77 +134,9 @@ ACTION_P(SendResponseHeaders, task) {
   }
 }
 
+// gMock action to be used with MockStreamTask::Run.
 ACTION_P3(SendDataFrame, task, data, fin) {
   task->stream->SendOutputDataFrame(data, fin);
-}
-
-// TODO(mdsteele): Convert other tests to use MockStreamTask instead of
-//   FakeStreamTask; this should make the tests easier to read and more
-//   flexible.
-class FakeStreamTask : public net_instaweb::Function {
- public:
-  virtual ~FakeStreamTask() {}
-  static FakeStreamTask* SimpleResponse(mod_spdy::SpdyStream* stream) {
-    return new FakeStreamTask(NULL, stream);
-  }
-  static FakeStreamTask* ResponseWithServerPush(
-      mod_spdy::SpdySession* session, mod_spdy::SpdyStream* stream) {
-    return new FakeStreamTask(session, stream);
-  }
-
- protected:
-  // net_instaweb::Function methods:
-  virtual void Run();
-  virtual void Cancel() {}
-
- private:
-  FakeStreamTask(mod_spdy::SpdySession* session, mod_spdy::SpdyStream* stream)
-      : session_(session), stream_(stream) {}
-
-  mod_spdy::SpdySession* const session_;
-  mod_spdy::SpdyStream* const stream_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeStreamTask);
-};
-
-void FakeStreamTask::Run() {
-  {
-    net::SpdyFrame* raw_frame;
-    ASSERT_TRUE(stream_->GetInputFrame(false, &raw_frame));
-    scoped_ptr<net::SpdyFrame> frame(raw_frame);
-    ASSERT_TRUE(frame != NULL);
-    EXPECT_THAT(*frame, AllOf(IsControlFrameOfType(net::SYN_STREAM),
-                              StreamIdIs(stream_->stream_id()),
-                              FlagUnidirectionalIs(false)));
-  }
-
-  {
-    net::SpdyHeaderBlock headers;
-    bool spdy2 = stream_->spdy_version() < mod_spdy::spdy::SPDY_VERSION_3;
-    headers[spdy2 ? mod_spdy::spdy::kSpdy2Status :
-            mod_spdy::spdy::kSpdy3Status] = "200";
-    headers[spdy2 ? mod_spdy::spdy::kSpdy2Version :
-            mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
-    if (stream_->is_server_push()) {
-      stream_->SendOutputHeaders(headers, false);
-    } else {
-      stream_->SendOutputSynReply(headers, false);
-    }
-  }
-
-  if (session_ != NULL) {
-    const net::SpdyPriority priority = 3;
-    net::SpdyHeaderBlock push_headers;
-    push_headers[":host"] = "www.example.com";
-    push_headers[":method"] = "GET";
-    push_headers[":path"] = "/styles/main.css";
-    push_headers[":scheme"] = "https";
-    push_headers[":version"] = "HTTP/1.1";
-    session_->StartServerPush(stream_->stream_id(), 0, priority, push_headers);
-  }
-
-  stream_->SendOutputDataFrame("foobar", false);
-  stream_->SendOutputDataFrame("quux", true);
 }
 
 // An executor that runs all tasks in the same thread, either immediately when
@@ -238,14 +185,120 @@ class InlineExecutor : public mod_spdy::Executor {
   DISALLOW_COPY_AND_ASSIGN(InlineExecutor);
 };
 
+// A BufferedSpdyFramer visitor that constructs IR objects for the frames it
+// parses.
+class ClientVisitor : public net::BufferedSpdyFramerVisitorInterface {
+ public:
+  ClientVisitor() : last_data_(NULL), last_settings_(NULL) {}
+  virtual ~ClientVisitor() {}
+
+  virtual void OnError(net::SpdyFramer::SpdyError error_code) {}
+  virtual void OnStreamError(net::SpdyStreamId stream_id,
+                             const std::string& description) {}
+  virtual void OnSynStream(net::SpdyStreamId id, net::SpdyStreamId assoc_id,
+                           net::SpdyPriority priority, uint8 slot,
+                           bool fin, bool unidirectional,
+                           const net::SpdyHeaderBlock& headers) {
+    scoped_ptr<net::SpdySynStreamIR> frame(new net::SpdySynStreamIR(id));
+    frame->set_associated_to_stream_id(assoc_id);
+    frame->set_priority(priority);
+    frame->set_slot(slot);
+    frame->set_fin(fin);
+    frame->set_unidirectional(unidirectional);
+    frame->GetMutableNameValueBlock()->insert(
+        headers.begin(), headers.end());
+    last_frame_.reset(frame.release());
+  }
+  virtual void OnSynReply(net::SpdyStreamId id, bool fin,
+                          const net::SpdyHeaderBlock& headers) {
+    scoped_ptr<net::SpdySynReplyIR> frame(new net::SpdySynReplyIR(id));
+    frame->set_fin(fin);
+    frame->GetMutableNameValueBlock()->insert(
+        headers.begin(), headers.end());
+    last_frame_.reset(frame.release());
+  }
+  virtual void OnHeaders(net::SpdyStreamId id, bool fin,
+                         const net::SpdyHeaderBlock& headers) {
+    scoped_ptr<net::SpdyHeadersIR> frame(new net::SpdyHeadersIR(id));
+    frame->set_fin(fin);
+    frame->GetMutableNameValueBlock()->insert(
+        headers.begin(), headers.end());
+    last_frame_.reset(frame.release());
+  }
+  virtual void OnStreamFrameData(net::SpdyStreamId id, const char* data,
+                                 size_t len, bool fin) {
+    if (len == 0 && last_data_ != NULL && last_data_ == last_frame_.get()) {
+      last_data_->set_fin(fin);
+    } else {
+      scoped_ptr<net::SpdyDataIR> frame(new net::SpdyDataIR(
+          id, base::StringPiece(data, len)));
+      frame->set_fin(fin);
+      last_data_ = frame.get();
+      last_frame_.reset(frame.release());
+    }
+  }
+  virtual void OnSettings(bool clear_persisted) {
+    scoped_ptr<net::SpdySettingsIR> frame(new net::SpdySettingsIR);
+    frame->set_clear_settings(clear_persisted);
+    last_settings_ = frame.get();
+    last_frame_.reset(frame.release());
+  }
+  virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value) {
+    CHECK(last_settings_ != NULL && last_settings_ == last_frame_.get());
+    last_settings_->AddSetting(
+        id, (flags & net::SETTINGS_FLAG_PLEASE_PERSIST),
+        (flags & net::SETTINGS_FLAG_PERSISTED), value);
+  }
+  virtual void OnPing(uint32 id) {
+    last_frame_.reset(new net::SpdyPingIR(id));
+  }
+  virtual void OnRstStream(net::SpdyStreamId id,
+                           net::SpdyRstStreamStatus status) {
+    last_frame_.reset(new net::SpdyRstStreamIR(id, status));
+  }
+  virtual void OnGoAway(net::SpdyStreamId id, net::SpdyGoAwayStatus status) {
+    last_frame_.reset(new net::SpdyGoAwayIR(id, status));
+  }
+  virtual void OnWindowUpdate(net::SpdyStreamId id, uint32 delta) {
+    last_frame_.reset(new net::SpdyWindowUpdateIR(id, delta));
+  }
+  virtual void OnSynStreamCompressed(size_t compr, size_t uncompr) {}
+
+  net::SpdyFrameIR* ReleaseLastFrame() {
+    return last_frame_.release();
+  }
+
+ private:
+  net::SpdyDataIR* last_data_;
+  net::SpdySettingsIR* last_settings_;
+  scoped_ptr<net::SpdyFrameIR> last_frame_;
+
+  DISALLOW_COPY_AND_ASSIGN(ClientVisitor);
+};
+
+ACTION_P2(ClientDecodeFrame, test, matcher) {
+  scoped_ptr<net::SpdyFrameIR> frame(test->DecodeFrameOnClient(arg0));
+  ASSERT_TRUE(frame != NULL);
+  EXPECT_THAT(*frame, matcher);
+}
+
+ACTION_P3(SendBackWindowUpdate, test, stream_id, delta) {
+  test->ReceiveWindowUpdateFrameFromClient(stream_id, delta);
+}
+
+ACTION_P3(SendBackSettings, test, key, value) {
+  test->ReceiveSettingsFrameFromClient(key, value);
+}
+
 // Base class for SpdySession tests.
 class SpdySessionTestBase :
       public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
   SpdySessionTestBase()
       : spdy_version_(GetParam()),
-        framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
-        close_after_input_(false) {
+        client_framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_),
+                       true) {
+    client_framer_.set_visitor(&client_visitor_);
     ON_CALL(session_io_, IsConnectionAborted()).WillByDefault(Return(false));
     ON_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
         .WillByDefault(Invoke(this, &SpdySessionTestBase::ReadNextInputChunk));
@@ -258,8 +311,7 @@ class SpdySessionTestBase :
   mod_spdy::SpdySessionIO::ReadStatus ReadNextInputChunk(
       bool block, net::BufferedSpdyFramer* framer) {
     if (input_queue_.empty()) {
-      return (!close_after_input_ ? mod_spdy::SpdySessionIO::READ_NO_DATA :
-              mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED);
+      return mod_spdy::SpdySessionIO::READ_NO_DATA;
     }
     const std::string chunk = input_queue_.front();
     input_queue_.pop_front();
@@ -268,68 +320,103 @@ class SpdySessionTestBase :
             mod_spdy::SpdySessionIO::READ_SUCCESS);
   }
 
-  // Use as gMock action for SendFrameRaw:
-  //   Invoke(this, &SpdySessionTest::ReceiveAndClose)
-  // This indicates that the simulated client is satisfied and will close the
-  // connection (once it is done sending input).
-  mod_spdy::SpdySessionIO::WriteStatus ReceiveAndClose(
-      const net::SpdyFrame& frame) {
-    close_after_input_ = true;
-    return mod_spdy::SpdySessionIO::WRITE_SUCCESS;
-  }
-
-  // Push a SETTINGS frame into the input queue.
-  void PushSettingsFrame(net::SpdySettingsIds setting, uint32 value) {
-    net::SettingsMap settings;
-    settings[setting] = std::make_pair(net::SETTINGS_FLAG_NONE, value);
-    scoped_ptr<net::SpdySettingsControlFrame> frame(
-        framer_.CreateSettings(settings));
-    PushFrame(*frame);
-  }
-
- protected:
-  // Push some random garbage bytes into the input queue.
-  void PushGarbageData() {
-    input_queue_.push_back("\x88\x5f\x92\x02\xf8\x92\x12\xd1"
-                           "\x82\xdc\x1a\x40\xbb\xb2\x9d\x13");
+  // This is called by the ClientDecodeFrame gMock action defined above.
+  net::SpdyFrameIR* DecodeFrameOnClient(
+      const net::SpdySerializedFrame& frame) {
+    client_framer_.ProcessInput(frame.data(), frame.size());
+    return client_visitor_.ReleaseLastFrame();
   }
 
   // Push a frame into the input queue.
-  void PushFrame(const net::SpdyFrame& frame) {
-    input_queue_.push_back(mod_spdy::FrameData(frame).as_string());
+  void ReceiveFrameFromClient(const net::SpdySerializedFrame& frame) {
+    input_queue_.push_back(std::string(frame.data(), frame.size()));
   }
 
   // Push a PING frame into the input queue.
-  void PushPingFrame(uint32 id) {
-    scoped_ptr<net::SpdyPingControlFrame> frame(framer_.CreatePingFrame(id));
-    PushFrame(*frame);
+  void ReceivePingFromClient(uint32 id) {
+    scoped_ptr<net::SpdySerializedFrame> frame(
+        client_framer_.CreatePingFrame(id));
+    ReceiveFrameFromClient(*frame);
   }
 
   // Push a valid SYN_STREAM frame into the input queue.
-  void PushSynStreamFrame(net::SpdyStreamId stream_id,
-                          net::SpdyPriority priority,
-                          net::SpdyControlFlags flags) {
+  void ReceiveSynStreamFromClient(net::SpdyStreamId stream_id,
+                                  net::SpdyPriority priority,
+                                  net::SpdyControlFlags flags) {
     net::SpdyHeaderBlock headers;
-    AddRequiredHeaders(&headers);
-    scoped_ptr<net::SpdySynStreamControlFrame> frame(framer_.CreateSynStream(
+    AddRequestHeaders(spdy_version_, &headers);
+    scoped_ptr<net::SpdySerializedFrame> frame(client_framer_.CreateSynStream(
         stream_id, 0, priority, 0, flags,
         true,  // true = use compression
         &headers));
-    PushFrame(*frame);
+    ReceiveFrameFromClient(*frame);
+  }
+
+  // Push a SETTINGS frame into the input queue.
+  void ReceiveSettingsFrameFromClient(
+      net::SpdySettingsIds setting, uint32 value) {
+    net::SettingsMap settings;
+    settings[setting] = std::make_pair(net::SETTINGS_FLAG_NONE, value);
+    scoped_ptr<net::SpdySerializedFrame> frame(
+        client_framer_.CreateSettings(settings));
+    ReceiveFrameFromClient(*frame);
+  }
+
+  // Push a WINDOW_UPDATE frame into the input queue.
+  void ReceiveWindowUpdateFrameFromClient(
+      net::SpdyStreamId stream_id, uint32 delta) {
+    scoped_ptr<net::SpdySerializedFrame> frame(
+        client_framer_.CreateWindowUpdate(stream_id, delta));
+    ReceiveFrameFromClient(*frame);
+  }
+
+ protected:
+  void ExpectSendFrame(::testing::Matcher<const net::SpdyFrameIR&> matcher) {
+    EXPECT_CALL(session_io_, SendFrameRaw(_))
+        .WillOnce(DoAll(ClientDecodeFrame(this, matcher),
+                        Return(mod_spdy::SpdySessionIO::WRITE_SUCCESS)));
+  }
+
+  void ExpectBeginServerPush(
+      net::SpdyStreamId stream_id, net::SpdyStreamId assoc_stream_id,
+      net::SpdyPriority priority, const std::string& path) {
+    net::SpdyNameValueBlock headers;
+    AddInitialServerPushHeaders(path, &headers);
+    ExpectSendFrame(IsSynStream(stream_id, assoc_stream_id, priority, false,
+                                true, headers));
+  }
+
+  void ExpectSendSynReply(net::SpdyStreamId stream_id, bool fin) {
+    net::SpdyNameValueBlock headers;
+    AddResponseHeaders(spdy_version_, &headers);
+    ExpectSendFrame(IsSynReply(stream_id, fin, headers));
+  }
+
+  void ExpectSendHeaders(net::SpdyStreamId stream_id, bool fin) {
+    net::SpdyNameValueBlock headers;
+    AddResponseHeaders(spdy_version_, &headers);
+    ExpectSendFrame(IsHeaders(stream_id, fin, headers));
+  }
+
+  void ExpectSendGoAway(net::SpdyStreamId last_stream_id,
+                        net::SpdyGoAwayStatus status) {
+    // SPDY/2 doesn't have status codes on GOAWAY frames, so for SPDY/2 the
+    // client framer decodes it as GOAWAY_OK regardless of what we sent.
+    if (spdy_version_ == mod_spdy::spdy::SPDY_VERSION_2) {
+      ExpectSendFrame(IsGoAway(last_stream_id, net::GOAWAY_OK));
+    } else {
+      ExpectSendFrame(IsGoAway(last_stream_id, status));
+    }
   }
 
   const mod_spdy::spdy::SpdyVersion spdy_version_;
-  net::SpdyFramer framer_;
+  ClientVisitor client_visitor_;
+  net::BufferedSpdyFramer client_framer_;
   mod_spdy::SpdyServerConfig config_;
   MockSpdySessionIO session_io_;
   MockSpdyStreamTaskFactory task_factory_;
   std::list<std::string> input_queue_;
-  bool close_after_input_;
 };
-
-ACTION_P3(ReceiveSettingsFrame, test, key, value) {
-  test->PushSettingsFrame(key, value);
-}
 
 // Class for most SpdySession tests; this uses an InlineExecutor, so that test
 // behavior is very predictable.
@@ -339,29 +426,6 @@ class SpdySessionTest : public SpdySessionTestBase {
       : session_(spdy_version_, &config_, &session_io_, &task_factory_,
                  &executor_) {}
 
-  FakeStreamTask* ResponseWithServerPush(
-      mod_spdy::SpdyStream* stream) {
-    return FakeStreamTask::ResponseWithServerPush(&session_, stream);
-  }
-
-  // Use as gMock action for SendFrameRaw:
-  //   Invoke(this, &SpdySessionTest::ProcessOutputWithFlowControl)
-  mod_spdy::SpdySessionIO::WriteStatus ProcessOutputWithFlowControl(
-      const net::SpdyFrame& frame) {
-    // For SPDY v3 and above, send back a WINDOW_UPDATE frame saying we
-    // consumed the data frame.
-    if (session_.spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3 &&
-        !frame.is_control_frame()) {
-      const net::SpdyDataFrame& data_frame =
-          *static_cast<const net::SpdyDataFrame*>(&frame);
-      scoped_ptr<net::SpdyWindowUpdateControlFrame> window_update_frame(
-          framer_.CreateWindowUpdate(data_frame.stream_id(),
-                                     data_frame.length()));
-      PushFrame(*window_update_frame);
-    }
-    return mod_spdy::SpdySessionIO::WRITE_SUCCESS;
-  }
-
  protected:
   InlineExecutor executor_;
   mod_spdy::SpdySession session_;
@@ -370,7 +434,7 @@ class SpdySessionTest : public SpdySessionTestBase {
 // Test that if the connection is already closed, we stop immediately.
 TEST_P(SpdySessionTest, ConnectionAlreadyClosed) {
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)))
+  EXPECT_CALL(session_io_, SendFrameRaw(_))
       .WillOnce(Return(mod_spdy::SpdySessionIO::WRITE_CONNECTION_CLOSED));
 
   session_.Run();
@@ -380,7 +444,7 @@ TEST_P(SpdySessionTest, ConnectionAlreadyClosed) {
 // Test that when the connection is aborted, we stop.
 TEST_P(SpdySessionTest, ImmediateConnectionAbort) {
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
 
   session_.Run();
@@ -390,17 +454,17 @@ TEST_P(SpdySessionTest, ImmediateConnectionAbort) {
 // Test responding to a PING frame from the client (followed by the connection
 // closing, so that we can exit the Run loop).
 TEST_P(SpdySessionTest, SinglePing) {
-  PushPingFrame(1);
+  ReceivePingFromClient(47);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::PING)))
-      .WillOnce(Invoke(this, &SpdySessionTestBase::ReceiveAndClose));
+  ExpectSendFrame(IsPing(47));
   EXPECT_CALL(session_io_, IsConnectionAborted());
-  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()))
+      .WillOnce(Return(mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED));
+  ExpectSendGoAway(0, net::GOAWAY_OK);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -408,31 +472,35 @@ TEST_P(SpdySessionTest, SinglePing) {
 
 // Test handling a single stream request.
 TEST_P(SpdySessionTest, SingleStream) {
-  executor_.set_run_on_add(true);
+  MockStreamTask* task = new MockStreamTask;
+  executor_.set_run_on_add(false);
   const net::SpdyStreamId stream_id = 1;
   const net::SpdyPriority priority = 2;
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
             Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
-      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_REPLY), StreamIdIs(stream_id),
-            FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foobar"), FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("quux"), FlagFinIs(true))))
-      .WillOnce(Invoke(this, &SpdySessionTestBase::ReceiveAndClose));
+      .WillOnce(ReturnMockTask(task));
+  EXPECT_CALL(session_io_, IsConnectionAborted())
+      .WillOnce(DoAll(InvokeWithoutArgs(&executor_, &InlineExecutor::RunAll),
+                      Return(false)));
+  EXPECT_CALL(*task, Run()).WillOnce(DoAll(
+      SendResponseHeaders(task), SendDataFrame(task, "foobar", false),
+      SendDataFrame(task, "quux", true)));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(false), NotNull()));
+  ExpectSendSynReply(stream_id, false);
+  ExpectSendFrame(IsDataFrame(stream_id, false, "foobar"));
+  ExpectSendFrame(IsDataFrame(stream_id, true, "quux"));
   EXPECT_CALL(session_io_, IsConnectionAborted());
-  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()))
+      .WillOnce(Return(mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED));
+  ExpectSendGoAway(1, net::GOAWAY_OK);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -441,24 +509,29 @@ TEST_P(SpdySessionTest, SingleStream) {
 // Test that if SendFrameRaw fails, we immediately stop trying to send data and
 // shut down the session.
 TEST_P(SpdySessionTest, ShutDownSessionIfSendFrameRawFails) {
-  executor_.set_run_on_add(true);
+  MockStreamTask* task = new MockStreamTask;
+  executor_.set_run_on_add(false);
   const net::SpdyStreamId stream_id = 1;
   const net::SpdyPriority priority = 2;
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
 
   testing::InSequence seq;
   // We start out the same way as in the SingleStream test above.
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(_, _));
   EXPECT_CALL(task_factory_, NewStreamTask(_))
-      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_REPLY), StreamIdIs(stream_id),
-            FlagFinIs(false))));
+      .WillOnce(ReturnMockTask(task));
+  EXPECT_CALL(session_io_, IsConnectionAborted())
+      .WillOnce(DoAll(InvokeWithoutArgs(&executor_, &InlineExecutor::RunAll),
+                      Return(false)));
+  EXPECT_CALL(*task, Run()).WillOnce(DoAll(
+      SendResponseHeaders(task), SendDataFrame(task, "foobar", false),
+      SendDataFrame(task, "quux", true)));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, _));
+  ExpectSendSynReply(stream_id, false);
   // At this point, the connection is closed by the client.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foobar"), FlagFinIs(false))))
+  EXPECT_CALL(session_io_, SendFrameRaw(_))
       .WillOnce(Return(mod_spdy::SpdySessionIO::WRITE_CONNECTION_CLOSED));
   // Even though we have another frame to send at this point (already in the
   // output queue), we immediately stop sending data and exit the session.
@@ -470,13 +543,14 @@ TEST_P(SpdySessionTest, ShutDownSessionIfSendFrameRawFails) {
 // Test that when the client sends us garbage data, we send a GOAWAY frame and
 // then quit.
 TEST_P(SpdySessionTest, SendGoawayInResponseToGarbage) {
-  PushGarbageData();
+  input_queue_.push_back("\x88\x5f\x92\x02\xf8\x92\x12\xd1"
+                         "\x82\xdc\x1a\x40\xbb\xb2\x9d\x13");
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
+  ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -487,17 +561,19 @@ TEST_P(SpdySessionTest, SendGoawayInResponseToGarbage) {
 TEST_P(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
   net::SpdyHeaderBlock headers;
   headers["foobar"] = "Foo is to bar as bar is to baz.";
-  scoped_ptr<net::SpdyFrame> frame(framer_.CreateSynStream(
-      1, 0, framer_.GetHighestPriority(), 0, net::CONTROL_FLAG_FIN,
+  net::SpdyFramer framer(mod_spdy::SpdyVersionToFramerVersion(spdy_version_));
+  framer.set_enable_compression(false);
+  scoped_ptr<net::SpdySerializedFrame> frame(framer.CreateSynStream(
+      1, 0, framer.GetHighestPriority(), 0, net::CONTROL_FLAG_FIN,
       false,  // false = no compression
       &headers));
-  PushFrame(*frame);
+  ReceiveFrameFromClient(*frame);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
+  ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -511,49 +587,18 @@ TEST_P(SpdySessionTest, SendGoawayForBadSynStreamCompression) {
 // send a GOAWAY frame and then quit.
 TEST_P(SpdySessionTest, SendGoawayForSynStreamIdZero) {
   net::SpdyHeaderBlock headers;
-  AddRequiredHeaders(&headers);
-  // SpdyFramer DCHECKS that the stream_id isn't zero, so just create the frame
-  // with a stream_id of 1, and then set the stream_id on the next line.
-  scoped_ptr<net::SpdySynStreamControlFrame> frame(framer_.CreateSynStream(
-      1, 0, framer_.GetHighestPriority(), 0, net::CONTROL_FLAG_FIN, true,
+  AddRequestHeaders(spdy_version_, &headers);
+  scoped_ptr<net::SpdySerializedFrame> frame(client_framer_.CreateSynStream(
+      0, 0, client_framer_.GetHighestPriority(), 0, net::CONTROL_FLAG_FIN,
+      true,  // true = use compression
       &headers));
-  frame->set_stream_id(0);
-  PushFrame(*frame);
+  ReceiveFrameFromClient(*frame);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
-
-  session_.Run();
-  EXPECT_TRUE(executor_.stopped());
-}
-#endif
-
-// TODO(mdsteele): At the moment, the SpdyFramer API has changed such that it
-// no longer gives us a chance to validate SYN_STREAM flags, so we can't pass
-// this test.  There is a TODO in the SpdyFramer code to validate flags, so
-// hopefully we can reenable this test in the future.
-#if 0
-// Test that when the client sends us a SYN_STREAM with invalid flags, we
-// send a GOAWAY frame and then quit.
-TEST_P(SpdySessionTest, SendGoawayForSynStreamWithInvalidFlags) {
-  net::SpdyHeaderBlock headers;
-  AddRequiredHeaders(&headers);
-  // SpdyFramer DCHECKS that the flags are valid, so just create the frame
-  // with no flags, and then set the flags on the next line.
-  scoped_ptr<net::SpdySynStreamControlFrame> frame(framer_.CreateSynStream(
-      1, 0, framer_.GetHighestPriority(), 0, net::CONTROL_FLAG_NONE, true,
-      &headers));
-  frame->set_flags(0x47);
-  PushFrame(*frame);
-
-  testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
-  EXPECT_CALL(session_io_, IsConnectionAborted());
-  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
+  ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -563,14 +608,15 @@ TEST_P(SpdySessionTest, SendGoawayForSynStreamWithInvalidFlags) {
 // Test that when the client sends us two SYN_STREAMs with the same ID, we send
 // a GOAWAY frame (but still finish out the good stream before quitting).
 TEST_P(SpdySessionTest, SendGoawayForDuplicateStreamId) {
+  MockStreamTask* task = new MockStreamTask;
   executor_.set_run_on_add(false);
   const net::SpdyStreamId stream_id = 1;
   const net::SpdyPriority priority = 2;
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   // Get the first SYN_STREAM; it looks good, so create a new task (but because
   // we set executor_.set_run_on_add(false) above, it doesn't execute yet).
@@ -579,28 +625,27 @@ TEST_P(SpdySessionTest, SendGoawayForDuplicateStreamId) {
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
             Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
-      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
+      .WillOnce(ReturnMockTask(task));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   // There's an active stream out, so ProcessAvailableInput should have false
   // for the first argument (false = nonblocking read).  Here we get the second
   // SYN_STREAM with the same stream ID, so we should send GOAWAY.
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(false), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
+  ExpectSendGoAway(1, net::GOAWAY_PROTOCOL_ERROR);
   // At this point, tell the executor to run the task.
   EXPECT_CALL(session_io_, IsConnectionAborted())
       .WillOnce(DoAll(InvokeWithoutArgs(&executor_, &InlineExecutor::RunAll),
                       Return(false)));
+  EXPECT_CALL(*task, Run()).WillOnce(DoAll(
+      SendResponseHeaders(task), SendDataFrame(task, "foobar", false),
+      SendDataFrame(task, "quux", true)));
   // The stream is no longer active, but there are pending frames to send, so
   // we shouldn't block on input.
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(false), NotNull()));
   // Now we should send the output.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_REPLY), StreamIdIs(stream_id),
-            FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foobar"), FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("quux"), FlagFinIs(true))));
+  ExpectSendSynReply(stream_id, false);
+  ExpectSendFrame(IsDataFrame(stream_id, false, "foobar"));
+  ExpectSendFrame(IsDataFrame(stream_id, true, "quux"));
   // Finally, there is no more output to send, and no chance of creating new
   // streams (since we GOAWAY'd), so we quit.
   EXPECT_CALL(session_io_, IsConnectionAborted());
@@ -624,14 +669,15 @@ TEST_P(SpdySessionNoFlowControlTest, SendGoawayForInitialWindowSize) {
   net::SettingsMap settings;
   settings[net::SETTINGS_INITIAL_WINDOW_SIZE] =
       std::make_pair(net::SETTINGS_FLAG_NONE, 4000);
-  scoped_ptr<net::SpdyFrame> frame(framer_.CreateSettings(settings));
-  PushFrame(*frame);
+  scoped_ptr<net::SpdySerializedFrame> frame(
+      client_framer_.CreateSettings(settings));
+  ReceiveFrameFromClient(*frame);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
+  ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -645,11 +691,7 @@ INSTANTIATE_TEST_CASE_P(Spdy2, SpdySessionNoFlowControlTest, testing::Values(
 // we can test concurrency behavior.
 class SpdySessionFlowControlTest : public SpdySessionTestBase {
  public:
-  SpdySessionFlowControlTest()
-      : thread_pool_(1, 1) {
-    ON_CALL(session_io_, SendFrameRaw(_)).WillByDefault(Invoke(
-        this, &SpdySessionFlowControlTest::ProcessOutputWithFlowControl));
-  }
+  SpdySessionFlowControlTest() : thread_pool_(1, 1) {}
 
   void SetUp() {
     ASSERT_TRUE(thread_pool_.Start());
@@ -659,22 +701,12 @@ class SpdySessionFlowControlTest : public SpdySessionTestBase {
         executor_.get()));
   }
 
-  // Use as gMock action for SendFrameRaw:
-  //   Invoke(this, &SpdySessionTest::ProcessOutputWithFlowControl)
-  mod_spdy::SpdySessionIO::WriteStatus ProcessOutputWithFlowControl(
-      const net::SpdyFrame& frame) {
-    // For SPDY v3 and above, send back a WINDOW_UPDATE frame saying we
-    // consumed the data frame.
-    if (session_->spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3 &&
-        !frame.is_control_frame()) {
-      const net::SpdyDataFrame& data_frame =
-          *static_cast<const net::SpdyDataFrame*>(&frame);
-      scoped_ptr<net::SpdyWindowUpdateControlFrame> window_update_frame(
-          framer_.CreateWindowUpdate(data_frame.stream_id(),
-                                     data_frame.length()));
-      PushFrame(*window_update_frame);
-    }
-    return mod_spdy::SpdySessionIO::WRITE_SUCCESS;
+  void ExpectSendDataGetWindowUpdateBack(
+      net::SpdyStreamId stream_id, bool fin, base::StringPiece payload) {
+    EXPECT_CALL(session_io_, SendFrameRaw(_)).WillOnce(DoAll(
+        ClientDecodeFrame(this, IsDataFrame(stream_id, fin, payload)),
+        SendBackWindowUpdate(this, stream_id, payload.size()),
+        Return(mod_spdy::SpdySessionIO::WRITE_SUCCESS)));
   }
 
  protected:
@@ -684,46 +716,42 @@ class SpdySessionFlowControlTest : public SpdySessionTestBase {
 };
 
 TEST_P(SpdySessionFlowControlTest, SingleStreamWithFlowControl) {
+  MockStreamTask* task = new MockStreamTask;
   // Start by setting the initial window size to very small (three bytes).
-  PushSettingsFrame(net::SETTINGS_INITIAL_WINDOW_SIZE, 3);
+  ReceiveSettingsFrameFromClient(net::SETTINGS_INITIAL_WINDOW_SIZE, 3);
   // Then send a SYN_STREAM.
   const net::SpdyStreamId stream_id = 1;
   const net::SpdyPriority priority = 2;
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
 
-  // We'll have to go through the loop at least six times (once for each of
+  // We'll have to go through the loop at least five times -- once for each of
   // five frames that we _must_ receive (SETTINGS, SYN_STREAM, and three
-  // WINDOW_UDPATEs), and once to determine that the connection is closed).
-  EXPECT_CALL(session_io_, IsConnectionAborted()).Times(AtLeast(6));
+  // WINDOW_UDPATEs.
+  EXPECT_CALL(session_io_, IsConnectionAborted()).Times(AtLeast(5));
   EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
-      .Times(AtLeast(6));
+      .Times(AtLeast(5));
 
   // The rest of these will have to happen in a fixed order.
-  testing::Sequence s1;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)))
-      .InSequence(s1);
+  testing::InSequence seq;
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
             Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
-      .InSequence(s1)
-      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_REPLY), StreamIdIs(stream_id),
-            FlagFinIs(false))))
-      .InSequence(s1);
+      .WillOnce(ReturnMockTask(task));
+  EXPECT_CALL(*task, Run()).WillOnce(DoAll(
+      SendResponseHeaders(task), SendDataFrame(task, "foobar", false),
+      SendDataFrame(task, "quux", true)));
   // Since the window size is just three bytes, we can only send three bytes at
   // a time.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foo"), FlagFinIs(false)))).InSequence(s1);
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("bar"), FlagFinIs(false)))).InSequence(s1);
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("quu"), FlagFinIs(false)))).InSequence(s1);
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("x"), FlagFinIs(true)))).InSequence(s1)
-      .WillOnce(Invoke(this, &SpdySessionTestBase::ReceiveAndClose));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
+  ExpectSendSynReply(stream_id, false);
+  ExpectSendDataGetWindowUpdateBack(stream_id, false, "foo");
+  ExpectSendDataGetWindowUpdateBack(stream_id, false, "bar");
+  ExpectSendDataGetWindowUpdateBack(stream_id, false, "quu");
+  ExpectSendDataGetWindowUpdateBack(stream_id, true, "x");
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()))
+      .WillOnce(Return(mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED));
+  ExpectSendGoAway(stream_id, net::GOAWAY_OK);
 
   session_->Run();
 }
@@ -731,46 +759,40 @@ TEST_P(SpdySessionFlowControlTest, SingleStreamWithFlowControl) {
 // Suppose the input side of the connection closes while we're blocked on flow
 // control; we should abort the blocked streams.
 TEST_P(SpdySessionFlowControlTest, CeaseInputWithFlowControl) {
-  // For this test, we will not be sending WINDOW_UDPATE frames.
-  ON_CALL(session_io_, SendFrameRaw(_))
-      .WillByDefault(Return(mod_spdy::SpdySessionIO::WRITE_SUCCESS));
-
+  MockStreamTask* task = new MockStreamTask;
   // Start by setting the initial window size to very small (three bytes).
-  PushSettingsFrame(net::SETTINGS_INITIAL_WINDOW_SIZE, 3);
+  ReceiveSettingsFrameFromClient(net::SETTINGS_INITIAL_WINDOW_SIZE, 3);
   // Then send a SYN_STREAM.
   const net::SpdyStreamId stream_id = 1;
   const net::SpdyPriority priority = 2;
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
 
   EXPECT_CALL(session_io_, IsConnectionAborted()).Times(AtLeast(1));
   EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
       .Times(AtLeast(1));
 
   // The rest of these will have to happen in a fixed order.
-  testing::Sequence s1;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)))
-      .InSequence(s1);
+  testing::InSequence seq;
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
             Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
-      .InSequence(s1)
-      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_REPLY), StreamIdIs(stream_id),
-            FlagFinIs(false))))
-      .InSequence(s1);
+      .WillOnce(ReturnMockTask(task));
+  EXPECT_CALL(*task, Run()).WillOnce(DoAll(
+      SendResponseHeaders(task), SendDataFrame(task, "foobar", false),
+      SendDataFrame(task, "quux", true)));
+  ExpectSendSynReply(stream_id, false);
   // Since the window size is just three bytes, we can only send three bytes at
   // a time.  The stream thread will then be blocked.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foo"), FlagFinIs(false)))).InSequence(s1)
-      .WillOnce(Invoke(this, &SpdySessionTestBase::ReceiveAndClose));;
+  ExpectSendFrame(IsDataFrame(stream_id, false, "foo"));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, _))
+      .WillOnce(Return(mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED));
   // At this point, we're blocked on flow control, and the test will close the
   // input side of the connection.  Since the stream can never complete, the
   // session should abort the stream and shut down, rather than staying blocked
   // forever.
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)))
-      .InSequence(s1);
+  ExpectSendGoAway(stream_id, net::GOAWAY_OK);
 
   session_->Run();
 }
@@ -778,17 +800,13 @@ TEST_P(SpdySessionFlowControlTest, CeaseInputWithFlowControl) {
 // Test that we send GOAWAY if the client tries to send
 // SETTINGS_INITIAL_WINDOW_SIZE with a value of 0.
 TEST_P(SpdySessionFlowControlTest, SendGoawayForTooSmallInitialWindowSize) {
-  net::SettingsMap settings;
-  settings[net::SETTINGS_INITIAL_WINDOW_SIZE] =
-      std::make_pair(net::SETTINGS_FLAG_NONE, 0);
-  scoped_ptr<net::SpdyFrame> frame(framer_.CreateSettings(settings));
-  PushFrame(*frame);
+  ReceiveSettingsFrameFromClient(net::SETTINGS_INITIAL_WINDOW_SIZE, 0);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
+  ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
 
   session_->Run();
 }
@@ -796,22 +814,19 @@ TEST_P(SpdySessionFlowControlTest, SendGoawayForTooSmallInitialWindowSize) {
 // Test that we send GOAWAY if the client tries to send
 // SETTINGS_INITIAL_WINDOW_SIZE with a value of 0x80000000.
 TEST_P(SpdySessionFlowControlTest, SendGoawayForTooLargeInitialWindowSize) {
-  net::SettingsMap settings;
-  settings[net::SETTINGS_INITIAL_WINDOW_SIZE] =
-      std::make_pair(net::SETTINGS_FLAG_NONE, 0x80000000);
-  scoped_ptr<net::SpdyFrame> frame(framer_.CreateSettings(settings));
-  PushFrame(*frame);
+  ReceiveSettingsFrameFromClient(net::SETTINGS_INITIAL_WINDOW_SIZE,
+                                 0x80000000);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_PROTOCOL_ERROR)));
+  ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
 
   session_->Run();
 }
 
-// Only run flow control tests for SPDY v3.
+// Only run flow control tests for SPDY v3 and up.
 INSTANTIATE_TEST_CASE_P(Spdy3, SpdySessionFlowControlTest, testing::Values(
     mod_spdy::spdy::SPDY_VERSION_3, mod_spdy::spdy::SPDY_VERSION_3_1));
 
@@ -820,56 +835,57 @@ INSTANTIATE_TEST_CASE_P(Spdy3, SpdySessionFlowControlTest, testing::Values(
 typedef SpdySessionTest SpdySessionServerPushTest;
 
 TEST_P(SpdySessionServerPushTest, SimpleServerPush) {
+  MockStreamTask* task1 = new MockStreamTask;
+  MockStreamTask* task2 = new MockStreamTask;
   executor_.set_run_on_add(true);
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyPriority priority = 2;
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
+  const net::SpdyPriority push_priority = 3;
+  const std::string push_path = "/script.js";
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
             Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
             Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
-      .WillOnce(WithArg<0>(Invoke(
-          this, &SpdySessionTest::ResponseWithServerPush)));
+      .WillOnce(ReturnMockTask(task1));
+  EXPECT_CALL(*task1, Run()).WillOnce(DoAll(
+      SendResponseHeaders(task1),
+      StartServerPush(task1, push_priority, push_path,
+                      mod_spdy::SpdyServerPushInterface::PUSH_STARTED),
+      SendDataFrame(task1, "foobar", false),
+      SendDataFrame(task1, "quux", true)));
   // We should right away create the server push task, and get the SYN_STREAM
   // before any other frames from the original stream.
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(2u)),
             Property(&mod_spdy::SpdyStream::associated_stream_id,
                      Eq(stream_id)),
-            Property(&mod_spdy::SpdyStream::priority, Eq(3u)))))
-      .WillOnce(WithArg<0>(Invoke(FakeStreamTask::SimpleResponse)));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_STREAM),
-            StreamIdIs(2u), AssociatedStreamIdIs(stream_id),
-            FlagFinIs(false), FlagUnidirectionalIs(true))));
+            Property(&mod_spdy::SpdyStream::priority, Eq(push_priority)))))
+      .WillOnce(ReturnMockTask(task2));
+  EXPECT_CALL(*task2, Run()).WillOnce(DoAll(
+      SendResponseHeaders(task2),
+      SendDataFrame(task2, "hello", false),
+      SendDataFrame(task2, "world", true)));
+  ExpectBeginServerPush(2u, stream_id, push_priority, push_path);
   // The pushed stream has a low priority, so the rest of the first stream
   // should get sent before the rest of the pushed stream.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_REPLY), StreamIdIs(stream_id),
-            FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foobar"), StreamIdIs(stream_id),
-            FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("quux"), StreamIdIs(stream_id), FlagFinIs(true))));
+  ExpectSendSynReply(stream_id, false);
+  ExpectSendFrame(IsDataFrame(stream_id, false, "foobar"));
+  ExpectSendFrame(IsDataFrame(stream_id, true, "quux"));
   // Now we should get the rest of the pushed stream.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::HEADERS), StreamIdIs(2u),
-            FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foobar"), StreamIdIs(2u), FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("quux"), StreamIdIs(2u), FlagFinIs(true))))
-      .WillOnce(Invoke(this, &SpdySessionTestBase::ReceiveAndClose));
+  ExpectSendHeaders(2u, false);
+  ExpectSendFrame(IsDataFrame(2u, false, "hello"));
+  ExpectSendFrame(IsDataFrame(2u, true, "world"));
   // And, we're done.
   EXPECT_CALL(session_io_, IsConnectionAborted());
-  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()))
+      .WillOnce(Return(mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED));
+  ExpectSendGoAway(stream_id, net::GOAWAY_OK);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
@@ -882,15 +898,15 @@ TEST_P(SpdySessionServerPushTest, TooManyConcurrentPushes) {
   executor_.set_run_on_add(false);
   const net::SpdyStreamId stream_id = 9;
   const net::SpdyPriority priority = 0;
-  PushSettingsFrame(net::SETTINGS_MAX_CONCURRENT_STREAMS, 2);
-  PushSynStreamFrame(stream_id, priority, net::CONTROL_FLAG_FIN);
+  ReceiveSettingsFrameFromClient(net::SETTINGS_MAX_CONCURRENT_STREAMS, 2);
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_FIN);
 
   EXPECT_CALL(session_io_, IsConnectionAborted()).Times(AtLeast(3));
   EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
       .Times(AtLeast(3));
 
   testing::InSequence seq;
-  EXPECT_CALL(session_io_, SendFrameRaw(IsControlFrameOfType(net::SETTINGS)));
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
   EXPECT_CALL(task_factory_, NewStreamTask(
       AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
             Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
@@ -900,11 +916,11 @@ TEST_P(SpdySessionServerPushTest, TooManyConcurrentPushes) {
       .WillOnce(DoAll(InvokeWithoutArgs(&executor_, &InlineExecutor::RunOne),
                       Return(false)));
   EXPECT_CALL(*task1, Run()).WillOnce(DoAll(
-      StartServerPush(&session_, stream_id, 3u, "/foo.css",
+      StartServerPush(task1, 3u, "/foo.css",
           mod_spdy::SpdyServerPushInterface::PUSH_STARTED),
-      StartServerPush(&session_, stream_id, 2u, "/bar.css",
+      StartServerPush(task1, 2u, "/bar.css",
           mod_spdy::SpdyServerPushInterface::PUSH_STARTED),
-      StartServerPush(&session_, stream_id, 1u, "/baz.css",
+      StartServerPush(task1, 1u, "/baz.css",
           mod_spdy::SpdyServerPushInterface::TOO_MANY_CONCURRENT_PUSHES),
       SendResponseHeaders(task1), SendDataFrame(task1, "html", true)));
   // Start the first two pushes.  The third push should fail due to too many
@@ -922,27 +938,17 @@ TEST_P(SpdySessionServerPushTest, TooManyConcurrentPushes) {
             Property(&mod_spdy::SpdyStream::priority, Eq(2u)))))
       .WillOnce(ReturnMockTask(task3));
   // Now we get the SYN_STREAMs for the pushed streams before anything else.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_STREAM),
-            StreamIdIs(2u), AssociatedStreamIdIs(stream_id), PriorityIs(3u),
-            FlagFinIs(false), FlagUnidirectionalIs(true))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_STREAM),
-            StreamIdIs(4u), AssociatedStreamIdIs(stream_id), PriorityIs(2u),
-            FlagFinIs(false), FlagUnidirectionalIs(true))));
+  ExpectBeginServerPush(2u, stream_id, 3u, "/foo.css");
+  ExpectBeginServerPush(4u, stream_id, 2u, "/bar.css");
   // We now send the frames from the original stream.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::SYN_REPLY), StreamIdIs(stream_id),
-            FlagFinIs(false))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("html"), StreamIdIs(stream_id),
-            FlagFinIs(true))));
+  ExpectSendSynReply(stream_id, false);
+  ExpectSendFrame(IsDataFrame(stream_id, true, "html"));
   // At this point, the client will change MAX_CONCURRENT_STREAMS to zero.  We
   // shouldn't barf, even though we have more active push streams than the new
   // maximum.
   EXPECT_CALL(session_io_, IsConnectionAborted())
       .WillOnce(DoAll(
-          ReceiveSettingsFrame(this, net::SETTINGS_MAX_CONCURRENT_STREAMS, 0u),
+          SendBackSettings(this, net::SETTINGS_MAX_CONCURRENT_STREAMS, 0u),
           Return(false)));
   // Now let's run the rest of the tasks.  One of them will try to start yet
   // another server push, but that should fail because MAX_CONCURRENT_STREAMS
@@ -953,28 +959,25 @@ TEST_P(SpdySessionServerPushTest, TooManyConcurrentPushes) {
   EXPECT_CALL(*task2, Run()).WillOnce(DoAll(
       SendResponseHeaders(task2), SendDataFrame(task2, "foo", true)));
   EXPECT_CALL(*task3, Run()).WillOnce(DoAll(
-      StartServerPush(&session_, 4u, 3u, "/stuff.png",
+      StartServerPush(task3, 3u, "/stuff.png",
           mod_spdy::SpdyServerPushInterface::TOO_MANY_CONCURRENT_PUSHES),
       SendResponseHeaders(task3), SendDataFrame(task3, "bar", true)));
   // And now we get all those frames.  The "bar" stream's frames should come
   // first, because that's a higher-priority stream.
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::HEADERS), StreamIdIs(4u))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("bar"), StreamIdIs(4u), FlagFinIs(true))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsControlFrameOfType(net::HEADERS), StreamIdIs(2u))));
-  EXPECT_CALL(session_io_, SendFrameRaw(
-      AllOf(IsDataFrameWith("foo"), StreamIdIs(2u), FlagFinIs(true))))
-      .WillOnce(Invoke(this, &SpdySessionTestBase::ReceiveAndClose));
+  ExpectSendHeaders(4u, false);
+  ExpectSendFrame(IsDataFrame(4u, true, "bar"));
+  ExpectSendHeaders(2u, false);
+  ExpectSendFrame(IsDataFrame(2u, true, "foo"));
   // And, we're done.
-  EXPECT_CALL(session_io_, SendFrameRaw(IsGoAway(net::GOAWAY_OK)));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()))
+      .WillOnce(Return(mod_spdy::SpdySessionIO::READ_CONNECTION_CLOSED));
+  ExpectSendGoAway(stream_id, net::GOAWAY_OK);
 
   session_.Run();
   EXPECT_TRUE(executor_.stopped());
 }
 
-// Only run server push tests for SPDY v3.
+// Only run server push tests for SPDY v3 and up.
 INSTANTIATE_TEST_CASE_P(Spdy3, SpdySessionServerPushTest, testing::Values(
     mod_spdy::spdy::SPDY_VERSION_3, mod_spdy::spdy::SPDY_VERSION_3_1));
 

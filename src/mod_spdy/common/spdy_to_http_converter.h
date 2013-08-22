@@ -17,7 +17,6 @@
 
 #include "base/basictypes.h"
 #include "mod_spdy/common/protocol_util.h"
-#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
@@ -49,9 +48,9 @@ class SpdyToHttpConverter {
   // Convert the SPDY frame to HTTP and make appropriate calls to the visitor.
   // In some cases data may be buffered, but everything will get flushed out to
   // the visitor by the time the final frame (with FLAG_FIN set) is done.
-  Status ConvertSynStreamFrame(const net::SpdySynStreamControlFrame& frame);
-  Status ConvertHeadersFrame(const net::SpdyHeadersControlFrame& frame);
-  Status ConvertDataFrame(const net::SpdyDataFrame& frame);
+  Status ConvertSynStreamFrame(const net::SpdySynStreamIR& frame);
+  Status ConvertHeadersFrame(const net::SpdyHeadersIR& frame);
+  Status ConvertDataFrame(const net::SpdyDataIR& frame);
 
 private:
   // Called to generate leading headers from a SYN_STREAM or HEADERS frame.
@@ -73,7 +72,6 @@ private:
 
   const spdy::SpdyVersion spdy_version_;
   HttpRequestVisitorInterface* const visitor_;
-  net::SpdyFramer framer_;
   net::SpdyHeaderBlock trailing_headers_;
   State state_;
   bool use_chunking_;

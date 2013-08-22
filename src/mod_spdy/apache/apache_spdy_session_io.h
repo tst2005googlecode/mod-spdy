@@ -36,7 +36,7 @@ class ApacheSpdySessionIO : public SpdySessionIO {
   virtual bool IsConnectionAborted();
   virtual ReadStatus ProcessAvailableInput(bool block,
                                            net::BufferedSpdyFramer* framer);
-  virtual WriteStatus SendFrameRaw(const net::SpdyFrame& frame);
+  virtual WriteStatus SendFrameRaw(const net::SpdySerializedFrame& frame);
 
  private:
   conn_rec* const connection_;

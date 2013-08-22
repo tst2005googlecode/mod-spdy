@@ -17,8 +17,8 @@
 #include <string>
 
 #include "base/logging.h"
-#include "base/string_number_conversions.h"  // for StringToUint
-#include "base/string_piece.h"
+#include "base/strings/string_number_conversions.h"  // for StringToUint
+#include "base/strings/string_piece.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"

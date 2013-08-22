@@ -16,9 +16,9 @@
 #define MOD_SPDY_COMMON_SPDY_SESSION_IO_H_
 
 #include "base/basictypes.h"
+#include "net/spdy/spdy_protocol.h"
 
 namespace net {
-class SpdyFrame;
 class BufferedSpdyFramer;
 }  // namespace net
 
@@ -71,7 +71,7 @@ class SpdySessionIO {
   //   wire, but we probably don't need/want to flush every single frame
   //   individually in places where we send multiple frames at once.  We'll
   //   probably want to adjust this API a bit.
-  virtual WriteStatus SendFrameRaw(const net::SpdyFrame& frame) = 0;
+  virtual WriteStatus SendFrameRaw(const net::SpdySerializedFrame& frame) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SpdySessionIO);

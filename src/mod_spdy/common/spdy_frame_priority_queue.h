@@ -24,7 +24,7 @@
 
 namespace base { class TimeDelta; }
 
-namespace net { class SpdyFrame; }
+namespace net { class SpdyFrameIR; }
 
 namespace mod_spdy {
 
@@ -52,7 +52,7 @@ class SpdyFramePriorityQueue {
   // ownership of the frame, and will delete it if the queue is deleted before
   // the frame is removed from the queue by the Pop method.  Note that smaller
   // numbers indicate higher priorities.
-  void Insert(int priority, net::SpdyFrame* frame);
+  void Insert(int priority, net::SpdyFrameIR* frame);
 
   // Remove and provide a frame from the queue and return true, or return false
   // if the queue is empty.  The caller gains ownership of the provided frame
@@ -62,15 +62,15 @@ class SpdyFramePriorityQueue {
   // In particular, this means that a sequence of frames from the same SPDY
   // stream will stay in order (assuming they were all inserted with the same
   // priority -- that of the stream).
-  bool Pop(net::SpdyFrame** frame);
+  bool Pop(net::SpdyFrameIR** frame);
 
   // Like Pop(), but if the queue is empty this method will block for up to
   // max_time before returning false.
-  bool BlockingPop(const base::TimeDelta& max_time, net::SpdyFrame** frame);
+  bool BlockingPop(const base::TimeDelta& max_time, net::SpdyFrameIR** frame);
 
  private:
   // Same as Pop(), but requires lock_ to be held.
-  bool InternalPop(net::SpdyFrame** frame);
+  bool InternalPop(net::SpdyFrameIR** frame);
 
   mutable base::Lock lock_;
   base::ConditionVariable condvar_;
@@ -83,7 +83,7 @@ class SpdyFramePriorityQueue {
   // Each list stores frames of a particular priority.  Invariant: the lists in
   // the QueueMap are never empty; if one of the lists becomes empty, that
   // key/value pair is immediately removed from the map.
-  typedef std::list<net::SpdyFrame*> FrameList;
+  typedef std::list<net::SpdyFrameIR*> FrameList;
   typedef std::map<int, FrameList*> QueueMap;
   QueueMap queue_map_;
 

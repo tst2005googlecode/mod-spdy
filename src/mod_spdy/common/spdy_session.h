@@ -58,35 +58,31 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
 
   // BufferedSpdyFramerVisitorInterface methods:
   virtual void OnError(net::SpdyFramer::SpdyError error_code);
-  virtual void OnStreamError(net::SpdyStreamId stream_id,
-                             const std::string& description);
-  virtual void OnSynStream(net::SpdyStreamId stream_id,
-                           net::SpdyStreamId associated_stream_id,
-                           net::SpdyPriority priority,
-                           uint8 credential_slot,
-                           bool fin,
-                           bool unidirectional,
-                           const net::SpdyHeaderBlock& headers);
-  virtual void OnSynReply(net::SpdyStreamId stream_id,
-                          bool fin,
-                          const net::SpdyHeaderBlock& headers);
-  virtual void OnHeaders(net::SpdyStreamId stream_id,
-                         bool fin,
-                         const net::SpdyHeaderBlock& headers);
-  virtual void OnStreamFrameData(net::SpdyStreamId stream_id,
-                                 const char* data, size_t length,
-                                 net::SpdyDataFlags flags);
+  virtual void OnStreamError(
+      net::SpdyStreamId stream_id, const std::string& description);
+  virtual void OnSynStream(
+      net::SpdyStreamId stream_id, net::SpdyStreamId associated_stream_id,
+      net::SpdyPriority priority, uint8 credential_slot, bool fin,
+      bool unidirectional, const net::SpdyHeaderBlock& headers);
+  virtual void OnSynReply(
+      net::SpdyStreamId stream_id, bool fin,
+      const net::SpdyHeaderBlock& headers);
+  virtual void OnHeaders(
+      net::SpdyStreamId stream_id, bool fin,
+      const net::SpdyHeaderBlock& headers);
+  virtual void OnStreamFrameData(
+      net::SpdyStreamId stream_id, const char* data, size_t length, bool fin);
+  virtual void OnSettings(bool clear_persisted);
   virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value);
   virtual void OnPing(uint32 unique_id);
-  virtual void OnRstStream(net::SpdyStreamId stream_id,
-                           net::SpdyStatusCodes status);
-  virtual void OnGoAway(net::SpdyStreamId last_accepted_stream_id,
-                        net::SpdyGoAwayStatus status);
-  virtual void OnWindowUpdate(net::SpdyStreamId stream_id,
-                              int delta_window_size);
-  virtual void OnControlFrameCompressed(
-      const net::SpdyControlFrame& uncompressed_frame,
-      const net::SpdyControlFrame& compressed_frame);
+  virtual void OnRstStream(
+      net::SpdyStreamId stream_id, net::SpdyRstStreamStatus status);
+  virtual void OnGoAway(
+      net::SpdyStreamId last_accepted_stream_id, net::SpdyGoAwayStatus status);
+  virtual void OnWindowUpdate(
+      net::SpdyStreamId stream_id, uint32 delta_window_size);
+  virtual void OnSynStreamCompressed(
+      size_t uncompressed_size, size_t compressed_size);
 
   // SpdyServerPushInterface methods:
   // Initiate a SPDY server push, roughly by pretending that the client sent a
@@ -179,10 +175,10 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // Send a single SPDY frame to the client, compressing it first if necessary.
   // Stop the session if the connection turns out to be closed.  This method
   // takes ownership of the passed frame and will delete it.
-  void SendFrame(const net::SpdyFrame* frame);
+  void SendFrame(const net::SpdyFrameIR* frame);
   // Send the frame as-is (without taking ownership).  Stop the session if the
   // connection turns out to be closed.
-  void SendFrameRaw(const net::SpdyFrame& frame);
+  void SendFrameRaw(const net::SpdySerializedFrame& frame);
 
   // Immediately send a GOAWAY frame to the client with the given status,
   // unless we've already sent one.  This also prevents us from creating any
@@ -193,7 +189,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // Enqueue a RST_STREAM frame for the given stream ID.  Note that this does
   // not abort the stream if it exists; for that, use AbortStream().
   void SendRstStreamFrame(net::SpdyStreamId stream_id,
-                          net::SpdyStatusCodes status);
+                          net::SpdyRstStreamStatus status);
   // Immediately send our SETTINGS frame, with values based on our
   // SpdyServerConfig object.  This should be done exactly once, at session
   // start.
@@ -205,7 +201,8 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // Abort the stream without sending anything to the client.
   void AbortStreamSilently(net::SpdyStreamId stream_id);
   // Send a RST_STREAM frame and then abort the stream.
-  void AbortStream(net::SpdyStreamId stream_id, net::SpdyStatusCodes status);
+  void AbortStream(net::SpdyStreamId stream_id,
+                   net::SpdyRstStreamStatus status);
 
   // Remove the given StreamTaskWrapper object from the stream map.  This is
   // the only other method of this class, aside from StartServerPush, that

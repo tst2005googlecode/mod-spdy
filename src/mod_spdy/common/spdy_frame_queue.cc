@@ -44,7 +44,7 @@ void SpdyFrameQueue::Abort() {
   condvar_.Broadcast();
 }
 
-void SpdyFrameQueue::Insert(net::SpdyFrame* frame) {
+void SpdyFrameQueue::Insert(net::SpdyFrameIR* frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 
@@ -59,7 +59,7 @@ void SpdyFrameQueue::Insert(net::SpdyFrame* frame) {
   }
 }
 
-bool SpdyFrameQueue::Pop(bool block, net::SpdyFrame** frame) {
+bool SpdyFrameQueue::Pop(bool block, net::SpdyFrameIR** frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 

@@ -10,7 +10,7 @@
 
 namespace base {
 
-StatsTable* StatsTable::global_table_ = NULL;
+StatsTable* StatsTable::current() { return NULL; }
 
 int StatsTable::RegisterThread(const std::string& name) {
   return 0;

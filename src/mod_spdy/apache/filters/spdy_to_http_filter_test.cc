@@ -21,20 +21,16 @@
 #include "apr_tables.h"
 #include "util_filter.h"
 
-#include "base/string_piece.h"
+#include "base/memory/scoped_ptr.h"
+#include "base/strings/string_piece.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/testing/spdy_frame_matchers.h"
-#include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-using mod_spdy::testing::IsRstStream;
-using mod_spdy::testing::StreamIdIs;
-using testing::AllOf;
 
 namespace {
 
@@ -45,7 +41,7 @@ class MockSpdyServerPushInterface : public mod_spdy::SpdyServerPushInterface {
                      net::SpdyStreamId associated_stream_id,
                      int32 server_push_depth,
                      net::SpdyPriority priority,
-                     const net::SpdyHeaderBlock& request_headers));
+                     const net::SpdyNameValueBlock& request_headers));
 };
 
 class SpdyToHttpFilterTest :
@@ -53,12 +49,10 @@ class SpdyToHttpFilterTest :
  public:
   SpdyToHttpFilterTest()
       : spdy_version_(GetParam()),
-        framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
         stream_id_(1),
-        priority_(framer_.GetHighestPriority()),
+        priority_(0u),
         stream_(spdy_version_, stream_id_, 0, 0, priority_,
-                net::kSpdyStreamInitialWindowSize, &output_queue_, &framer_,
-                &pusher_),
+                net::kSpdyStreamInitialWindowSize, &output_queue_, &pusher_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
     connection_ = static_cast<conn_rec*>(
@@ -72,31 +66,27 @@ class SpdyToHttpFilterTest :
   }
 
  protected:
-  void PostSynStreamFrame(net::SpdyControlFlags flags,
-                          net::SpdyHeaderBlock* headers) {
-    stream_.PostInputFrame(framer_.CreateSynStream(
-        stream_id_,
-        0,  // associated_stream_id
-        priority_,
-        0,  // credential slot
-        flags,
-        false, // compressed
-        headers));
+  void PostSynStreamFrame(bool fin, const net::SpdyNameValueBlock& headers) {
+    scoped_ptr<net::SpdySynStreamIR> frame(
+        new net::SpdySynStreamIR(stream_id_));
+    frame->set_priority(priority_);
+    frame->set_fin(fin);
+    frame->GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+    stream_.PostInputFrame(frame.release());
   }
 
-  void PostHeadersFrame(net::SpdyControlFlags flags,
-                        net::SpdyHeaderBlock* headers) {
-    stream_.PostInputFrame(framer_.CreateHeaders(
-        stream_id_,
-        flags,
-        false, // compressed
-        headers));
+  void PostHeadersFrame(bool fin, const net::SpdyNameValueBlock& headers) {
+    scoped_ptr<net::SpdyHeadersIR> frame(new net::SpdyHeadersIR(stream_id_));
+    frame->set_fin(fin);
+    frame->GetMutableNameValueBlock()->insert(headers.begin(), headers.end());
+    stream_.PostInputFrame(frame.release());
   }
 
-  void PostDataFrame(net::SpdyDataFlags flags,
-                     const base::StringPiece& payload) {
-    stream_.PostInputFrame(framer_.CreateDataFrame(
-        stream_id_, payload.data(), payload.size(), flags));
+  void PostDataFrame(bool fin, const base::StringPiece& payload) {
+    scoped_ptr<net::SpdyDataIR> frame(
+        new net::SpdyDataIR(stream_id_, payload));
+    frame->set_fin(fin);
+    stream_.PostInputFrame(frame.release());
   }
 
   apr_status_t Read(ap_input_mode_t mode, apr_read_type_e block,
@@ -137,12 +127,12 @@ class SpdyToHttpFilterTest :
     ASSERT_EQ(APR_SUCCESS, apr_brigade_cleanup(brigade_));
   }
 
-  void ExpectRstStream(net::SpdyStatusCodes status) {
-    net::SpdyFrame* raw_frame;
+  void ExpectRstStream(net::SpdyRstStreamStatus status) {
+    net::SpdyFrameIR* raw_frame;
     ASSERT_TRUE(output_queue_.Pop(&raw_frame))
         << "Expected RST_STREAM frame, but output queue is empty.";
-    scoped_ptr<net::SpdyFrame> frame(raw_frame);
-    EXPECT_THAT(*frame, AllOf(IsRstStream(status), StreamIdIs(stream_id_)));
+    scoped_ptr<net::SpdyFrameIR> frame(raw_frame);
+    EXPECT_THAT(*frame, mod_spdy::testing::IsRstStream(stream_id_, status));
   }
 
   void ExpectNoMoreOutputFrames() {
@@ -172,7 +162,6 @@ class SpdyToHttpFilterTest :
   }
 
   const mod_spdy::spdy::SpdyVersion spdy_version_;
-  net::BufferedSpdyFramer framer_;
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
@@ -199,7 +188,7 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
   ExpectEndOfBrigade();
 
   // Send a SYN_STREAM frame from the client, with FLAG_FIN set.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.com";
   headers[method_header_name()] = "GET";
   headers["referer"] = "https://www.example.com/index.html";
@@ -208,7 +197,7 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
   headers[version_header_name()] = "HTTP/1.1";
   headers["x-do-not-track"] = "1";
-  PostSynStreamFrame(net::CONTROL_FLAG_FIN, &headers);
+  PostSynStreamFrame(true, headers);
 
   // Invoke the filter in blocking GETLINE mode.  We should get back just the
   // HTTP request line.
@@ -256,7 +245,7 @@ TEST_P(SpdyToHttpFilterTest, SimpleGetRequest) {
 
 TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   // Send a SYN_STREAM frame from the client.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.com";
   headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.com/index.html";
@@ -264,7 +253,7 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   headers[path_header_name()] = "/erase/the/whole/database.cgi";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Do a nonblocking READBYTES read.  We ask for lots of bytes, but since it's
   // nonblocking we should immediately get back what's available so far.
@@ -282,9 +271,9 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
   ExpectNoMoreOutputFrames();
 
   // Send some DATA frames.
-  PostDataFrame(net::DATA_FLAG_NONE, "Hello, world!\nPlease erase ");
-  PostDataFrame(net::DATA_FLAG_NONE, "the whole database ");
-  PostDataFrame(net::DATA_FLAG_FIN, "immediately.\nThanks!\n");
+  PostDataFrame(false, "Hello, world!\nPlease erase ");
+  PostDataFrame(false, "the whole database ");
+  PostDataFrame(true, "immediately.\nThanks!\n");
 
   // Now read in the data a bit at a time.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_GETLINE, APR_NONBLOCK_READ, 0));
@@ -329,7 +318,7 @@ TEST_P(SpdyToHttpFilterTest, SimplePostRequest) {
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
   // Send a SYN_STREAM frame from the client.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.net";
   headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.net/index.html";
@@ -337,19 +326,19 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
   headers[path_header_name()] = "/erase/the/whole/database.cgi";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Send some DATA and HEADERS frames.  The HEADERS frames should get buffered
   // and placed at the end of the HTTP request body as trailing headers.
-  PostDataFrame(net::DATA_FLAG_NONE, "Please erase ");
-  net::SpdyHeaderBlock headers2;
+  PostDataFrame(false, "Please erase ");
+  net::SpdyNameValueBlock headers2;
   headers2["x-super-cool"] = "foo";
-  PostHeadersFrame(net::CONTROL_FLAG_NONE, &headers2);
-  PostDataFrame(net::DATA_FLAG_NONE, "everything ");
-  net::SpdyHeaderBlock headers3;
+  PostHeadersFrame(false, headers2);
+  PostDataFrame(false, "everything ");
+  net::SpdyNameValueBlock headers3;
   headers3["x-awesome"] = "quux";
-  PostHeadersFrame(net::CONTROL_FLAG_NONE, &headers3);
-  PostDataFrame(net::DATA_FLAG_FIN, "immediately!!\n");
+  PostHeadersFrame(false, headers3);
+  PostDataFrame(true, "immediately!!\n");
 
   // Read in all the data.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
@@ -377,14 +366,14 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersFrames) {
 
 TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
   // Send a SYN_STREAM frame with some of the headers.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.org";
   headers[method_header_name()] = "GET";
   headers["referer"] = "https://www.example.org/foo/bar.html";
   headers[scheme_header_name()] = "https";
   headers[path_header_name()] = "/index.html";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Read in everything that's available so far.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
@@ -394,10 +383,10 @@ TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
   ExpectEndOfBrigade();
 
   // Send a HEADERS frame with the rest of the headers.
-  net::SpdyHeaderBlock headers2;
+  net::SpdyNameValueBlock headers2;
   headers2["accept-encoding"] = "deflate, gzip";
   headers2["user-agent"] = "ModSpdyUnitTest/1.0";
-  PostHeadersFrame(net::CONTROL_FLAG_FIN, &headers2);
+  PostHeadersFrame(true, headers2);
 
   // Read in the rest of the request.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
@@ -411,7 +400,7 @@ TEST_P(SpdyToHttpFilterTest, GetRequestWithHeadersRightAfterSynStream) {
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
   // Send a SYN_STREAM frame from the client.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.org";
   headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
@@ -419,19 +408,19 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
   headers[path_header_name()] = "/delete/everything.py";
   headers[version_header_name()] = "HTTP/1.1";
   headers["x-zzzz"] = "4Z";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Send a HEADERS frame before sending any data frames.
-  net::SpdyHeaderBlock headers2;
+  net::SpdyNameValueBlock headers2;
   headers2["user-agent"] = "ModSpdyUnitTest/1.0";
-  PostHeadersFrame(net::CONTROL_FLAG_NONE, &headers2);
+  PostHeadersFrame(false, headers2);
 
   // Now send a couple DATA frames and a final HEADERS frame.
-  PostDataFrame(net::DATA_FLAG_NONE, "Please erase everything immediately");
-  PostDataFrame(net::DATA_FLAG_NONE, ", thanks!\n");
-  net::SpdyHeaderBlock headers3;
+  PostDataFrame(false, "Please erase everything immediately");
+  PostDataFrame(false, ", thanks!\n");
+  net::SpdyNameValueBlock headers3;
   headers3["x-qqq"] = "3Q";
-  PostHeadersFrame(net::CONTROL_FLAG_FIN, &headers3);
+  PostHeadersFrame(true, headers3);
 
   // Read in all the data.  The first HEADERS frame should get put in before
   // the data, and the last HEADERS frame should get put in after the data.
@@ -458,20 +447,20 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithHeadersRightAfterSynStream) {
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
   // Send a SYN_STREAM frame from the client.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.org";
   headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
   headers[scheme_header_name()] = "https";
   headers[path_header_name()] = "/do/some/stuff.py";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Now send a few DATA frames, with a zero-length data frame in the middle.
-  PostDataFrame(net::DATA_FLAG_NONE, "Please do");
-  PostDataFrame(net::DATA_FLAG_NONE, " some ");
-  PostDataFrame(net::DATA_FLAG_NONE, "");
-  PostDataFrame(net::DATA_FLAG_FIN, "stuff.\n");
+  PostDataFrame(false, "Please do");
+  PostDataFrame(false, " some ");
+  PostDataFrame(false, "");
+  PostDataFrame(true, "stuff.\n");
 
   // Read in all the data.  The empty data frame should be ignored.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
@@ -496,20 +485,20 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameInMiddle) {
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
   // Send a SYN_STREAM frame from the client.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.org";
   headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
   headers[scheme_header_name()] = "https";
   headers[path_header_name()] = "/do/some/stuff.py";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Now send a few DATA frames, with a zero-length data frame at the end.
-  PostDataFrame(net::DATA_FLAG_NONE, "Please do");
-  PostDataFrame(net::DATA_FLAG_NONE, " some ");
-  PostDataFrame(net::DATA_FLAG_NONE, "stuff.\n");
-  PostDataFrame(net::DATA_FLAG_FIN, "");
+  PostDataFrame(false, "Please do");
+  PostDataFrame(false, " some ");
+  PostDataFrame(false, "stuff.\n");
+  PostDataFrame(true, "");
 
   // Read in all the data.  The empty data frame should be ignored (except for
   // its FLAG_FIN).
@@ -535,25 +524,25 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithEmptyDataFrameAtEnd) {
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLength) {
   // Send a SYN_STREAM frame from the client.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.org";
   headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.org/index.html";
   headers[scheme_header_name()] = "https";
   headers[path_header_name()] = "/do/some/stuff.py";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Send a few more headers before sending data, including a content-length.
-  net::SpdyHeaderBlock headers2;
+  net::SpdyNameValueBlock headers2;
   headers2["content-length"] = "22";
   headers2["user-agent"] = "ModSpdyUnitTest/1.0";
-  PostHeadersFrame(net::CONTROL_FLAG_NONE, &headers2);
+  PostHeadersFrame(false, headers2);
 
   // Now send a few DATA frames.
-  PostDataFrame(net::DATA_FLAG_NONE, "Please do");
-  PostDataFrame(net::DATA_FLAG_NONE, " some ");
-  PostDataFrame(net::DATA_FLAG_FIN, "stuff.\n");
+  PostDataFrame(false, "Please do");
+  PostDataFrame(false, " some ");
+  PostDataFrame(true, "stuff.\n");
 
   // Read in all the data.  Because we supplied a content-length, chunked
   // encoding should not be used (to support modules that don't work with
@@ -574,7 +563,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLength) {
 
 TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
   // Send a SYN_STREAM frame from the client, including a content-length.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers["content-length"] = "22";
   headers[host_header_name()] = "www.example.org";
   headers[method_header_name()] = "POST";
@@ -582,18 +571,18 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
   headers[scheme_header_name()] = "https";
   headers[path_header_name()] = "/do/some/stuff.py";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Now send a few DATA frames.
-  PostDataFrame(net::DATA_FLAG_NONE, "Please do");
-  PostDataFrame(net::DATA_FLAG_NONE, " some ");
-  PostDataFrame(net::DATA_FLAG_NONE, "stuff.\n");
+  PostDataFrame(false, "Please do");
+  PostDataFrame(false, " some ");
+  PostDataFrame(false, "stuff.\n");
 
   // Finish with a HEADERS frame.
-  net::SpdyHeaderBlock headers2;
+  net::SpdyNameValueBlock headers2;
   headers2["x-metadata"] = "foobar";
   headers2["x-whatever"] = "quux";
-  PostHeadersFrame(net::CONTROL_FLAG_FIN, &headers2);
+  PostHeadersFrame(true, headers2);
 
   // Read in all the data.  Because we supplied a content-length, chunked
   // encoding should not be used, and as an unfortunate consequence, we must
@@ -629,7 +618,7 @@ TEST_P(SpdyToHttpFilterTest, PostRequestWithContentLengthAndTrailingHeaders) {
 
 TEST_P(SpdyToHttpFilterTest, ExtraSynStream) {
   // Send a SYN_STREAM frame from the client.
-  net::SpdyHeaderBlock headers;
+  net::SpdyNameValueBlock headers;
   headers[host_header_name()] = "www.example.com";
   headers[method_header_name()] = "POST";
   headers["referer"] = "https://www.example.com/index.html";
@@ -637,7 +626,7 @@ TEST_P(SpdyToHttpFilterTest, ExtraSynStream) {
   headers[path_header_name()] = "/erase/the/whole/database.cgi";
   headers["user-agent"] = "ModSpdyUnitTest/1.0";
   headers[version_header_name()] = "HTTP/1.1";
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
 
   // Read in all available data.
   ASSERT_EQ(APR_SUCCESS, Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0));
@@ -648,14 +637,14 @@ TEST_P(SpdyToHttpFilterTest, ExtraSynStream) {
   ExpectEndOfBrigade();
 
   // Now send another SYN_STREAM for the same stream_id, which is illegal.
-  PostSynStreamFrame(net::CONTROL_FLAG_NONE, &headers);
+  PostSynStreamFrame(false, headers);
   // If we try to read more data, we'll get nothing.
   ASSERT_TRUE(APR_STATUS_IS_ECONNABORTED(
       Read(AP_MODE_EXHAUSTIVE, APR_NONBLOCK_READ, 0)));
   ExpectEosBucket();
   ExpectEndOfBrigade();
   // The stream should have been aborted.
-  ExpectRstStream(net::PROTOCOL_ERROR);
+  ExpectRstStream(net::RST_STREAM_PROTOCOL_ERROR);
   ExpectNoMoreOutputFrames();
   EXPECT_TRUE(stream_.is_aborted());
 }

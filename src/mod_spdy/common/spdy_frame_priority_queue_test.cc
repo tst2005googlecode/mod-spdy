@@ -15,57 +15,50 @@
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 
 #include "base/time.h"
+#include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-net::SpdyStreamId GetPingId(net::SpdyFrame* frame) {
-  if (!frame->is_control_frame() ||
-      static_cast<net::SpdyControlFrame*>(frame)->type() != net::PING) {
-    ADD_FAILURE() << "Frame is not a PING frame.";
-    return 0;
-  }
-  return static_cast<net::SpdyPingControlFrame*>(frame)->unique_id();
-}
-
-void ExpectPop(net::SpdyStreamId expected,
+void ExpectPop(net::SpdyPingId expected,
                mod_spdy::SpdyFramePriorityQueue* queue) {
   EXPECT_FALSE(queue->IsEmpty());
-  net::SpdyFrame* raw_frame = NULL;
+  net::SpdyFrameIR* raw_frame = NULL;
   const bool success = queue->Pop(&raw_frame);
-  scoped_ptr<net::SpdyFrame> scoped_frame(raw_frame);
+  scoped_ptr<net::SpdyFrameIR> scoped_frame(raw_frame);
   EXPECT_TRUE(success);
   ASSERT_TRUE(scoped_frame != NULL);
-  ASSERT_EQ(expected, GetPingId(scoped_frame.get()));
+  EXPECT_THAT(*scoped_frame, mod_spdy::testing::IsPing(expected));
 }
 
 void ExpectEmpty(mod_spdy::SpdyFramePriorityQueue* queue) {
   EXPECT_TRUE(queue->IsEmpty());
-  net::SpdyFrame* frame = NULL;
+  net::SpdyFrameIR* frame = NULL;
   EXPECT_FALSE(queue->Pop(&frame));
   EXPECT_TRUE(frame == NULL);
 }
 
 TEST(SpdyFramePriorityQueueTest, InsertSpdy2) {
-  net::SpdyFramer framer(2);
+  net::SpdyFramer framer(net::SPDY2);
   mod_spdy::SpdyFramePriorityQueue queue;
   ExpectEmpty(&queue);
 
   EXPECT_EQ(3u, framer.GetLowestPriority());
   EXPECT_EQ(0u, framer.GetHighestPriority());
 
-  queue.Insert(3, framer.CreatePingFrame(4));
-  queue.Insert(0, framer.CreatePingFrame(1));
-  queue.Insert(3, framer.CreatePingFrame(3));
+  queue.Insert(3, new net::SpdyPingIR(4));
+  queue.Insert(0, new net::SpdyPingIR(1));
+  queue.Insert(3, new net::SpdyPingIR(3));
 
   ExpectPop(1, &queue);
   ExpectPop(4, &queue);
 
-  queue.Insert(2, framer.CreatePingFrame(2));
-  queue.Insert(1, framer.CreatePingFrame(6));
-  queue.Insert(1, framer.CreatePingFrame(5));
+  queue.Insert(2, new net::SpdyPingIR(2));
+  queue.Insert(1, new net::SpdyPingIR(6));
+  queue.Insert(1, new net::SpdyPingIR(5));
 
   ExpectPop(6, &queue);
   ExpectPop(5, &queue);
@@ -75,23 +68,23 @@ TEST(SpdyFramePriorityQueueTest, InsertSpdy2) {
 }
 
 TEST(SpdyFramePriorityQueueTest, InsertSpdy3) {
-  net::SpdyFramer framer(3);
+  net::SpdyFramer framer(net::SPDY3);
   mod_spdy::SpdyFramePriorityQueue queue;
   ExpectEmpty(&queue);
 
   EXPECT_EQ(7u, framer.GetLowestPriority());
   EXPECT_EQ(0u, framer.GetHighestPriority());
 
-  queue.Insert(7, framer.CreatePingFrame(4));
-  queue.Insert(0, framer.CreatePingFrame(1));
-  queue.Insert(7, framer.CreatePingFrame(3));
+  queue.Insert(7, new net::SpdyPingIR(4));
+  queue.Insert(0, new net::SpdyPingIR(1));
+  queue.Insert(7, new net::SpdyPingIR(3));
 
   ExpectPop(1, &queue);
   ExpectPop(4, &queue);
 
-  queue.Insert(6, framer.CreatePingFrame(2));
-  queue.Insert(1, framer.CreatePingFrame(6));
-  queue.Insert(5, framer.CreatePingFrame(5));
+  queue.Insert(6, new net::SpdyPingIR(2));
+  queue.Insert(1, new net::SpdyPingIR(6));
+  queue.Insert(5, new net::SpdyPingIR(5));
 
   ExpectPop(6, &queue);
   ExpectPop(5, &queue);
@@ -101,17 +94,16 @@ TEST(SpdyFramePriorityQueueTest, InsertSpdy3) {
 }
 
 TEST(SpdyFramePriorityQueueTest, InsertTopPriority) {
-  net::SpdyFramer framer(2);
   mod_spdy::SpdyFramePriorityQueue queue;
   ExpectEmpty(&queue);
 
-  queue.Insert(3, framer.CreatePingFrame(4));
+  queue.Insert(3, new net::SpdyPingIR(4));
   queue.Insert(mod_spdy::SpdyFramePriorityQueue::kTopPriority,
-               framer.CreatePingFrame(2));
+               new net::SpdyPingIR(2));
   queue.Insert(mod_spdy::SpdyFramePriorityQueue::kTopPriority,
-               framer.CreatePingFrame(6));
-  queue.Insert(0, framer.CreatePingFrame(1));
-  queue.Insert(3, framer.CreatePingFrame(3));
+               new net::SpdyPingIR(6));
+  queue.Insert(0, new net::SpdyPingIR(1));
+  queue.Insert(3, new net::SpdyPingIR(3));
 
   ExpectPop(2, &queue);
   ExpectPop(6, &queue);
@@ -119,7 +111,7 @@ TEST(SpdyFramePriorityQueueTest, InsertTopPriority) {
   ExpectPop(4, &queue);
 
   queue.Insert(mod_spdy::SpdyFramePriorityQueue::kTopPriority,
-               framer.CreatePingFrame(5));
+               new net::SpdyPingIR(5));
 
   ExpectPop(5, &queue);
   ExpectPop(3, &queue);
@@ -128,7 +120,7 @@ TEST(SpdyFramePriorityQueueTest, InsertTopPriority) {
 
 TEST(SpdyFramePriorityQueueTest, BlockingPop) {
   mod_spdy::SpdyFramePriorityQueue queue;
-  net::SpdyFrame* frame;
+  net::SpdyFrameIR* frame;
   ASSERT_FALSE(queue.Pop(&frame));
 
   const base::TimeDelta time_to_wait = base::TimeDelta::FromMilliseconds(50);
