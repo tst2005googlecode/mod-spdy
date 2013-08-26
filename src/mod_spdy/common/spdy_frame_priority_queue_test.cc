@@ -14,7 +14,7 @@
 
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 
-#include "base/time.h"
+#include "base/time/time.h"
 #include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"

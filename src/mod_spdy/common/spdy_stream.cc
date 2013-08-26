@@ -49,6 +49,7 @@ class DataLengthVisitor : public net::SpdyFrameVisitor {
   virtual void VisitWindowUpdate(const net::SpdyWindowUpdateIR& frame) {}
   virtual void VisitCredential(const net::SpdyCredentialIR& frame) {}
   virtual void VisitBlocked(const net::SpdyBlockedIR& frame) {}
+  virtual void VisitPushPromise(const net::SpdyPushPromiseIR& frame) {}
   virtual void VisitData(const net::SpdyDataIR& frame) {
     length_ = frame.data().size();
   }

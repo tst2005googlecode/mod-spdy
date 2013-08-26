@@ -21,7 +21,7 @@
 #include "base/stl_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "base/time.h"
+#include "base/time/time.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {

@@ -20,7 +20,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
-#include "base/time.h"
+#include "base/time/time.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session_io.h"
@@ -596,10 +596,11 @@ void SpdySession::OnHeaders(net::SpdyStreamId stream_id,
   SendRstStreamFrame(stream_id, net::RST_STREAM_INVALID_STREAM);
 }
 
-void SpdySession::OnSynStreamCompressed(
-    size_t uncompressed_size, size_t compressed_size) {
-  // This method exists in case we want to collect compression statistics, but
-  // we're not interested in that right now, so just ignore it.
+void SpdySession::OnPushPromise(net::SpdyStreamId stream_id,
+                                net::SpdyStreamId promised_stream_id) {
+  LOG(ERROR) << "Got a PUSH_PROMISE(" << stream_id << ", "
+             << promised_stream_id << ") frame from the client.";
+  SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
 }
 
 void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,

@@ -262,7 +262,9 @@ class ClientVisitor : public net::BufferedSpdyFramerVisitorInterface {
   virtual void OnWindowUpdate(net::SpdyStreamId id, uint32 delta) {
     last_frame_.reset(new net::SpdyWindowUpdateIR(id, delta));
   }
-  virtual void OnSynStreamCompressed(size_t compr, size_t uncompr) {}
+  virtual void OnPushPromise(net::SpdyStreamId id, net::SpdyStreamId promise) {
+    last_frame_.reset(new net::SpdyPushPromiseIR(id, promise));
+  }
 
   net::SpdyFrameIR* ReleaseLastFrame() {
     return last_frame_.release();

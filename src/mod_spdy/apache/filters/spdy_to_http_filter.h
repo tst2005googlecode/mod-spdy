@@ -63,7 +63,8 @@ class SpdyToHttpFilter {
     virtual void VisitHeaders(const net::SpdyHeadersIR& frame);
     virtual void VisitWindowUpdate(const net::SpdyWindowUpdateIR& frame);
     virtual void VisitCredential(const net::SpdyCredentialIR& frame);
-    virtual void VisitBlocked(const net::SpdyBlockedIR& blocked);
+    virtual void VisitBlocked(const net::SpdyBlockedIR& frame);
+    virtual void VisitPushPromise(const net::SpdyPushPromiseIR& frame);
     virtual void VisitData(const net::SpdyDataIR& frame);
 
    private:

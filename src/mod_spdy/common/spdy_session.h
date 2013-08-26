@@ -81,8 +81,8 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
       net::SpdyStreamId last_accepted_stream_id, net::SpdyGoAwayStatus status);
   virtual void OnWindowUpdate(
       net::SpdyStreamId stream_id, uint32 delta_window_size);
-  virtual void OnSynStreamCompressed(
-      size_t uncompressed_size, size_t compressed_size);
+  virtual void OnPushPromise(
+      net::SpdyStreamId stream_id, net::SpdyStreamId promised_stream_id);
 
   // SpdyServerPushInterface methods:
   // Initiate a SPDY server push, roughly by pretending that the client sent a

@@ -237,6 +237,8 @@ void SpdyToHttpFilter::DecodeFrameVisitor::VisitCredential(
     const net::SpdyCredentialIR& frame) { BadFrameType("CREDENTIAL"); }
 void SpdyToHttpFilter::DecodeFrameVisitor::VisitBlocked(
     const net::SpdyBlockedIR& frame) { BadFrameType("BLOCKED"); }
+void SpdyToHttpFilter::DecodeFrameVisitor::VisitPushPromise(
+    const net::SpdyPushPromiseIR& frame) { BadFrameType("PUSH_PROMISE"); }
 void SpdyToHttpFilter::DecodeFrameVisitor::VisitData(
     const net::SpdyDataIR& frame) {
   success_ = filter_->DecodeDataFrame(frame);

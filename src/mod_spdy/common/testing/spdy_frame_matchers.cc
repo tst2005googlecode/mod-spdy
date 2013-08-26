@@ -124,6 +124,12 @@ class FrameToStringVisitor : public net::SpdyFrameVisitor {
     base::StringAppendF(
         out_, "BLOCKED(%u)", static_cast<unsigned>(blocked.stream_id()));
   }
+  virtual void VisitPushPromise(const net::SpdyPushPromiseIR& push_promise) {
+    base::StringAppendF(
+        out_, "PUSH_PROMISE(%u, %u)",
+        static_cast<unsigned>(push_promise.stream_id()),
+        static_cast<unsigned>(push_promise.promised_stream_id()));
+  }
   virtual void VisitData(const net::SpdyDataIR& data) {
     base::StringAppendF(
         out_, "DATA(%u%s \"", static_cast<unsigned>(data.stream_id()),
