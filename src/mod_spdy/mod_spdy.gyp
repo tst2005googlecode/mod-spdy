@@ -80,7 +80,7 @@
         'apache/filters/http_to_spdy_filter.cc',
         'apache/filters/server_push_filter.cc',
         'apache/filters/spdy_to_http_filter.cc',
-        'apache/id_pool.c',
+        'apache/id_pool.cc',
         'apache/log_message_handler.cc',
         'apache/master_connection_context.cc',
         'apache/pool_util.cc',
