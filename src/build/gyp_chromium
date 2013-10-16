@@ -17,8 +17,14 @@
 # This script is wrapper for the Chromium version of gyp_chromium.
 
 import os
+import sys
 
 script_dir = os.path.dirname(__file__)
 chrome_src = os.path.normpath(os.path.join(script_dir, os.pardir, 'third_party', 'chromium', 'src'))
+
+# The Chromium gyp_chromium defaults to ninja on linux.  We want to default to
+# make instead.
+if sys.platform.startswith('linux') and not os.environ.get('GYP_GENERATORS'):
+  os.environ['GYP_GENERATORS'] = 'make'
 
 execfile(os.path.join(chrome_src, 'build', 'gyp_chromium'))

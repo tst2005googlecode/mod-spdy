@@ -16,7 +16,6 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/testing/notification.h"
 #include "mod_spdy/common/thread_pool.h"
