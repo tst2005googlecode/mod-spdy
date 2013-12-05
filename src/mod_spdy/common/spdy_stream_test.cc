@@ -21,6 +21,7 @@
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/testing/async_task_runner.h"
 #include "mod_spdy/common/testing/notification.h"
@@ -83,6 +84,17 @@ void ExpectWindowUpdate(mod_spdy::SpdyFramePriorityQueue* output_queue,
   EXPECT_THAT(*frame, IsWindowUpdate(kStreamId, delta));
 }
 
+// Expect to get a frame from the queue (within 100 milliseconds) that is a
+// WINDOW_UPDATE frame, for stream zero, with the given delta.
+void ExpectSessionWindowUpdate(mod_spdy::SpdyFramePriorityQueue* output_queue,
+                               uint32 delta) {
+  net::SpdyFrameIR* raw_frame;
+  ASSERT_TRUE(output_queue->BlockingPop(
+      base::TimeDelta::FromMilliseconds(100), &raw_frame));
+  scoped_ptr<net::SpdyFrameIR> frame(raw_frame);
+  EXPECT_THAT(*frame, IsWindowUpdate(0, delta));
+}
+
 // When run, a SendDataTask sends the given data to the given stream.
 class SendDataTask : public mod_spdy::testing::AsyncTaskRunner::Task {
  public:
@@ -107,7 +119,7 @@ TEST(SpdyStreamTest, NoFlowControlInSpdy2) {
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_2, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, initial_window_size, &output_queue,
-      &pusher);
+      NULL, &pusher);
 
   // Send more data than can fit in the initial window size.
   const base::StringPiece data = "abcdefghijklmnopqrstuvwxyz";
@@ -119,15 +131,16 @@ TEST(SpdyStreamTest, NoFlowControlInSpdy2) {
   EXPECT_TRUE(output_queue.IsEmpty());
 }
 
-// Test that flow control works correctly for SPDY v3.
+// Test that flow control works correctly for SPDY/3.
 TEST(SpdyStreamTest, HasFlowControlInSpdy3) {
   mod_spdy::SpdyFramePriorityQueue output_queue;
+  mod_spdy::SharedFlowControlWindow shared_window(1000, 7);
   MockSpdyServerPushInterface pusher;
   const int32 initial_window_size = 10;
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_3, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, initial_window_size, &output_queue,
-      &pusher);
+      &shared_window, &pusher);
 
   // Send more data than can fit in the initial window size.
   const base::StringPiece data = "abcdefghijklmnopqrstuvwxyz";
@@ -158,6 +171,58 @@ TEST(SpdyStreamTest, HasFlowControlInSpdy3) {
   EXPECT_EQ(7, stream.current_output_window_size());
 }
 
+// Test that the session flow control window works correctly for SPDY/3.1.
+TEST(SpdyStreamTest, SessionWindowInSpdy31) {
+  mod_spdy::SpdyFramePriorityQueue output_queue;
+  mod_spdy::SharedFlowControlWindow shared_window(1000, 7);
+  MockSpdyServerPushInterface pusher;
+  const int32 initial_window_size = 10;
+  mod_spdy::SpdyStream stream(
+      mod_spdy::spdy::SPDY_VERSION_3_1, kStreamId, kAssocStreamId,
+      kInitServerPushDepth, kPriority, initial_window_size,
+      &output_queue, &shared_window, &pusher);
+
+  // Send more data than can fit in the initial window size.
+  const base::StringPiece data = "abcdefghijklmnopqrstuvwxyz";
+  mod_spdy::testing::AsyncTaskRunner runner(
+      new SendDataTask(&stream, data, true));
+  ASSERT_TRUE(runner.Start());
+
+  // The stream window size is 10, but the session window size is only 7.  So
+  // we should only get 7 bytes at first.
+  ExpectDataFrame(&output_queue, "abcdefg", false);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  runner.notification()->ExpectNotSet();
+  EXPECT_EQ(0, shared_window.current_output_window_size());
+
+  // Now we increase the shared window size to 8.  The stream window size is
+  // only 3, so we should get just 3 more bytes.
+  EXPECT_TRUE(shared_window.IncreaseOutputWindowSize(8));
+  ExpectDataFrame(&output_queue, "hij", false);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  runner.notification()->ExpectNotSet();
+  EXPECT_EQ(5, shared_window.current_output_window_size());
+  EXPECT_EQ(0, stream.current_output_window_size());
+
+  // Next, increase the stream window by 20 bytes.  The shared window is only
+  // 5, so we get 5 bytes.
+  stream.AdjustOutputWindowSize(20);
+  ExpectDataFrame(&output_queue, "klmno", false);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  runner.notification()->ExpectNotSet();
+  EXPECT_EQ(0, shared_window.current_output_window_size());
+
+  // Finally, we increase the shared window size by 20.  We should get the last
+  // 11 bytes of data out (with FLAG_FIN now set), and the task should be
+  // completed.
+  EXPECT_TRUE(shared_window.IncreaseOutputWindowSize(20));
+  ExpectDataFrame(&output_queue, "pqrstuvwxyz", true);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  runner.notification()->ExpectSetWithinMillis(100);
+  EXPECT_EQ(9, shared_window.current_output_window_size());
+  EXPECT_EQ(4, stream.current_output_window_size());
+}
+
 // Test that flow control is well-behaved when the stream is aborted.
 TEST(SpdyStreamTest, FlowControlAbort) {
   mod_spdy::SpdyFramePriorityQueue output_queue;
@@ -166,7 +231,7 @@ TEST(SpdyStreamTest, FlowControlAbort) {
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_3, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, initial_window_size, &output_queue,
-      &pusher);
+      NULL, &pusher);
 
   // Send more data than can fit in the initial window size.
   const base::StringPiece data = "abcdefghijklmnopqrstuvwxyz";
@@ -205,7 +270,8 @@ TEST(SpdyStreamTest, FlowControlOverflow) {
   MockSpdyServerPushInterface pusher;
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_3, kStreamId, kAssocStreamId,
-      kInitServerPushDepth, kPriority, 0x60000000, &output_queue, &pusher);
+      kInitServerPushDepth, kPriority, 0x60000000, &output_queue, NULL,
+      &pusher);
 
   // Increase the window size so large that it overflows.  We should get a
   // RST_STREAM frame and the stream should be aborted.
@@ -225,7 +291,7 @@ TEST(SpdyStreamTest, NegativeWindowSize) {
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_3, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, initial_window_size, &output_queue,
-      &pusher);
+      NULL, &pusher);
 
   // Send more data than can fit in the initial window size.
   const base::StringPiece data = "abcdefghijklmnopqrstuvwxyz";
@@ -278,7 +344,7 @@ TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy2) {
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_2, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, net::kSpdyStreamInitialWindowSize,
-      &output_queue, &pusher);
+      &output_queue, NULL, &pusher);
 
   // Try to send an empty data frame without FLAG_FIN.  It should be
   // suppressed.
@@ -300,7 +366,7 @@ TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy3) {
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_3, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, initial_window_size, &output_queue,
-      &pusher);
+      NULL, &pusher);
 
   // Try to send an empty data frame without FLAG_FIN.  It should be
   // suppressed.
@@ -329,13 +395,13 @@ TEST(SpdyStreamTest, SendEmptyDataFrameInSpdy3) {
   EXPECT_EQ(0, stream.current_output_window_size());
 }
 
-TEST(SpdyStreamTest, InputFlowControl) {
+TEST(SpdyStreamTest, InputFlowControlInSpdy3) {
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_3, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, net::kSpdyStreamInitialWindowSize,
-      &output_queue, &pusher);
+      &output_queue, NULL, &pusher);
 
   // The initial window size is 64K.
   EXPECT_EQ(65536, stream.current_input_window_size());
@@ -402,13 +468,93 @@ TEST(SpdyStreamTest, InputFlowControl) {
   EXPECT_EQ(65446, stream.current_input_window_size());
 }
 
+TEST(SpdyStreamTest, InputFlowControlInSpdy31) {
+  mod_spdy::SpdyFramePriorityQueue output_queue;
+  mod_spdy::SharedFlowControlWindow shared_window(
+      net::kSpdyStreamInitialWindowSize,
+      net::kSpdyStreamInitialWindowSize);
+  MockSpdyServerPushInterface pusher;
+  mod_spdy::SpdyStream stream(
+      mod_spdy::spdy::SPDY_VERSION_3_1, kStreamId, kAssocStreamId,
+      kInitServerPushDepth, kPriority, net::kSpdyStreamInitialWindowSize,
+      &output_queue, &shared_window, &pusher);
+
+  // The initial window size is 64K.
+  EXPECT_EQ(65536, stream.current_input_window_size());
+
+  // Post a SYN_STREAM frame to the input.  This should not affect the input
+  // window size.
+  net::SpdyHeaderBlock request_headers;
+  request_headers[mod_spdy::http::kContentLength] = "4000";
+  request_headers[mod_spdy::spdy::kSpdy3Host] = "www.example.com";
+  request_headers[mod_spdy::spdy::kSpdy3Method] = "GET";
+  request_headers[mod_spdy::spdy::kSpdy3Path] = "/index.html";
+  request_headers[mod_spdy::spdy::kSpdy3Version] = "HTTP/1.1";
+
+  scoped_ptr<net::SpdySynStreamIR> syn_stream(
+      new net::SpdySynStreamIR(kStreamId));
+  syn_stream->set_associated_to_stream_id(kAssocStreamId);
+  syn_stream->set_priority(kPriority);
+  syn_stream->GetMutableNameValueBlock()->insert(
+      request_headers.begin(), request_headers.end());
+  stream.PostInputFrame(syn_stream.release());
+  EXPECT_EQ(65536, stream.current_input_window_size());
+
+  // Send a little bit of data.  This should reduce the input window size.
+  const std::string data1("abcdefghij");
+  EXPECT_TRUE(shared_window.OnReceiveInputData(data1.size()));
+  stream.PostInputFrame(new net::SpdyDataIR(kStreamId, data1));
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65526, stream.current_input_window_size());
+
+  // Inform the stream that we have consumed this data.  However, we shouldn't
+  // yet send a WINDOW_UPDATE frame for so small an amount, so the window size
+  // should stay the same.
+  stream.OnInputDataConsumed(10);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65526, stream.current_input_window_size());
+
+  // Send the rest of the data.  This should further reduce the input window
+  // size.
+  const std::string data2(9000, 'x');
+  scoped_ptr<net::SpdyDataIR> data_frame(
+      new net::SpdyDataIR(kStreamId, data2));
+  data_frame->set_fin(true);
+  EXPECT_TRUE(shared_window.OnReceiveInputData(data2.size()));
+  stream.PostInputFrame(data_frame.release());
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(56526, stream.current_input_window_size());
+
+  // Inform the stream that we have consumed a bit more of the data.  However,
+  // we still shouldn't yet send a WINDOW_UPDATE frame, and the window size
+  // should still stay the same.
+  stream.OnInputDataConsumed(10);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(56526, stream.current_input_window_size());
+
+  // Now say that we've consumed a whole bunch of data.  At this point, we
+  // should get a WINDOW_UPDATE frame for everything consumed so far, and the
+  // window size should increase accordingly.
+  stream.OnInputDataConsumed(8900);
+  ExpectSessionWindowUpdate(&output_queue, 8920);
+  ExpectWindowUpdate(&output_queue, 8920);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65446, stream.current_input_window_size());
+
+  // Consume the last of the data.  This is now just a little bit, so no need
+  // for a WINDOW_UPDATE here.
+  stream.OnInputDataConsumed(90);
+  EXPECT_TRUE(output_queue.IsEmpty());
+  EXPECT_EQ(65446, stream.current_input_window_size());
+}
+
 TEST(SpdyStreamTest, InputFlowControlError) {
   mod_spdy::SpdyFramePriorityQueue output_queue;
   MockSpdyServerPushInterface pusher;
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_3, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, net::kSpdyStreamInitialWindowSize,
-      &output_queue, &pusher);
+      &output_queue, NULL, &pusher);
 
   // Send a bunch of data.  This should reduce the input window size.
   const std::string data1(1000, 'x');
@@ -435,7 +581,7 @@ TEST(SpdyStreamTest, NoInputFlowControlInSpdy2) {
   mod_spdy::SpdyStream stream(
       mod_spdy::spdy::SPDY_VERSION_2, kStreamId, kAssocStreamId,
       kInitServerPushDepth, kPriority, net::kSpdyStreamInitialWindowSize,
-      &output_queue, &pusher);
+      &output_queue, NULL, &pusher);
 
   // Send more data than will fit in the window size.  However, we shouldn't
   // get an error, because this is SPDY/2 and there is no flow control.

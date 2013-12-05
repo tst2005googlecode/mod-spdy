@@ -20,6 +20,7 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
 #include "net/spdy/spdy_protocol.h"
@@ -79,6 +80,7 @@ SpdyStream::SpdyStream(spdy::SpdyVersion spdy_version,
                        net::SpdyPriority priority,
                        int32 initial_output_window_size,
                        SpdyFramePriorityQueue* output_queue,
+                       SharedFlowControlWindow* shared_window,
                        SpdyServerPushInterface* pusher)
     : spdy_version_(spdy_version),
       stream_id_(stream_id),
@@ -86,6 +88,7 @@ SpdyStream::SpdyStream(spdy::SpdyVersion spdy_version,
       server_push_depth_(server_push_depth),
       priority_(priority),
       output_queue_(output_queue),
+      shared_window_(shared_window),
       pusher_(pusher),
       condvar_(&lock_),
       aborted_(false),
@@ -96,6 +99,7 @@ SpdyStream::SpdyStream(spdy::SpdyVersion spdy_version,
       input_bytes_consumed_(0) {
   DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version);
   DCHECK(output_queue_);
+  DCHECK(shared_window_ || spdy_version < spdy::SPDY_VERSION_3_1);
   DCHECK(pusher_);
   DCHECK_GT(output_window_size_, 0);
   // In SPDY v2, priorities are in the range 0-3; in SPDY v3, they are 0-7.
@@ -159,6 +163,20 @@ void SpdyStream::OnInputDataConsumed(size_t size) {
   // Don't bother with any of this if the stream has been aborted.
   if (aborted_) {
     return;
+  }
+
+  // First, if we're using SPDY/3.1 or later, we need to deal with the shared
+  // session window.  If after consuming this input data the shared window
+  // thinks it's time to send a WINDOW_UPDATE for the session input window
+  // (stream 0), send one, at top priority.
+  if (spdy_version_ >= spdy::SPDY_VERSION_3_1) {
+    const int32 shared_window_update =
+        shared_window_->OnInputDataConsumed(size);
+    if (shared_window_update > 0) {
+      output_queue_->Insert(
+          SpdyFramePriorityQueue::kTopPriority,
+          new net::SpdyWindowUpdateIR(0, shared_window_update));
+    }
   }
 
   // Make sure the current input window size is sane.  Although there are
@@ -228,6 +246,8 @@ void SpdyStream::AdjustOutputWindowSize(int32 delta) {
       static_cast<int64>(output_window_size_) + static_cast<int64>(delta);
   if (new_size > static_cast<int64>(net::kSpdyMaximumWindowSize) ||
       new_size < -static_cast<int64>(net::kSpdyMaximumWindowSize)) {
+    LOG(WARNING) << "Flow control overflow/underflow on stream "
+                 << stream_id_ << ".  Aborting stream.";
     InternalAbortWithRstStream(net::RST_STREAM_FLOW_CONTROL_ERROR);
     return;
   }
@@ -358,21 +378,47 @@ void SpdyStream::SendOutputDataFrame(base::StringPiece data, bool flag_fin) {
     if (aborted_) {
       return;
     }
-
     // If the current window size is less than the amount of data we'd like to
     // send, send a smaller data frame with the first part of the data, and
     // then we'll sleep until the window size is increased before sending the
     // rest.
+    DCHECK_LE(data.size(), static_cast<size_t>(kint32max));
+    const int32 full_length = data.size();
     DCHECK_GT(output_window_size_, 0);
-    const size_t length = std::min(
-        data.size(), static_cast<size_t>(output_window_size_));
-    scoped_ptr<net::SpdyDataIR> frame(
-        new net::SpdyDataIR(stream_id_, data.substr(0, length)));
-    frame->set_fin(flag_fin && length == data.size());
-    SendOutputFrame(frame.release());
-    data = data.substr(length);
-    output_window_size_ -= length;
+    const int32 length_desired = std::min(full_length, output_window_size_);
+    output_window_size_ -= length_desired;
     DCHECK_GE(output_window_size_, 0);
+    // Now we need to request quota from the session-shared flow control
+    // window.  Since the call to RequestQuota may block, we need to unlock
+    // first.
+    int32 length_acquired;
+    if (spdy_version() >= spdy::SPDY_VERSION_3_1) {
+      base::AutoUnlock autounlock(lock_);
+      DCHECK(shared_window_);
+      length_acquired = shared_window_->RequestOutputQuota(length_desired);
+    } else {
+      // For SPDY versions that don't have a session window, just act like we
+      // got the quota we wanted.
+      length_acquired = length_desired;
+    }
+    // RequestQuota will return zero if the shared window has been aborted
+    // (i.e. if the session has been aborted).  So in that case let's just
+    // abort too.
+    if (length_acquired <= 0) {
+      InternalAbortSilently();
+      return;
+    }
+    // If we didn't acquire as much as we wanted from the shared window, put
+    // the amount we're not actually using back into output_window_size_.
+    else if (length_acquired < length_desired) {
+      output_window_size_ += length_desired - length_acquired;
+    }
+    // Actually send the frame.
+    scoped_ptr<net::SpdyDataIR> frame(
+        new net::SpdyDataIR(stream_id_, data.substr(0, length_acquired)));
+    frame->set_fin(flag_fin && length_acquired == full_length);
+    SendOutputFrame(frame.release());
+    data = data.substr(length_acquired);
   }
 }
 

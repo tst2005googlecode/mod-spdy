@@ -14,8 +14,6 @@
 
 #include "mod_spdy/common/spdy_session.h"
 
-#include <utility>  // for make_pair
-
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
@@ -60,7 +58,9 @@ SpdySession::SpdySession(spdy::SpdyVersion spdy_version,
       initial_window_size_(net::kSpdyStreamInitialWindowSize),
       max_concurrent_pushes_(kInitMaxConcurrentPushes),
       last_server_push_stream_id_(0u),
-      received_goaway_(false) {
+      received_goaway_(false),
+      shared_window_(net::kSpdyStreamInitialWindowSize,
+                     net::kSpdyStreamInitialWindowSize) {
   DCHECK_NE(spdy::SPDY_VERSION_NONE, spdy_version);
   framer_.set_visitor(this);
 }
@@ -311,6 +311,9 @@ void SpdySession::OnStreamError(net::SpdyStreamId stream_id,
 
 void SpdySession::OnStreamFrameData(
     net::SpdyStreamId stream_id, const char* data, size_t length, bool fin) {
+  // TODO(mdsteele): For SPDY/3.1 and up, we need to check the shared input
+  //   flow control window.
+
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
   // RemoveStreamTask() at any time.
@@ -613,6 +616,9 @@ void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
     return;
   }
 
+  // TODO(mdsteele): For SPDY/3.1 and up, we need to handle window updates for
+  //   stream zero (which refers to the shared session window).
+
   base::AutoLock autolock(stream_map_lock_);
   SpdyStream* stream = stream_map_.GetStream(stream_id);
   if (stream == NULL) {
@@ -712,6 +718,7 @@ void SpdySession::StopSession() {
     base::AutoLock autolock(stream_map_lock_);
     stream_map_.AbortAllSilently();
   }
+  shared_window_.Abort();
   // Stop all stream threads and tasks for this SPDY session.  This will
   // block until all currently running stream tasks have exited, but since we
   // just aborted all streams, that should hopefully happen fairly soon.  Note
@@ -769,7 +776,8 @@ SpdySession::StreamTaskWrapper::StreamTaskWrapper(
     : spdy_session_(spdy_session),
       stream_(spdy_session->spdy_version(), stream_id, associated_stream_id,
               server_push_depth, priority, spdy_session_->initial_window_size_,
-              &spdy_session_->output_queue_, spdy_session_),
+              &spdy_session_->output_queue_, &spdy_session_->shared_window_,
+              spdy_session_),
       subtask_(spdy_session_->task_factory_->NewStreamTask(&stream_)) {
   CHECK(subtask_);
 }

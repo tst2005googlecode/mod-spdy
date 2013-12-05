@@ -25,6 +25,7 @@
 #include "base/strings/string_piece.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/testing/spdy_frame_matchers.h"
@@ -51,8 +52,11 @@ class SpdyToHttpFilterTest :
       : spdy_version_(GetParam()),
         stream_id_(1),
         priority_(0u),
+        shared_window_(net::kSpdyStreamInitialWindowSize,
+                       net::kSpdyStreamInitialWindowSize),
         stream_(spdy_version_, stream_id_, 0, 0, priority_,
-                net::kSpdyStreamInitialWindowSize, &output_queue_, &pusher_),
+                net::kSpdyStreamInitialWindowSize, &output_queue_,
+                &shared_window_, &pusher_),
         spdy_to_http_filter_(&stream_) {
     bucket_alloc_ = apr_bucket_alloc_create(local_.pool());
     connection_ = static_cast<conn_rec*>(
@@ -86,6 +90,7 @@ class SpdyToHttpFilterTest :
     scoped_ptr<net::SpdyDataIR> frame(
         new net::SpdyDataIR(stream_id_, payload));
     frame->set_fin(fin);
+    EXPECT_TRUE(shared_window_.OnReceiveInputData(payload.size()));
     stream_.PostInputFrame(frame.release());
   }
 
@@ -165,6 +170,7 @@ class SpdyToHttpFilterTest :
   const net::SpdyStreamId stream_id_;
   const net::SpdyPriority priority_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
+  mod_spdy::SharedFlowControlWindow shared_window_;
   MockSpdyServerPushInterface pusher_;
   mod_spdy::SpdyStream stream_;
   mod_spdy::SpdyToHttpFilter spdy_to_http_filter_;

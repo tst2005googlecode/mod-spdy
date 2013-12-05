@@ -19,7 +19,6 @@
 #include "base/strings/string_piece.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
@@ -27,6 +26,7 @@
 
 namespace mod_spdy {
 
+class SharedFlowControlWindow;
 class SpdyFramePriorityQueue;
 
 // Represents one stream of a SPDY connection.  This class is used to
@@ -45,6 +45,7 @@ class SpdyStream {
              net::SpdyPriority priority,
              int32 initial_output_window_size,
              SpdyFramePriorityQueue* output_queue,
+             SharedFlowControlWindow* shared_window,
              SpdyServerPushInterface* pusher);
   ~SpdyStream();
 
@@ -84,7 +85,7 @@ class SpdyStream {
   void AbortWithRstStream(net::SpdyRstStreamStatus status);
 
   // What are the current window sizes for this stream?  These are mostly
-  // useful for debugging.  Requires that spdy_version() >= 3.
+  // useful for debugging.  Requires that spdy_version() >= SPDY_VERSION_3.
   int32 current_input_window_size() const;
   int32 current_output_window_size() const;
 
@@ -165,6 +166,7 @@ class SpdyStream {
   const net::SpdyPriority priority_;
   SpdyFrameQueue input_queue_;
   SpdyFramePriorityQueue* const output_queue_;
+  SharedFlowControlWindow* const shared_window_;
   SpdyServerPushInterface* const pusher_;
 
   // The lock protects the fields below.  The above fields do not require
@@ -175,6 +177,7 @@ class SpdyStream {
   int32 output_window_size_;
   int32 input_window_size_;
   size_t input_bytes_consumed_;  // consumed since we last sent a WINDOW_UPDATE
+  size_t input_bytes_unconsumed_;  // received but not yet consumed
 
   DISALLOW_COPY_AND_ASSIGN(SpdyStream);
 };

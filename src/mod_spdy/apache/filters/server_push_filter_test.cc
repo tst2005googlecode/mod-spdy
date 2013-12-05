@@ -24,6 +24,7 @@
 #include "base/strings/string_piece.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -57,6 +58,8 @@ class ServerPushFilterTest :
  public:
   ServerPushFilterTest()
       : spdy_version_(GetParam()),
+        shared_window_(net::kSpdyStreamInitialWindowSize,
+                       net::kSpdyStreamInitialWindowSize),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         request_(static_cast<request_rec*>(
@@ -104,6 +107,7 @@ class ServerPushFilterTest :
 
   const mod_spdy::spdy::SpdyVersion spdy_version_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
+  mod_spdy::SharedFlowControlWindow shared_window_;
   MockSpdyServerPushInterface pusher_;
   mod_spdy::LocalPool local_;
   conn_rec* const connection_;
@@ -122,7 +126,7 @@ TEST_P(ServerPushFilterTest, SimpleXAssociatedContent) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   net::SpdyHeaderBlock headers1;
@@ -176,7 +180,7 @@ TEST_P(ServerPushFilterTest, MultipleXAssociatedContentHeaders) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
   const net::SpdyPriority lowest =
       mod_spdy::LowestSpdyPriorityForVersion(stream.spdy_version());
@@ -243,7 +247,7 @@ TEST_P(ServerPushFilterTest, CaseInsensitive) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   EXPECT_CALL(pusher_, StartServerPush(Eq(stream_id), _, _, Contains(
@@ -281,7 +285,7 @@ TEST_P(ServerPushFilterTest, CopyApplicableHeaders) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // Set some extra headers on the original request (which was evidentally a
@@ -315,7 +319,7 @@ TEST_P(ServerPushFilterTest, StopPushingAfterPushError) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // When the filter tries to push the first resource, we reply that pushes are
@@ -346,7 +350,7 @@ TEST_P(ServerPushFilterTest, StopPushingAfterParseError) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // The filter should push the first resource, but then stop when it gets to
@@ -373,7 +377,7 @@ TEST_P(ServerPushFilterTest, SkipInvalidQuotedUrl) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // The filter should push the first and third resources, but skip the second
@@ -404,7 +408,7 @@ TEST_P(ServerPushFilterTest, MaxServerPushDepthLimit) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // We should not get any calls to StartServerPush, because we do not allow
@@ -429,7 +433,7 @@ TEST_P(ServerPushFilterTest, MaxServerPushDepthLimit) {
   mod_spdy::SpdyStream stream_2(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth_2, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter_2(
       &stream_2, request_, &server_cfg_2);
 
@@ -464,7 +468,7 @@ TEST_P(ServerPushFilterSpdy2Test, NoPushesForSpdy2) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::ServerPushFilter server_push_filter(&stream, request_, &server_cfg);
 
   // We should not get any calls to StartServerPush when we're on SPDY/2.

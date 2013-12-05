@@ -21,6 +21,7 @@
 #include "base/synchronization/lock.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_server_push_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -244,9 +245,10 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   net::SpdyStreamId last_server_push_stream_id_;
   bool received_goaway_;  // we've received a GOAWAY frame from the client
 
-  // The output queue is also shared between all stream threads, but its class
-  // is thread-safe, so it doesn't need additional synchronization.
+  // These objects are also shared between all stream threads, but these
+  // classes are each thread-safe, and don't need additional synchronization.
   SpdyFramePriorityQueue output_queue_;
+  SharedFlowControlWindow shared_window_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdySession);
 };

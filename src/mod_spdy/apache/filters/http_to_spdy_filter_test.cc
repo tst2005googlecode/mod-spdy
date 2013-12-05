@@ -25,6 +25,7 @@
 #include "base/strings/string_piece.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -56,6 +57,8 @@ class HttpToSpdyFilterTest :
  public:
   HttpToSpdyFilterTest()
       : spdy_version_(GetParam()),
+        shared_window_(net::kSpdyStreamInitialWindowSize,
+                       net::kSpdyStreamInitialWindowSize),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         ap_filter_(static_cast<ap_filter_t*>(
@@ -138,6 +141,7 @@ class HttpToSpdyFilterTest :
 
   const mod_spdy::spdy::SpdyVersion spdy_version_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
+  mod_spdy::SharedFlowControlWindow shared_window_;
   MockSpdyServerPushInterface pusher_;
   mod_spdy::LocalPool local_;
   conn_rec* const connection_;
@@ -155,7 +159,7 @@ TEST_P(HttpToSpdyFilterTest, ResponseWithContentLength) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -240,7 +244,7 @@ TEST_P(HttpToSpdyFilterTest, ChunkedResponse) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -314,7 +318,7 @@ TEST_P(HttpToSpdyFilterTest, RedirectResponse) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -354,7 +358,7 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -407,7 +411,7 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -455,7 +459,7 @@ TEST_P(HttpToSpdyFilterTest, ServerPushedStream) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -493,7 +497,7 @@ TEST_P(HttpToSpdyFilterTest, DoNotSendVersionHeaderWhenAskedNotTo) {
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &pusher_);
+      &output_queue_, &shared_window_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   config.set_send_version_header(false);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
@@ -515,7 +519,7 @@ TEST_P(HttpToSpdyFilterTest, DoNotSendVersionHeaderWhenAskedNotTo) {
   ExpectOutputQueueEmpty();
 }
 
-// Run each test over both SPDY v2 and SPDY v3.
+// Run each test over SPDY/2, SPDY/3, and SPDY/3.1.
 INSTANTIATE_TEST_CASE_P(Spdy2And3, HttpToSpdyFilterTest, testing::Values(
     mod_spdy::spdy::SPDY_VERSION_2, mod_spdy::spdy::SPDY_VERSION_3,
     mod_spdy::spdy::SPDY_VERSION_3_1));
