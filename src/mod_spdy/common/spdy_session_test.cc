@@ -37,6 +37,7 @@ using mod_spdy::testing::IsDataFrame;
 using mod_spdy::testing::IsGoAway;
 using mod_spdy::testing::IsHeaders;
 using mod_spdy::testing::IsPing;
+using mod_spdy::testing::IsRstStream;
 using mod_spdy::testing::IsSettings;
 using mod_spdy::testing::IsSynReply;
 using mod_spdy::testing::IsSynStream;
@@ -50,6 +51,7 @@ using testing::InvokeWithoutArgs;
 using testing::NotNull;
 using testing::Property;
 using testing::Return;
+using testing::StrictMock;
 using testing::WithArg;
 
 namespace {
@@ -137,6 +139,16 @@ ACTION_P(SendResponseHeaders, task) {
 // gMock action to be used with MockStreamTask::Run.
 ACTION_P3(SendDataFrame, task, data, fin) {
   task->stream->SendOutputDataFrame(data, fin);
+}
+
+// gMock action to be used with MockStreamTask::Run.
+ACTION_P(ConsumeInputUntilAborted, task) {
+  while (!task->stream->is_aborted()) {
+    net::SpdyFrameIR* raw_frame = NULL;
+    if (task->stream->GetInputFrame(true, &raw_frame)) {
+      delete raw_frame;
+    }
+  }
 }
 
 // An executor that runs all tasks in the same thread, either immediately when
@@ -354,6 +366,15 @@ class SpdySessionTestBase :
     ReceiveFrameFromClient(*frame);
   }
 
+  // Push a valid DATA frame into the input queue.
+  void ReceiveDataFromClient(net::SpdyStreamId stream_id,
+                             base::StringPiece data,
+                             net::SpdyDataFlags flags) {
+    scoped_ptr<net::SpdySerializedFrame> frame(client_framer_.CreateDataFrame(
+        stream_id, data.data(), data.size(), flags));
+    ReceiveFrameFromClient(*frame);
+  }
+
   // Push a SETTINGS frame into the input queue.
   void ReceiveSettingsFrameFromClient(
       net::SpdySettingsIds setting, uint32 value) {
@@ -415,8 +436,8 @@ class SpdySessionTestBase :
   ClientVisitor client_visitor_;
   net::BufferedSpdyFramer client_framer_;
   mod_spdy::SpdyServerConfig config_;
-  MockSpdySessionIO session_io_;
-  MockSpdyStreamTaskFactory task_factory_;
+  StrictMock<MockSpdySessionIO> session_io_;
+  StrictMock<MockSpdyStreamTaskFactory> task_factory_;
   std::list<std::string> input_queue_;
 };
 
@@ -824,6 +845,69 @@ TEST_P(SpdySessionFlowControlTest, SendGoawayForTooLargeInitialWindowSize) {
   EXPECT_CALL(session_io_, IsConnectionAborted());
   EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
   ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
+
+  session_->Run();
+}
+
+TEST_P(SpdySessionFlowControlTest, SharedOutputFlowControlWindow) {
+  ReceiveWindowUpdateFrameFromClient(0, 10000);
+
+  testing::InSequence seq;
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
+  EXPECT_CALL(session_io_, IsConnectionAborted());
+  EXPECT_CALL(session_io_, ProcessAvailableInput(Eq(true), NotNull()));
+  if (session_->spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3_1) {
+    EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
+  } else {
+    ExpectSendGoAway(0, net::GOAWAY_PROTOCOL_ERROR);
+  }
+
+  if (session_->spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3_1) {
+    EXPECT_EQ(65536, session_->current_shared_output_window_size());
+  }
+  session_->Run();
+  if (session_->spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3_1) {
+    EXPECT_EQ(75536, session_->current_shared_output_window_size());
+  }
+}
+
+TEST_P(SpdySessionFlowControlTest, SharedInputFlowControlWindow) {
+  MockStreamTask* task = new MockStreamTask;
+  const net::SpdyStreamId stream_id = 1;
+  const net::SpdyPriority priority = 2;
+  ReceiveSynStreamFromClient(stream_id, priority, net::CONTROL_FLAG_NONE);
+  const std::string data1(32000, 'x');
+  const std::string data2(2000, 'y');
+  ReceiveDataFromClient(stream_id, data1, net::DATA_FLAG_NONE);
+  ReceiveDataFromClient(stream_id, data1, net::DATA_FLAG_NONE);
+  ReceiveDataFromClient(stream_id, data2, net::DATA_FLAG_FIN);
+
+  EXPECT_CALL(session_io_, IsConnectionAborted()).Times(AtLeast(4));
+
+  // The rest of these will have to happen in a fixed order.
+  testing::InSequence seq;
+  ExpectSendFrame(IsSettings(net::SETTINGS_MAX_CONCURRENT_STREAMS, 100));
+  // Receive the SYN_STREAM from the client.
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()));
+  EXPECT_CALL(task_factory_, NewStreamTask(
+      AllOf(Property(&mod_spdy::SpdyStream::stream_id, Eq(stream_id)),
+            Property(&mod_spdy::SpdyStream::associated_stream_id, Eq(0u)),
+            Property(&mod_spdy::SpdyStream::priority, Eq(priority)))))
+      .WillOnce(ReturnMockTask(task));
+  EXPECT_CALL(*task, Run()).WillOnce(ConsumeInputUntilAborted(task));
+  // Receive the first two blocks of data from the client with no problems.
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()));
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()));
+  // The third block of data is too much; it's a flow control error.  For
+  // SPDY/3.1 and up it's a session flow control error; for SPDY/3 it's a
+  // stream flow control error.
+  EXPECT_CALL(session_io_, ProcessAvailableInput(_, NotNull()));
+  if (session_->spdy_version() >= mod_spdy::spdy::SPDY_VERSION_3_1) {
+    ExpectSendGoAway(stream_id, net::GOAWAY_PROTOCOL_ERROR);
+  } else {
+    ExpectSendFrame(IsRstStream(1, net::RST_STREAM_FLOW_CONTROL_ERROR));
+    EXPECT_CALL(session_io_, IsConnectionAborted()).WillOnce(Return(true));
+  }
 
   session_->Run();
 }

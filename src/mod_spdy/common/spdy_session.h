@@ -54,6 +54,12 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // What SPDY version is being used for this session?
   spdy::SpdyVersion spdy_version() const { return spdy_version_; }
 
+  // What are the current shared window sizes for this session?  These are
+  // mostly useful for debugging.  Requires that spdy_version() >=
+  // SPDY_VERSION_3_1.
+  int32 current_shared_input_window_size() const;
+  int32 current_shared_output_window_size() const;
+
   // Process the session; don't return until the session is finished.
   void Run();
 

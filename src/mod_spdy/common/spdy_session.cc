@@ -67,6 +67,16 @@ SpdySession::SpdySession(spdy::SpdyVersion spdy_version,
 
 SpdySession::~SpdySession() {}
 
+int32 SpdySession::current_shared_input_window_size() const {
+  DCHECK_GE(spdy_version_, spdy::SPDY_VERSION_3_1);
+  return shared_window_.current_input_window_size();
+}
+
+int32 SpdySession::current_shared_output_window_size() const {
+  DCHECK_GE(spdy_version_, spdy::SPDY_VERSION_3_1);
+  return shared_window_.current_output_window_size();
+}
+
 void SpdySession::Run() {
   // Send a SETTINGS frame when the connection first opens, to inform the
   // client of our MAX_CONCURRENT_STREAMS limit.
@@ -311,8 +321,16 @@ void SpdySession::OnStreamError(net::SpdyStreamId stream_id,
 
 void SpdySession::OnStreamFrameData(
     net::SpdyStreamId stream_id, const char* data, size_t length, bool fin) {
-  // TODO(mdsteele): For SPDY/3.1 and up, we need to check the shared input
-  //   flow control window.
+  // First check the shared input flow control window (for SPDY/3.1 and up).
+  if (spdy_version_ >= spdy::SPDY_VERSION_3_1) {
+    if (!shared_window_.OnReceiveInputData(length)) {
+      LOG(ERROR) << "Client violated flow control by sending too much data "
+                 << "to session.  Sending GOAWAY.";
+      SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
+      StopSession();
+      return;
+    }
+  }
 
   // Look up the stream to post the data to.  We need to lock when reading the
   // stream map, because one of the stream threads could call
@@ -608,7 +626,7 @@ void SpdySession::OnPushPromise(net::SpdyStreamId stream_id,
 
 void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
                                  uint32 delta_window_size) {
-  // Flow control only exists for SPDY v3 and up.
+  // Flow control only exists for SPDY/3 and up.
   if (spdy_version() < spdy::SPDY_VERSION_3) {
     LOG(ERROR) << "Got a WINDOW_UPDATE frame over SPDY/"
                << SpdyVersionNumberString(spdy_version());
@@ -616,8 +634,24 @@ void SpdySession::OnWindowUpdate(net::SpdyStreamId stream_id,
     return;
   }
 
-  // TODO(mdsteele): For SPDY/3.1 and up, we need to handle window updates for
-  //   stream zero (which refers to the shared session window).
+  // Stream zero is special; starting in SPDY/3.1, it represents the
+  // session-wide flow control window.  For previous versions, it is invalid.
+  if (stream_id == 0) {
+    if (spdy_version() >= spdy::SPDY_VERSION_3_1) {
+      if (!shared_window_.IncreaseOutputWindowSize(delta_window_size)) {
+        LOG(ERROR) << "Got a WINDOW_UPDATE frame that overflows session "
+                   << "window.  Sending GOAWAY.";
+        SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
+        StopSession();
+      }
+    } else {
+      LOG(ERROR) << "Got a WINDOW_UPDATE frame for stream 0 over SPDY/"
+                 << SpdyVersionNumberString(spdy_version());
+      SendGoAwayFrame(net::GOAWAY_PROTOCOL_ERROR);
+      StopSession();
+    }
+    return;
+  }
 
   base::AutoLock autolock(stream_map_lock_);
   SpdyStream* stream = stream_map_.GetStream(stream_id);
