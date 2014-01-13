@@ -24,12 +24,13 @@ namespace mod_spdy {
 namespace {
 
 int32_t GetPriorityFromExtension(const std::string& url) {
-  if (EndsWith(url, ".js", false))
+  if (EndsWith(url, ".js", false)) {
     return 1;
-  else if (EndsWith(url, ".css", false))
+  } else if (EndsWith(url, ".css", false)) {
     return 1;
-  else
+  } else {
     return -1;
+  }
 }
 
 }  // namespace
@@ -47,12 +48,15 @@ ServerPushDiscoveryLearner::GetPushes(const std::string& master_url) {
   std::vector<AdjacentData> significant_adjacents;
 
   for (std::map<std::string, AdjacentData>::const_iterator it =
-           url_data.adjcaents.begin(); it != url_data.adjcaents.end(); ++it) {
+           url_data.adjacents.begin(); it != url_data.adjacents.end(); ++it) {
     if (it->second.hit_count >= threshold)
       significant_adjacents.push_back(it->second);
   }
 
-  std::sort(significant_adjacents.begin(), significant_adjacents.end());
+  // Sort by average time from initial request. We want to provide the child
+  // resources that the client needs immediately with a higher priority.
+  std::sort(significant_adjacents.begin(), significant_adjacents.end(),
+            &CompareAdjacentDataByAverageTimeFromInit);
 
   for (size_t i = 0; i < significant_adjacents.size(); ++i) {
     const AdjacentData& adjacent = significant_adjacents[i];
@@ -81,18 +85,28 @@ void ServerPushDiscoveryLearner::AddAdjacentHit(const std::string& master_url,
                                                 const std::string& adjacent_url,
                                                 int64_t time_from_init) {
   base::AutoLock lock(lock_);
-  std::pair<std::map<std::string, AdjacentData>::iterator, bool> insertion =
-      url_data_[master_url].adjcaents.insert(
-          make_pair(adjacent_url, AdjacentData(adjacent_url)));
+  std::map<std::string, AdjacentData>& master_url_adjacents =
+      url_data_[master_url].adjacents;
 
-  AdjacentData& adjacent_data = insertion.first->second;
+  if (master_url_adjacents.find(adjacent_url) == master_url_adjacents.end()) {
+    master_url_adjacents.insert(
+        make_pair(adjacent_url, AdjacentData(adjacent_url)));
+  }
+
+  AdjacentData& adjacent_data = master_url_adjacents.find(adjacent_url)->second;
 
   ++adjacent_data.hit_count;
-  double inv_new_total = 1.0 / adjacent_data.hit_count;
+  double inverse_hit_count = 1.0 / adjacent_data.hit_count;
 
-  adjacent_data.avg_time_from_init =
-      inv_new_total * time_from_init +
-      (1 - inv_new_total) * adjacent_data.avg_time_from_init;
+  adjacent_data.average_time_from_init =
+      inverse_hit_count * time_from_init +
+      (1 - inverse_hit_count) * adjacent_data.average_time_from_init;
+}
+
+// static
+bool ServerPushDiscoveryLearner::CompareAdjacentDataByAverageTimeFromInit(
+    const AdjacentData& a, const AdjacentData& b) {
+  return a.average_time_from_init < b.average_time_from_init;
 }
 
 }  // namespace mod_spdy

@@ -25,8 +25,6 @@ namespace mod_spdy {
 
 class ServerPushDiscoverySession;
 
-typedef int64_t SessionId;
-
 extern const int64_t kServerPushSessionTimeout;
 
 // This class manages a pool of sessions used to discover X-Associated-Content.
@@ -35,6 +33,8 @@ extern const int64_t kServerPushSessionTimeout;
 // per-process initialization. Class may be called from multiple threads.
 class ServerPushDiscoverySessionPool {
  public:
+  typedef int64_t SessionId;
+
   ServerPushDiscoverySessionPool();
 
   // Retrieves an existing session. Returns NULL if it's been timed out already.
@@ -78,12 +78,13 @@ class ServerPushDiscoverySession {
  private:
   friend class ServerPushDiscoverySessionPool;
 
-  ServerPushDiscoverySession(SessionId session_id,
-                             int64_t initial_request_time,
-                             const std::string& master_url,
-                             bool took_push);
+  ServerPushDiscoverySession(
+      ServerPushDiscoverySessionPool::SessionId session_id,
+      int64_t initial_request_time,
+      const std::string& master_url,
+      bool took_push);
 
-  SessionId session_id_;
+  ServerPushDiscoverySessionPool::SessionId session_id_;
   int64_t initial_request_time_;
   std::string master_url_;
   int64_t took_push_;

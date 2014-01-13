@@ -47,6 +47,27 @@ TEST(ServerPushDiscoveryLearnerTest, TrivialYesPush) {
   EXPECT_EQ("b", pushes.front().adjacent_url);
 }
 
+TEST(ServerPushDiscoveryLearnerTest, PushOrder) {
+  ServerPushDiscoveryLearner learner;
+
+  learner.AddFirstHit("a");
+  learner.AddAdjacentHit("a", "b", 1);
+  learner.AddAdjacentHit("a", "c", 2);
+
+  learner.AddFirstHit("a");
+  learner.AddAdjacentHit("a", "b", 2);
+  learner.AddAdjacentHit("a", "c", 3);
+
+  learner.AddFirstHit("a");
+  learner.AddAdjacentHit("a", "b", 3);
+  learner.AddAdjacentHit("a", "c", 4);
+
+  std::vector<ServerPushDiscoveryLearner::Push> pushes = learner.GetPushes("a");
+  EXPECT_EQ(2u, pushes.size());
+  EXPECT_EQ("b", pushes.front().adjacent_url);
+  EXPECT_EQ("c", pushes.back().adjacent_url);
+}
+
 TEST(ServerPushDiscoveryLearnerTest, TurnoverPoint) {
   ServerPushDiscoveryLearner learner;
 

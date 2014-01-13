@@ -42,6 +42,7 @@ class ServerPushDiscoveryLearner {
 
   ServerPushDiscoveryLearner();
 
+  // Gets a list of child resource pushes for a given |master_url|.
   std::vector<Push> GetPushes(const std::string& master_url);
 
   // Called when module receives an initial master request for a page, and
@@ -49,7 +50,9 @@ class ServerPushDiscoveryLearner {
   void AddFirstHit(const std::string& master_url);
 
   // Called when module receives child resource requests associated with
-  // a master request received earlier.
+  // a master request received earlier. |time_from_init| is the time in
+  // microseconds between this adjacent hit on |adjacent_url| and the initial
+  // hit on the |master_url|.
   void AddAdjacentHit(const std::string& master_url,
                       const std::string& adjacent_url, int64_t time_from_init);
 
@@ -58,24 +61,23 @@ class ServerPushDiscoveryLearner {
     AdjacentData(const std::string& adjacent_url)
         : adjacent_url(adjacent_url),
           hit_count(0),
-          avg_time_from_init(0) {
+          average_time_from_init(0) {
     }
 
     std::string adjacent_url;
     uint64_t hit_count;
-    int64_t avg_time_from_init;
-
-    bool operator<(const AdjacentData& other) const {
-      return avg_time_from_init < other.avg_time_from_init;
-    }
+    int64_t average_time_from_init;
   };
 
   struct UrlData {
     UrlData() : first_hit_count(0) {}
 
     uint64_t first_hit_count;
-    std::map<std::string, AdjacentData> adjcaents;
+    std::map<std::string, AdjacentData> adjacents;
   };
+
+  static bool CompareAdjacentDataByAverageTimeFromInit(const AdjacentData& a,
+                                                       const AdjacentData& b);
 
   std::map<std::string, UrlData> url_data_;
   base::Lock lock_;

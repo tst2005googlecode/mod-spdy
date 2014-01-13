@@ -36,7 +36,8 @@ ServerPushDiscoverySession* ServerPushDiscoverySessionPool::GetExistingSession(
   return &(it->second);
 }
 
-SessionId ServerPushDiscoverySessionPool::CreateSession(
+ServerPushDiscoverySessionPool::SessionId
+ServerPushDiscoverySessionPool::CreateSession(
     int64_t request_time,
     const std::string& request_url,
     bool took_push) {
@@ -66,7 +67,7 @@ void ServerPushDiscoverySessionPool::CleanExpired(int64_t request_time) {
 }
 
 ServerPushDiscoverySession::ServerPushDiscoverySession(
-    SessionId session_id,
+    ServerPushDiscoverySessionPool::SessionId session_id,
     int64_t initial_request_time,
     const std::string& master_url,
     bool took_push)
