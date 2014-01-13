@@ -42,7 +42,7 @@ TEST(ServerPushDiscoveryLearnerTest, TrivialYesPush) {
   learner.AddFirstHit("a");
   learner.AddAdjacentHit("a", "b", 0);
 
-  std::vector<ServerPushDiscoveryPush> pushes = learner.GetPushes("a");
+  std::vector<Push> pushes = learner.GetPushes("a");
   EXPECT_FALSE(pushes.empty());
   EXPECT_EQ("b", pushes.front().adjacent_url);
 }
@@ -63,7 +63,7 @@ TEST(ServerPushDiscoveryLearnerTest, TurnoverPoint) {
   for (int i = 0; i < 50; ++i) {
     learner.AddAdjacentHit("a", "b", 0);
     ++b_requests;
-    std::vector<ServerPushDiscoveryPush> pushes = learner.GetPushes("a");
+    std::vector<Push> pushes = learner.GetPushes("a");
 
     if (b_requests >= (a_requests / 2)) {
       ASSERT_TRUE(pushes.size() == 1) << "(a, b) = " << a_requests << ","

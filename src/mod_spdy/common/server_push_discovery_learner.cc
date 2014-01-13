@@ -17,22 +17,16 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/strings/string_util.h"
+
 namespace mod_spdy {
 
 namespace {
 
-typedef std::map<std::string, ServerPushDiscoveryAdjacentData> AdjacentDataMap;
-
-bool EndsWith(const std::string& url, const std::string& ending) {
-  if (ending.size() > url.size())
-    return false;
-  return url.substr(url.size() - ending.size()) == ending;
-}
-
-int32_t ExtensionGetPriority(const std::string& url) {
-  if (EndsWith(url, ".js"))
+int32_t GetPriorityFromExtension(const std::string& url) {
+  if (EndsWith(url, ".js", false))
     return 1;
-  else if (EndsWith(url, ".css"))
+  else if (EndsWith(url, ".css", false))
     return 1;
   else
     return -1;
@@ -42,18 +36,18 @@ int32_t ExtensionGetPriority(const std::string& url) {
 
 ServerPushDiscoveryLearner::ServerPushDiscoveryLearner() {}
 
-std::vector<ServerPushDiscoveryPush>
+std::vector<ServerPushDiscoveryLearner::Push>
 ServerPushDiscoveryLearner::GetPushes(const std::string& master_url) {
   base::AutoLock lock(lock_);
-  ServerPushDiscoveryUrlData& url_data = url_data_[master_url];
-  std::vector<ServerPushDiscoveryPush> pushes;
+  UrlData& url_data = url_data_[master_url];
+  std::vector<Push> pushes;
 
   uint64_t threshold = url_data.first_hit_count / 2;
 
-  std::vector<ServerPushDiscoveryAdjacentData> significant_adjacents;
+  std::vector<AdjacentData> significant_adjacents;
 
-  for (AdjacentDataMap::const_iterator it = url_data.adjcaents.begin();
-       it != url_data.adjcaents.end(); ++it) {
+  for (std::map<std::string, AdjacentData>::const_iterator it =
+           url_data.adjcaents.begin(); it != url_data.adjcaents.end(); ++it) {
     if (it->second.hit_count >= threshold)
       significant_adjacents.push_back(it->second);
   }
@@ -61,15 +55,17 @@ ServerPushDiscoveryLearner::GetPushes(const std::string& master_url) {
   std::sort(significant_adjacents.begin(), significant_adjacents.end());
 
   for (size_t i = 0; i < significant_adjacents.size(); ++i) {
-    const ServerPushDiscoveryAdjacentData& adjacent = significant_adjacents[i];
-    int32_t priority = ExtensionGetPriority(adjacent.adjacent_url);
+    const AdjacentData& adjacent = significant_adjacents[i];
 
-    if (priority < 0)
+    // Give certain URLs fixed high priorities based on their extension.
+    int32_t priority = GetPriorityFromExtension(adjacent.adjacent_url);
+
+    // Otherwise, assign a higher priority based on its average request order.
+    if (priority < 0) {
       priority = 2 + (i * 6 / significant_adjacents.size());
+    }
 
-    //std::cout << "PushYes: P" << priority << " " << hit_data.hit_count << "/"
-    //    << first_hits_ << " : " << hit_data.url << std::endl;
-    pushes.push_back(ServerPushDiscoveryPush(adjacent.adjacent_url, priority));
+    pushes.push_back(Push(adjacent.adjacent_url, priority));
   }
 
   return pushes;
@@ -77,7 +73,7 @@ ServerPushDiscoveryLearner::GetPushes(const std::string& master_url) {
 
 void ServerPushDiscoveryLearner::AddFirstHit(const std::string& master_url) {
   base::AutoLock lock(lock_);
-  ServerPushDiscoveryUrlData& url_data = url_data_[master_url];
+  UrlData& url_data = url_data_[master_url];
   ++url_data.first_hit_count;
 }
 
@@ -85,12 +81,12 @@ void ServerPushDiscoveryLearner::AddAdjacentHit(const std::string& master_url,
                                                 const std::string& adjacent_url,
                                                 int64_t time_from_init) {
   base::AutoLock lock(lock_);
-  AdjacentDataMap& adjacents = url_data_[master_url].adjcaents;
 
-  std::pair<AdjacentDataMap::iterator, bool> insertion = adjacents.insert(
-      make_pair(adjacent_url, ServerPushDiscoveryAdjacentData(adjacent_url)));
+  std::pair<std::map<std::string, AdjacentData>::iterator, bool> insertion =
+      url_data_[master_url].adjcaents.insert(
+          make_pair(adjacent_url, AdjacentData(adjacent_url)));
 
-  ServerPushDiscoveryAdjacentData& adjacent_data = insertion.first->second;
+  AdjacentData& adjacent_data = insertion.first->second;
 
   ++adjacent_data.hit_count;
   double inv_new_total = 1.0 / adjacent_data.hit_count;
