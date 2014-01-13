@@ -81,7 +81,6 @@ void ServerPushDiscoveryLearner::AddAdjacentHit(const std::string& master_url,
                                                 const std::string& adjacent_url,
                                                 int64_t time_from_init) {
   base::AutoLock lock(lock_);
-
   std::pair<std::map<std::string, AdjacentData>::iterator, bool> insertion =
       url_data_[master_url].adjcaents.insert(
           make_pair(adjacent_url, AdjacentData(adjacent_url)));

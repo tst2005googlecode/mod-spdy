@@ -23,35 +23,40 @@
 
 namespace mod_spdy {
 
-extern const int64_t kServerPushSessionTimeout;
-
 class ServerPushDiscoverySession;
+
+typedef int64_t SessionId;
+
+extern const int64_t kServerPushSessionTimeout;
 
 // This class manages a pool of sessions used to discover X-Associated-Content.
 // It tracks an initial request, i.e., for  'index.html', and all its child
 // requests, i.e., 'logo.gif', 'style.css'. This should be created during
-// per-process initialization.
+// per-process initialization. Class may be called from multiple threads.
 class ServerPushDiscoverySessionPool {
  public:
   ServerPushDiscoverySessionPool();
 
   // Retrieves an existing session. Returns NULL if it's been timed out already.
   // In which case the module should create a new session. The returned pointer
-  // is an objected owned by the pool and must not be deleted by the caller.
-  ServerPushDiscoverySession* GetExistingSession(int64_t session_id,
+  // is an object owned by the pool and must not be deleted by the caller.
+  ServerPushDiscoverySession* GetExistingSession(SessionId session_id,
                                                  int64_t request_time);
 
-  // Creates a new session. |took_push| denotes if the initial request
-  // took a SPDY push. Returns the session_id for user agent storage.
+  // Creates a new session. |took_push| denotes if the the initial request
+  // response included an auto-learned X-Associated-Content header, since we
+  // don't want to self-reinforce our URL statistics. Returns the session_id
+  // for user agent storage.
   int64_t CreateSession(int64_t request_time,
                         const std::string& request_url,
                         bool took_push);
 
  private:
+  // Caller should be holding |lock_|.
   void CleanExpired(int64_t request_time);
 
-  int64_t next_session_id_;
-  std::map<int64_t, ServerPushDiscoverySession> session_cache_;
+  SessionId next_session_id_;
+  std::map<SessionId, ServerPushDiscoverySession> session_cache_;
 
   base::Lock lock_;
 };
@@ -59,8 +64,8 @@ class ServerPushDiscoverySessionPool {
 // Represents an initial page request and all its child resource requests.
 class ServerPushDiscoverySession {
  public:
-  // Record an access on this session, extending its lifetime.
-  void LogAccess(int64_t now) { last_access_ = now; }
+  // Update the last access time on this session, extending its lifetime.
+  void UpdateLastAccessTime(int64_t now) { last_access_ = now; }
 
   // Returns the elapsed microseconds between the initial request and this one.
   int64_t TimeFromInit(int64_t request_time) const {
@@ -73,12 +78,12 @@ class ServerPushDiscoverySession {
  private:
   friend class ServerPushDiscoverySessionPool;
 
-  ServerPushDiscoverySession(int64_t session_id,
+  ServerPushDiscoverySession(SessionId session_id,
                              int64_t initial_request_time,
                              const std::string& master_url,
                              bool took_push);
 
-  int64_t session_id_;
+  SessionId session_id_;
   int64_t initial_request_time_;
   std::string master_url_;
   int64_t took_push_;

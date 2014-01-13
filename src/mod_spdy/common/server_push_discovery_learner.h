@@ -21,6 +21,7 @@
 
 #include "base/basictypes.h"
 #include "base/synchronization/lock.h"
+#include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
 
@@ -30,21 +31,25 @@ namespace mod_spdy {
 class ServerPushDiscoveryLearner {
  public:
   struct Push {
-    Push(const std::string& adjacent_url, int priority)
+    Push(const std::string& adjacent_url, net::SpdyPriority priority)
         : adjacent_url(adjacent_url),
           priority(priority) {
     }
 
     std::string adjacent_url;
-    int priority;
+    net::SpdyPriority priority;
   };
 
   ServerPushDiscoveryLearner();
 
   std::vector<Push> GetPushes(const std::string& master_url);
 
+  // Called when module receives an initial master request for a page, and
+  // module intends to log future child resource requests for learning.
   void AddFirstHit(const std::string& master_url);
 
+  // Called when module receives child resource requests associated with
+  // a master request received earlier.
   void AddAdjacentHit(const std::string& master_url,
                       const std::string& adjacent_url, int64_t time_from_init);
 

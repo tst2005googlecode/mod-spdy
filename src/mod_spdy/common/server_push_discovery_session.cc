@@ -23,10 +23,10 @@ ServerPushDiscoverySessionPool::ServerPushDiscoverySessionPool()
 }
 
 ServerPushDiscoverySession* ServerPushDiscoverySessionPool::GetExistingSession(
-    int64_t session_id,
+    SessionId session_id,
     int64_t request_time) {
   base::AutoLock lock(lock_);
-  std::map<int64_t, ServerPushDiscoverySession>::iterator it =
+  std::map<SessionId, ServerPushDiscoverySession>::iterator it =
       session_cache_.find(session_id);
   if (it == session_cache_.end() ||
       it->second.TimeFromInit(request_time) > kServerPushSessionTimeout) {
@@ -36,14 +36,14 @@ ServerPushDiscoverySession* ServerPushDiscoverySessionPool::GetExistingSession(
   return &(it->second);
 }
 
-int64_t ServerPushDiscoverySessionPool::CreateSession(
+SessionId ServerPushDiscoverySessionPool::CreateSession(
     int64_t request_time,
     const std::string& request_url,
     bool took_push) {
   base::AutoLock lock(lock_);
   CleanExpired(request_time);
   // Create a session to track this request chain
-  int64_t session_id = ++next_session_id_;
+  SessionId session_id = ++next_session_id_;
   session_cache_.insert(
       std::make_pair(session_id,
                      ServerPushDiscoverySession(
@@ -52,18 +52,21 @@ int64_t ServerPushDiscoverySessionPool::CreateSession(
 }
 
 void ServerPushDiscoverySessionPool::CleanExpired(int64_t request_time) {
+  lock_.AssertAcquired();
+
   std::map<int64_t, ServerPushDiscoverySession>::iterator it =
       session_cache_.begin();
   while (it != session_cache_.end()) {
-    if (it->second.TimeFromInit(request_time) > kServerPushSessionTimeout)
+    if (it->second.TimeFromInit(request_time) > kServerPushSessionTimeout) {
       session_cache_.erase(it++);
-    else
+    } else {
       ++it;
+    }
   }
 }
 
 ServerPushDiscoverySession::ServerPushDiscoverySession(
-    int64_t session_id,
+    SessionId session_id,
     int64_t initial_request_time,
     const std::string& master_url,
     bool took_push)
