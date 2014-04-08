@@ -17,8 +17,8 @@
 #include <string>
 
 #include "base/logging.h"
-#include "base/strings/string_piece.h"
-#include "base/strings/stringprintf.h"
+#include "base/string_piece.h"
+#include "base/stringprintf.h"
 
 namespace {
 

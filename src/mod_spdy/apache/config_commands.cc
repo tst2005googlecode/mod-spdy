@@ -16,7 +16,7 @@
 
 #include "apr_strings.h"
 
-#include "base/strings/string_number_conversions.h"
+#include "base/string_number_conversions.h"
 
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/pool_util.h"

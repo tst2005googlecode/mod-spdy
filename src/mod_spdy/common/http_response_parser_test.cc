@@ -14,7 +14,7 @@
 
 #include "mod_spdy/common/http_response_parser.h"
 
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 #include "mod_spdy/common/http_response_visitor_interface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"

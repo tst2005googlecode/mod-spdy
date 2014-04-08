@@ -21,7 +21,6 @@
 #include "base/synchronization/lock.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/protocol_util.h"
-#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_server_push_interface.h"
 #include "mod_spdy/common/spdy_stream.h"
@@ -54,42 +53,40 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // What SPDY version is being used for this session?
   spdy::SpdyVersion spdy_version() const { return spdy_version_; }
 
-  // What are the current shared window sizes for this session?  These are
-  // mostly useful for debugging.  Requires that spdy_version() >=
-  // SPDY_VERSION_3_1.
-  int32 current_shared_input_window_size() const;
-  int32 current_shared_output_window_size() const;
-
   // Process the session; don't return until the session is finished.
   void Run();
 
   // BufferedSpdyFramerVisitorInterface methods:
   virtual void OnError(net::SpdyFramer::SpdyError error_code);
-  virtual void OnStreamError(
-      net::SpdyStreamId stream_id, const std::string& description);
-  virtual void OnSynStream(
-      net::SpdyStreamId stream_id, net::SpdyStreamId associated_stream_id,
-      net::SpdyPriority priority, uint8 credential_slot, bool fin,
-      bool unidirectional, const net::SpdyHeaderBlock& headers);
-  virtual void OnSynReply(
-      net::SpdyStreamId stream_id, bool fin,
-      const net::SpdyHeaderBlock& headers);
-  virtual void OnHeaders(
-      net::SpdyStreamId stream_id, bool fin,
-      const net::SpdyHeaderBlock& headers);
-  virtual void OnStreamFrameData(
-      net::SpdyStreamId stream_id, const char* data, size_t length, bool fin);
-  virtual void OnSettings(bool clear_persisted);
+  virtual void OnStreamError(net::SpdyStreamId stream_id,
+                             const std::string& description);
+  virtual void OnSynStream(net::SpdyStreamId stream_id,
+                           net::SpdyStreamId associated_stream_id,
+                           net::SpdyPriority priority,
+                           uint8 credential_slot,
+                           bool fin,
+                           bool unidirectional,
+                           const net::SpdyHeaderBlock& headers);
+  virtual void OnSynReply(net::SpdyStreamId stream_id,
+                          bool fin,
+                          const net::SpdyHeaderBlock& headers);
+  virtual void OnHeaders(net::SpdyStreamId stream_id,
+                         bool fin,
+                         const net::SpdyHeaderBlock& headers);
+  virtual void OnStreamFrameData(net::SpdyStreamId stream_id,
+                                 const char* data, size_t length,
+                                 net::SpdyDataFlags flags);
   virtual void OnSetting(net::SpdySettingsIds id, uint8 flags, uint32 value);
   virtual void OnPing(uint32 unique_id);
-  virtual void OnRstStream(
-      net::SpdyStreamId stream_id, net::SpdyRstStreamStatus status);
-  virtual void OnGoAway(
-      net::SpdyStreamId last_accepted_stream_id, net::SpdyGoAwayStatus status);
-  virtual void OnWindowUpdate(
-      net::SpdyStreamId stream_id, uint32 delta_window_size);
-  virtual void OnPushPromise(
-      net::SpdyStreamId stream_id, net::SpdyStreamId promised_stream_id);
+  virtual void OnRstStream(net::SpdyStreamId stream_id,
+                           net::SpdyStatusCodes status);
+  virtual void OnGoAway(net::SpdyStreamId last_accepted_stream_id,
+                        net::SpdyGoAwayStatus status);
+  virtual void OnWindowUpdate(net::SpdyStreamId stream_id,
+                              int delta_window_size);
+  virtual void OnControlFrameCompressed(
+      const net::SpdyControlFrame& uncompressed_frame,
+      const net::SpdyControlFrame& compressed_frame);
 
   // SpdyServerPushInterface methods:
   // Initiate a SPDY server push, roughly by pretending that the client sent a
@@ -182,10 +179,10 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // Send a single SPDY frame to the client, compressing it first if necessary.
   // Stop the session if the connection turns out to be closed.  This method
   // takes ownership of the passed frame and will delete it.
-  void SendFrame(const net::SpdyFrameIR* frame);
+  void SendFrame(const net::SpdyFrame* frame);
   // Send the frame as-is (without taking ownership).  Stop the session if the
   // connection turns out to be closed.
-  void SendFrameRaw(const net::SpdySerializedFrame& frame);
+  void SendFrameRaw(const net::SpdyFrame& frame);
 
   // Immediately send a GOAWAY frame to the client with the given status,
   // unless we've already sent one.  This also prevents us from creating any
@@ -196,7 +193,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // Enqueue a RST_STREAM frame for the given stream ID.  Note that this does
   // not abort the stream if it exists; for that, use AbortStream().
   void SendRstStreamFrame(net::SpdyStreamId stream_id,
-                          net::SpdyRstStreamStatus status);
+                          net::SpdyStatusCodes status);
   // Immediately send our SETTINGS frame, with values based on our
   // SpdyServerConfig object.  This should be done exactly once, at session
   // start.
@@ -208,8 +205,7 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   // Abort the stream without sending anything to the client.
   void AbortStreamSilently(net::SpdyStreamId stream_id);
   // Send a RST_STREAM frame and then abort the stream.
-  void AbortStream(net::SpdyStreamId stream_id,
-                   net::SpdyRstStreamStatus status);
+  void AbortStream(net::SpdyStreamId stream_id, net::SpdyStatusCodes status);
 
   // Remove the given StreamTaskWrapper object from the stream map.  This is
   // the only other method of this class, aside from StartServerPush, that
@@ -251,10 +247,9 @@ class SpdySession : public net::BufferedSpdyFramerVisitorInterface,
   net::SpdyStreamId last_server_push_stream_id_;
   bool received_goaway_;  // we've received a GOAWAY frame from the client
 
-  // These objects are also shared between all stream threads, but these
-  // classes are each thread-safe, and don't need additional synchronization.
+  // The output queue is also shared between all stream threads, but its class
+  // is thread-safe, so it doesn't need additional synchronization.
   SpdyFramePriorityQueue output_queue_;
-  SharedFlowControlWindow shared_window_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdySession);
 };

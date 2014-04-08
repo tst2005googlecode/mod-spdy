@@ -23,7 +23,7 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
-#include "base/time/time.h"
+#include "base/time.h"
 #include "mod_spdy/common/executor.h"
 #include "net/instaweb/util/public/function.h"
 #include "net/spdy/spdy_protocol.h"

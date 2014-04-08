@@ -31,7 +31,7 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 #include "mod_spdy/apache/apache_spdy_session_io.h"
 #include "mod_spdy/apache/apache_spdy_stream_task_factory.h"
 #include "mod_spdy/apache/config_commands.h"
@@ -126,12 +126,9 @@ int spdy_get_version(conn_rec* connection) {
   if (mod_spdy::HasSlaveConnectionContext(connection)) {
     mod_spdy::SlaveConnectionContext* slave_context =
         mod_spdy::GetSlaveConnectionContext(connection);
-    if (slave_context->spdy_version() != mod_spdy::spdy::SPDY_VERSION_NONE) {
-      return mod_spdy::SpdyVersionToFramerVersion(
-          slave_context->spdy_version());
-    }
+    return mod_spdy::SpdyVersionToFramerVersion(
+        slave_context->spdy_version());
   }
-
   return 0;
 }
 
@@ -487,7 +484,7 @@ int AdvertiseSpdy(conn_rec* connection, apr_array_header_t* protos) {
 
   // Advertise SPDY to the client.  We push protocol names in descending order
   // of preference; the one we'd most prefer comes first.
-  APR_ARRAY_PUSH(protos, const char*) = kSpdy31ProtocolName;
+  // TODO(mdsteele): Advertise SPDY/3.1 once we fully support it.
   APR_ARRAY_PUSH(protos, const char*) = kSpdy3ProtocolName;
   APR_ARRAY_PUSH(protos, const char*) = kSpdy2ProtocolName;
   return OK;

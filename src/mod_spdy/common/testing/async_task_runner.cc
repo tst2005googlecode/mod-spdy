@@ -16,6 +16,7 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/memory/scoped_ptr.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/testing/notification.h"
 #include "mod_spdy/common/thread_pool.h"
@@ -52,7 +53,9 @@ AsyncTaskRunner::Task::Task() {}
 AsyncTaskRunner::Task::~Task() {}
 
 AsyncTaskRunner::AsyncTaskRunner(Task* task)
-    : task_(task), thread_pool_(1, 1) {}
+    : task_(task),
+      thread_pool_(1, 1),
+      executor_(NULL) {}
 
 AsyncTaskRunner::~AsyncTaskRunner() {}
 

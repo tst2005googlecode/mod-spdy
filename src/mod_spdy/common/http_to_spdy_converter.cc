@@ -18,7 +18,7 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 #include "mod_spdy/common/http_response_visitor_interface.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_protocol.h"
