@@ -93,8 +93,8 @@ function uncompress_file {
   fi
 }
 
-OPENSSL_SRC_TGZ_URL="http://www.openssl.org/source/openssl-1.0.1c.tar.gz"
-APACHE_HTTPD_SRC_TGZ_URL="http://archive.apache.org/dist/httpd/httpd-2.2.22.tar.gz"
+OPENSSL_SRC_TGZ_URL="https://www.openssl.org/source/openssl-1.0.1g.tar.gz"
+APACHE_HTTPD_SRC_TGZ_URL="https://archive.apache.org/dist/httpd/httpd-2.2.27.tar.gz"
 APACHE_HTTPD_MODSSL_NPN_PATCH_PATH="$(dirname $0)/scripts/mod_ssl_with_npn.patch"
 
 OPENSSL_SRC_TGZ=$(basename $OPENSSL_SRC_TGZ_URL)
@@ -112,8 +112,8 @@ cp $APACHE_HTTPD_MODSSL_NPN_PATCH_PATH $BUILDROOT/$APACHE_HTTPD_MODSSL_NPN_PATCH
 
 pushd $BUILDROOT >/dev/null
 
-download_file $OPENSSL_SRC_TGZ_URL $OPENSSL_SRC_TGZ ae412727c8c15b67880aef7bd2999b2e
-download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ d77fa5af23df96a8af68ea8114fa6ce1
+download_file $OPENSSL_SRC_TGZ_URL $OPENSSL_SRC_TGZ de62b43dfcd858e66a74bee1c834e959
+download_file $APACHE_HTTPD_SRC_TGZ_URL $APACHE_HTTPD_SRC_TGZ 148eb08e731916a43a33a6ffa25f17c0
 
 echo ""
 
@@ -122,7 +122,7 @@ uncompress_file $APACHE_HTTPD_SRC_TGZ
 
 if [ ! -f "$PROGRESS_DIR/modssl_patched" ]; then
   pushd $APACHE_HTTPD_SRC_ROOT >/dev/null
-  echo -n "Applying Apache mod_ssl NPN patch ... "
+  echo "Applying Apache mod_ssl NPN patch ... "
   patch -p0 < $BUILDROOT/$APACHE_HTTPD_MODSSL_NPN_PATCH
   if [ $? -ne 0 ]; then
     echo "Failed to patch."
