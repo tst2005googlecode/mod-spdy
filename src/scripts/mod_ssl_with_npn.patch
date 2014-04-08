@@ -1,8 +1,8 @@
 Index: modules/ssl/ssl_private.h
 ===================================================================
---- modules/ssl/ssl_private.h	(revision 1367982)
+--- modules/ssl/ssl_private.h	(revision 1585744)
 +++ modules/ssl/ssl_private.h	(working copy)
-@@ -603,6 +603,7 @@
+@@ -653,6 +653,7 @@
  #ifndef OPENSSL_NO_TLSEXT
  int          ssl_callback_ServerNameIndication(SSL *, int *, modssl_ctx_t *);
  #endif
@@ -12,10 +12,10 @@ Index: modules/ssl/ssl_private.h
  void         ssl_scache_init(server_rec *, apr_pool_t *);
 Index: modules/ssl/ssl_engine_init.c
 ===================================================================
---- modules/ssl/ssl_engine_init.c	(revision 1367982)
+--- modules/ssl/ssl_engine_init.c	(revision 1585744)
 +++ modules/ssl/ssl_engine_init.c	(working copy)
-@@ -559,6 +559,11 @@
-     SSL_CTX_set_tmp_dh_callback(ctx,  ssl_callback_TmpDH);
+@@ -654,6 +654,11 @@
+ #endif
  
      SSL_CTX_set_info_callback(ctx, ssl_callback_Info);
 +
@@ -28,7 +28,7 @@ Index: modules/ssl/ssl_engine_init.c
  static void ssl_init_ctx_verify(server_rec *s,
 Index: modules/ssl/ssl_engine_io.c
 ===================================================================
---- modules/ssl/ssl_engine_io.c	(revision 1367982)
+--- modules/ssl/ssl_engine_io.c	(revision 1585744)
 +++ modules/ssl/ssl_engine_io.c	(working copy)
 @@ -338,6 +338,7 @@
      apr_pool_t *pool;
@@ -38,7 +38,7 @@ Index: modules/ssl/ssl_engine_io.c
  } bio_filter_in_ctx_t;
  
  /*
-@@ -1409,6 +1410,27 @@
+@@ -1451,6 +1452,27 @@
          APR_BRIGADE_INSERT_TAIL(bb, bucket);
      }
  
@@ -66,7 +66,7 @@ Index: modules/ssl/ssl_engine_io.c
      return APR_SUCCESS;
  }
  
-@@ -1753,6 +1775,7 @@
+@@ -1795,6 +1817,7 @@
      inctx->block = APR_BLOCK_READ;
      inctx->pool = c->pool;
      inctx->filter_ctx = filter_ctx;
@@ -76,9 +76,9 @@ Index: modules/ssl/ssl_engine_io.c
  void ssl_io_filter_init(conn_rec *c, SSL *ssl)
 Index: modules/ssl/ssl_engine_kernel.c
 ===================================================================
---- modules/ssl/ssl_engine_kernel.c	(revision 1367982)
+--- modules/ssl/ssl_engine_kernel.c	(revision 1585744)
 +++ modules/ssl/ssl_engine_kernel.c	(working copy)
-@@ -2104,3 +2104,84 @@
+@@ -2141,3 +2141,84 @@
      return 0;
  }
  #endif
@@ -165,9 +165,9 @@ Index: modules/ssl/ssl_engine_kernel.c
 +#endif
 Index: modules/ssl/mod_ssl.c
 ===================================================================
---- modules/ssl/mod_ssl.c	(revision 1367982)
+--- modules/ssl/mod_ssl.c	(revision 1585744)
 +++ modules/ssl/mod_ssl.c	(working copy)
-@@ -220,6 +220,18 @@
+@@ -237,6 +237,18 @@
      AP_END_CMD
  };
  
@@ -188,7 +188,7 @@ Index: modules/ssl/mod_ssl.c
   */
 Index: modules/ssl/mod_ssl.h
 ===================================================================
---- modules/ssl/mod_ssl.h	(revision 1367982)
+--- modules/ssl/mod_ssl.h	(revision 1585744)
 +++ modules/ssl/mod_ssl.h	(working copy)
 @@ -60,5 +60,26 @@
  
@@ -219,9 +219,9 @@ Index: modules/ssl/mod_ssl.h
  /** @} */
 Index: modules/ssl/ssl_toolkit_compat.h
 ===================================================================
---- modules/ssl/ssl_toolkit_compat.h	(revision 1367982)
+--- modules/ssl/ssl_toolkit_compat.h	(revision 1585744)
 +++ modules/ssl/ssl_toolkit_compat.h	(working copy)
-@@ -145,6 +145,11 @@
+@@ -151,6 +151,11 @@
  #define HAVE_FIPS
  #endif
  
