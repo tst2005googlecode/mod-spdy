@@ -66,6 +66,7 @@
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/build/build_util.gyp:mod_spdy_version_header',
         '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
+        '<(DEPTH)/third_party/apache/util_cookies/util_cookies.gyp:include',
       ],
       'include_dirs': [
         '<(DEPTH)',
@@ -82,6 +83,7 @@
         'apache/config_util.cc',
         'apache/filters/http_to_spdy_filter.cc',
         'apache/filters/server_push_filter.cc',
+        'apache/filters/server_push_discovery_filter.cc',
         'apache/filters/spdy_to_http_filter.cc',
         'apache/id_pool.cc',
         'apache/log_message_handler.cc',
@@ -103,6 +105,7 @@
         '<(DEPTH)/build/build_util.gyp:mod_spdy_version_header',
         '<(DEPTH)/net/net.gyp:spdy',
         '<(DEPTH)/third_party/apache/httpd/httpd.gyp:include',
+        '<(DEPTH)/third_party/apache/util_cookies/util_cookies.gyp:util_cookies',
       ],
       'include_dirs': [
         '<(DEPTH)',
@@ -180,12 +183,14 @@
         '<(DEPTH)/testing/gtest.gyp:gtest',
         '<(DEPTH)/third_party/apache/apr/apr.gyp:apr',
         '<(DEPTH)/third_party/apache/aprutil/aprutil.gyp:aprutil',
+        '<(DEPTH)/third_party/apache/util_cookies/util_cookies.gyp:util_cookies',
       ],
       'include_dirs': [
         '<(DEPTH)',
       ],
       'sources': [
         'apache/filters/http_to_spdy_filter_test.cc',
+        'apache/filters/server_push_discovery_filter_test.cc',
         'apache/filters/server_push_filter_test.cc',
         'apache/filters/spdy_to_http_filter_test.cc',
         'apache/id_pool_test.cc',

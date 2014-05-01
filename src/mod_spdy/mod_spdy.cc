@@ -37,6 +37,7 @@
 #include "mod_spdy/apache/config_commands.h"
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/id_pool.h"
+#include "mod_spdy/apache/filters/server_push_discovery_filter.h"
 #include "mod_spdy/apache/filters/server_push_filter.h"
 #include "mod_spdy/apache/log_message_handler.h"
 #include "mod_spdy/apache/master_connection_context.h"
@@ -46,8 +47,11 @@
 #include "mod_spdy/apache/ssl_util.h"
 #include "mod_spdy/common/executor.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "mod_spdy/common/server_push_discovery_learner.h"
+#include "mod_spdy/common/server_push_discovery_session.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_session.h"
+#include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/thread_pool.h"
 #include "mod_spdy/common/version.h"
 
@@ -93,12 +97,13 @@ const char* const kPhpModuleNames[] = {
   "php6_module"
 };
 
-// This global variable stores the filter handle for our push filter.  Normally,
+// These globals store the filter handles for our output filters.  Normally,
 // global variables would be very dangerous in a concurrent environment like
 // Apache, but this one is okay because it is assigned just once, at
 // start-up (during which Apache is running single-threaded; see TAMB 2.2.1),
 // and are read-only thereafter.
 ap_filter_rec_t* gServerPushFilterHandle = NULL;
+ap_filter_rec_t* gServerPushDiscoveryFilterHandle = NULL;
 
 // A process-global thread pool for processing SPDY streams concurrently.  This
 // is initialized once in *each child process* by our child-init hook.  Note
@@ -108,6 +113,11 @@ ap_filter_rec_t* gServerPushFilterHandle = NULL;
 // because ThreadPool objects are thread-safe.  Users just have to make sure
 // that they configure SpdyMaxThreadsPerProcess depending on the MPM.
 mod_spdy::ThreadPool* gPerProcessThreadPool = NULL;
+
+// Process-global objects used for SPDY server push discovery;
+mod_spdy::ServerPushDiscoveryLearner* gServerPushDiscoveryLearner = NULL;
+mod_spdy::ServerPushDiscoverySessionPool*
+gServerPushDiscoverySessionPool = NULL;
 
 // Optional function provided by mod_spdy.  Return zero if the connection is
 // not using SPDY, otherwise return the SPDY version number in use.  Note that
@@ -140,6 +150,32 @@ apr_status_t ServerPushFilterFunc(ap_filter_t* filter,
   mod_spdy::ServerPushFilter* server_push_filter =
       static_cast<mod_spdy::ServerPushFilter*>(filter->ctx);
   return server_push_filter->Write(filter, input_brigade);
+}
+
+apr_status_t ServerPushDiscoveryFilterFunc(ap_filter_t* filter,
+                                           apr_bucket_brigade* input_brigade) {
+  // Don't auto-generate more pushes for pushed content.
+  if (mod_spdy::HasSlaveConnectionContext(filter->r->connection)) {
+    mod_spdy::SlaveConnectionContext* slave_context =
+        mod_spdy::GetSlaveConnectionContext(filter->r->connection);
+    mod_spdy::SpdyStream* stream = slave_context->slave_stream();
+    if (stream && stream->server_push_depth() > 0) {
+      ap_remove_output_filter(filter);
+      return ap_pass_brigade(filter->next, input_brigade);
+    }
+  }
+
+  ServerPushDiscoveryFilter(
+      filter,
+      input_brigade,
+      gServerPushDiscoveryLearner,
+      gServerPushDiscoverySessionPool,
+      spdy_get_version(filter->r->connection),
+      mod_spdy::GetServerConfig(filter->r->connection)->
+          server_push_discovery_send_debug_headers());
+
+  ap_remove_output_filter(filter);
+  return ap_pass_brigade(filter->next, input_brigade);
 }
 
 // Called on server startup, after all modules have loaded.
@@ -202,12 +238,16 @@ void ChildInit(apr_pool_t* pool, server_rec* server_list) {
 
   // Check whether mod_spdy is enabled for any server_rec in the list, and
   // determine the most verbose log level of any server in the list.
+  // Also determines if server push discovery is enabled for any server.
   bool spdy_enabled = false;
+  bool server_push_discovery_enabled = false;
   int max_apache_log_level = APLOG_EMERG;  // the least verbose log level
   COMPILE_ASSERT(APLOG_INFO > APLOG_ERR, bigger_number_means_more_verbose);
   for (server_rec* server = server_list; server != NULL;
        server = server->next) {
     spdy_enabled |= mod_spdy::GetServerConfig(server)->spdy_enabled();
+    server_push_discovery_enabled |=
+        mod_spdy::GetServerConfig(server)->server_push_discovery_enabled();
     if (server->loglevel > max_apache_log_level) {
       max_apache_log_level = server->loglevel;
     }
@@ -242,6 +282,14 @@ void ChildInit(apr_pool_t* pool, server_rec* server_list) {
   } else {
     LOG(DFATAL) << "Could not create mod_spdy thread pool; "
                 << "mod_spdy will not function.";
+  }
+
+  if (server_push_discovery_enabled) {
+    gServerPushDiscoveryLearner = new mod_spdy::ServerPushDiscoveryLearner;
+    mod_spdy::PoolRegisterDelete(pool, gServerPushDiscoveryLearner);
+    gServerPushDiscoverySessionPool =
+        new mod_spdy::ServerPushDiscoverySessionPool;
+    mod_spdy::PoolRegisterDelete(pool, gServerPushDiscoverySessionPool);
   }
 }
 
@@ -647,6 +695,14 @@ void InsertRequestFilters(request_rec* request) {
     return;
   }
 
+  if (mod_spdy::GetServerConfig(connection)->server_push_discovery_enabled()) {
+    ap_add_output_filter_handle(
+        gServerPushDiscoveryFilterHandle,  // filter handle
+        NULL,                              // context (any void* we want)
+        request,                           // request object
+        connection);                       // connection object
+  }
+
   // Don't do anything unless this is a slave connection.
   if (!mod_spdy::HasSlaveConnectionContext(connection)) {
     return;
@@ -803,6 +859,15 @@ void RegisterHooks(apr_pool_t* pool) {
       // mod_headers doesn't run until the CONTENT_SET stage, so if we ran at
       // the RESOURCE stage, that would be too early).
       static_cast<ap_filter_type>(AP_FTYPE_PROTOCOL - 1));
+
+  // Create the filter used to do server push discovery for auto-generation of
+  // X-Associated-Content headers.
+  gServerPushDiscoveryFilterHandle = ap_register_output_filter(
+      "SPDY_SERVER_PUSH_DISCOVERY",   // name
+      ServerPushDiscoveryFilterFunc,  // filter function
+      NULL,                           // init function
+      // Should always be before the SPDY_SERVER_PUSH filter.
+      AP_FTYPE_CONTENT_SET);
 
   // Register our optional functions, so that other modules can retrieve and
   // use them.  See TAMB 10.1.2.

@@ -16,7 +16,7 @@
 
 namespace mod_spdy {
 
-const int64_t kServerPushSessionTimeout = 1000000;  // 1 second in microseconds.
+const int64_t kServerPushSessionTimeout = 2000000;  // 2 second in microseconds.
 
 ServerPushDiscoverySessionPool::ServerPushDiscoverySessionPool()
     : next_session_id_(0) {
@@ -29,7 +29,7 @@ ServerPushDiscoverySession* ServerPushDiscoverySessionPool::GetExistingSession(
   std::map<SessionId, ServerPushDiscoverySession>::iterator it =
       session_cache_.find(session_id);
   if (it == session_cache_.end() ||
-      it->second.TimeFromInit(request_time) > kServerPushSessionTimeout) {
+      it->second.TimeFromLastAccess(request_time) > kServerPushSessionTimeout) {
     return NULL;
   }
 
@@ -44,7 +44,7 @@ ServerPushDiscoverySessionPool::CreateSession(
   base::AutoLock lock(lock_);
   CleanExpired(request_time);
   // Create a session to track this request chain
-  SessionId session_id = ++next_session_id_;
+  SessionId session_id = next_session_id_++;
   session_cache_.insert(
       std::make_pair(session_id,
                      ServerPushDiscoverySession(
@@ -58,7 +58,8 @@ void ServerPushDiscoverySessionPool::CleanExpired(int64_t request_time) {
   std::map<int64_t, ServerPushDiscoverySession>::iterator it =
       session_cache_.begin();
   while (it != session_cache_.end()) {
-    if (it->second.TimeFromInit(request_time) > kServerPushSessionTimeout) {
+    if (it->second.TimeFromLastAccess(request_time) >
+            kServerPushSessionTimeout) {
       session_cache_.erase(it++);
     } else {
       ++it;

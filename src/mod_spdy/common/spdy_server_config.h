@@ -55,6 +55,16 @@ class SpdyServerConfig {
   // version number.
   bool send_version_header() const { return send_version_header_.get(); }
 
+  // Return if SPDY server push discovery is enabled.
+  bool server_push_discovery_enabled() const {
+    return server_push_discovery_enabled_.get();
+  }
+
+  // Return if we should send server push discovery debug headers to user agent.
+  bool server_push_discovery_send_debug_headers() const {
+    return server_push_discovery_send_debug_headers_.get();
+  }
+
   // If nonzero, assume (unencrypted) SPDY/x for non-SSL connections, where x
   // is the version number returned here.  This will most likely break normal
   // browsers, but is useful for testing.
@@ -74,6 +84,12 @@ class SpdyServerConfig {
   void set_max_threads_per_process(int n) { max_threads_per_process_.set(n); }
   void set_max_server_push_depth(int n) { max_server_push_depth_.set(n); }
   void set_send_version_header(bool b) { send_version_header_.set(b); }
+  void set_server_push_discovery_enabled(bool b) {
+    return server_push_discovery_enabled_.set(b);
+  }
+  void set_server_push_discovery_send_debug_headers(bool b) {
+    return server_push_discovery_send_debug_headers_.set(b);
+  }
   void set_use_spdy_version_without_ssl(spdy::SpdyVersion v) {
     use_spdy_version_without_ssl_.set(v);
   }
@@ -108,6 +124,8 @@ class SpdyServerConfig {
   Option<int> max_threads_per_process_;
   Option<int> max_server_push_depth_;
   Option<bool> send_version_header_;
+  Option<bool> server_push_discovery_enabled_;
+  Option<bool> server_push_discovery_send_debug_headers_;
   Option<spdy::SpdyVersion> use_spdy_version_without_ssl_;
   Option<int> vlog_level_;
   // Note: Add more config options here as needed; be sure to also update the

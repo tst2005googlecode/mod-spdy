@@ -24,6 +24,8 @@ const int kDefaultMinThreadsPerProcess = 2;
 const int kDefaultMaxThreadsPerProcess = 10;
 const int kDefaultMaxServerPushDepth = 1;
 const bool kDefaultSendVersionHeader = true;
+const bool kDefaultServerPushDiscoveryEnabled = false;
+const bool kDefaultServerPushDiscoverySendDebugHeaders = false;
 const mod_spdy::spdy::SpdyVersion kDefaultUseSpdyVersionWithoutSsl =
     mod_spdy::spdy::SPDY_VERSION_NONE;
 const int kDefaultVlogLevel = 0;
@@ -39,6 +41,9 @@ SpdyServerConfig::SpdyServerConfig()
       max_threads_per_process_(kDefaultMaxThreadsPerProcess),
       max_server_push_depth_(kDefaultMaxServerPushDepth),
       send_version_header_(kDefaultSendVersionHeader),
+      server_push_discovery_enabled_(kDefaultServerPushDiscoveryEnabled),
+      server_push_discovery_send_debug_headers_(
+          kDefaultServerPushDiscoverySendDebugHeaders),
       use_spdy_version_without_ssl_(kDefaultUseSpdyVersionWithoutSsl),
       vlog_level_(kDefaultVlogLevel) {}
 
@@ -57,6 +62,11 @@ void SpdyServerConfig::MergeFrom(const SpdyServerConfig& a,
                                    b.max_server_push_depth_);
   send_version_header_.MergeFrom(
       a.send_version_header_, b.send_version_header_);
+  server_push_discovery_enabled_.MergeFrom(a.server_push_discovery_enabled_,
+                                           b.server_push_discovery_enabled_);
+  server_push_discovery_send_debug_headers_.MergeFrom(
+      a.server_push_discovery_send_debug_headers_,
+      b.server_push_discovery_send_debug_headers_);
   use_spdy_version_without_ssl_.MergeFrom(
       a.use_spdy_version_without_ssl_, b.use_spdy_version_without_ssl_);
   vlog_level_.MergeFrom(a.vlog_level_, b.vlog_level_);

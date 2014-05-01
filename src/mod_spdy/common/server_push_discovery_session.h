@@ -72,6 +72,12 @@ class ServerPushDiscoverySession {
     return request_time - initial_request_time_;
   }
 
+  // Returns the elapsed microseconds between the last request on this session
+  // and the current request.
+  int64_t TimeFromLastAccess(int64_t request_time) const {
+    return request_time - last_access_;
+  }
+
   const std::string& master_url() const { return master_url_; }
   bool took_push() const { return took_push_; }
 
