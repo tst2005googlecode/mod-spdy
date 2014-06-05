@@ -14,7 +14,7 @@
 
 #include "mod_spdy/common/testing/notification.h"
 
-#include "base/time/time.h"
+#include "base/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace mod_spdy {

@@ -17,9 +17,9 @@
 #include <string>
 
 #include "base/logging.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
-#include "base/strings/string_util.h"
+#include "base/string_number_conversions.h"
+#include "base/string_piece.h"
+#include "base/string_util.h"
 #include "mod_spdy/common/http_response_visitor_interface.h"
 #include "mod_spdy/common/protocol_util.h"
 

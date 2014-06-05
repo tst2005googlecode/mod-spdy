@@ -15,9 +15,10 @@
 #include "mod_spdy/common/spdy_to_http_converter.h"
 
 #include "base/memory/scoped_ptr.h"
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 #include "mod_spdy/common/http_request_visitor_interface.h"
 #include "mod_spdy/common/protocol_util.h"
+#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -56,7 +57,9 @@ class MockHttpRequestVisitor: public mod_spdy::HttpRequestVisitorInterface {
 class SpdyToHttpConverterTest :
       public testing::TestWithParam<mod_spdy::spdy::SpdyVersion> {
  public:
-  SpdyToHttpConverterTest() : converter_(GetParam(), &visitor_) {}
+  SpdyToHttpConverterTest() :
+      converter_(GetParam(), &visitor_),
+      framer_(mod_spdy::SpdyVersionToFramerVersion(GetParam())) {}
 
  protected:
   void AddRequiredHeaders() {
@@ -77,6 +80,7 @@ class SpdyToHttpConverterTest :
 
   MockHttpRequestVisitor visitor_;
   SpdyToHttpConverter converter_;
+  net::SpdyFramer framer_;
   net::SpdyHeaderBlock headers_;
 };
 
@@ -94,32 +98,38 @@ TEST_P(SpdyToHttpConverterTest, MultiFrameStream) {
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq(mod_spdy::http::kAcceptEncoding),
                                         Eq(mod_spdy::http::kGzipDeflate)));
   EXPECT_CALL(visitor_, OnLeadingHeadersComplete());
-  scoped_ptr<net::SpdySynStreamIR> syn_stream_frame(
-      new net::SpdySynStreamIR(stream_id));
-  syn_stream_frame->set_priority(1);
-  syn_stream_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdySynStreamControlFrame> syn_stream_frame(
+      framer_.CreateSynStream(
+          stream_id,
+          0,  // associated stream ID
+          1,  // priority
+          0,  // credential slot
+          net::CONTROL_FLAG_NONE,  // flags
+          false,  // use compression
+          &headers_));
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
             converter_.ConvertSynStreamFrame(*syn_stream_frame));
 
   EXPECT_CALL(visitor_, OnDataChunk(Eq(kHost)));
-  scoped_ptr<net::SpdyDataIR> data_frame_1(
-      new net::SpdyDataIR(stream_id, kHost));
+  scoped_ptr<net::SpdyDataFrame> data_frame_1(
+      framer_.CreateDataFrame(
+          stream_id, kHost, strlen(kHost), net::DATA_FLAG_NONE));
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
             converter_.ConvertDataFrame(*data_frame_1));
 
   // Should be no call to OnDataChunk for an empty data frame.
-  scoped_ptr<net::SpdyDataIR> data_frame_empty(
-      new net::SpdyDataIR(stream_id, ""));
+  scoped_ptr<net::SpdyDataFrame> data_frame_empty(
+      framer_.CreateDataFrame(
+          stream_id, "", 0, net::DATA_FLAG_NONE));
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
             converter_.ConvertDataFrame(*data_frame_empty));
 
   EXPECT_CALL(visitor_, OnDataChunk(Eq(kVersion)));
   EXPECT_CALL(visitor_, OnDataChunksComplete());
   EXPECT_CALL(visitor_, OnComplete());
-  scoped_ptr<net::SpdyDataIR> data_frame_2(
-      new net::SpdyDataIR(stream_id, kVersion));
-  data_frame_2->set_fin(true);
+  scoped_ptr<net::SpdyDataFrame> data_frame_2(
+      framer_.CreateDataFrame(
+          stream_id, kVersion, strlen(kVersion), net::DATA_FLAG_FIN));
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
             converter_.ConvertDataFrame(*data_frame_2));
 }
@@ -137,11 +147,15 @@ TEST_P(SpdyToHttpConverterTest, SynFrameWithHeaders) {
   // Also make sure "junk" headers get skipped over.
   headers_["empty"] = std::string("\0\0\0", 3);
 
-  scoped_ptr<net::SpdySynStreamIR> syn_frame(new net::SpdySynStreamIR(1));
-  syn_frame->set_priority(1);
-  syn_frame->set_fin(true);
-  syn_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdySynStreamControlFrame> syn_frame(
+      framer_.CreateSynStream(
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          0,  // credential slot
+          net::CONTROL_FLAG_FIN,  // flags
+          false,  // use compression
+          &headers_));
 
   // We expect a call to OnRequestLine(), followed by several calls to
   // OnLeadingHeader() (the order of the calls to OnLeadingHeader() is
@@ -187,10 +201,15 @@ TEST_P(SpdyToHttpConverterTest, TrailingHeaders) {
   // because there might still be a HEADERS frame.
   AddRequiredHeaders();
   headers_["foo"] = "bar";
-  scoped_ptr<net::SpdySynStreamIR> syn_frame(new net::SpdySynStreamIR(1));
-  syn_frame->set_priority(1);
-  syn_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdySynStreamControlFrame> syn_frame(
+      framer_.CreateSynStream(
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          0,  // credential slot
+          net::CONTROL_FLAG_NONE,  // flags
+          false,  // use compression
+          &headers_));
 
   Sequence s1, s2;
   EXPECT_CALL(visitor_, OnRequestLine(Eq(kMethod), Eq(kPath), Eq(kVersion)))
@@ -206,8 +225,11 @@ TEST_P(SpdyToHttpConverterTest, TrailingHeaders) {
   // Next, send a DATA frame.  This should trigger the accept-encoding and
   // transfer-encoding headers, and the end of the leading headers (along with
   // the data itself, of course).
-  scoped_ptr<net::SpdyDataIR> data_frame(
-      new net::SpdyDataIR(1, "Hello, world!\n"));
+  scoped_ptr<net::SpdyDataFrame> data_frame(framer_.CreateDataFrame(
+      1,  // stream ID
+      "Hello, world!\n",  // data
+      14, // data length
+      net::DATA_FLAG_NONE));  // flags
 
   EXPECT_CALL(visitor_, OnLeadingHeader(Eq("transfer-encoding"),
                                         Eq("chunked"))).InSequence(s1, s2);
@@ -225,10 +247,12 @@ TEST_P(SpdyToHttpConverterTest, TrailingHeaders) {
   // be closed.
   headers_.clear();
   headers_["quux"] = "baz";
-  scoped_ptr<net::SpdyHeadersIR> headers_frame(new net::SpdyHeadersIR(1));
-  headers_frame->set_fin(true);
-  headers_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdyHeadersControlFrame> headers_frame(
+      framer_.CreateHeaders(
+          1,  // stream ID
+          net::CONTROL_FLAG_FIN,  // flags
+          false,  // use compression
+          &headers_));
 
   EXPECT_CALL(visitor_, OnDataChunksComplete()).InSequence(s1, s2);
   EXPECT_CALL(visitor_, OnTrailingHeader(Eq("quux"), Eq("baz")))
@@ -246,10 +270,15 @@ TEST_P(SpdyToHttpConverterTest, WithContentLength) {
   // because there might still be a HEADERS frame.
   AddRequiredHeaders();
   headers_["content-length"] = "11";
-  scoped_ptr<net::SpdySynStreamIR> syn_frame(new net::SpdySynStreamIR(1));
-  syn_frame->set_priority(1);
-  syn_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdySynStreamControlFrame> syn_frame(
+      framer_.CreateSynStream(
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          0,  // credential slot
+          net::CONTROL_FLAG_NONE,  // flags
+          false,  // use compression
+          &headers_));
 
   Sequence s1, s2;
   EXPECT_CALL(visitor_, OnRequestLine(Eq(kMethod), Eq(kPath), Eq(kVersion)))
@@ -265,8 +294,11 @@ TEST_P(SpdyToHttpConverterTest, WithContentLength) {
   // Next, send a DATA frame.  This should trigger the end of the leading
   // headers (along with the data itself, of course), but because we sent a
   // content-length, the data should not be chunked.
-  scoped_ptr<net::SpdyDataIR> data_frame(
-      new net::SpdyDataIR(1, "foobar=quux"));
+  scoped_ptr<net::SpdyDataFrame> data_frame(framer_.CreateDataFrame(
+      1,  // stream ID
+      "foobar=quux",  // data
+      11, // data length
+      net::DATA_FLAG_NONE));  // flags
 
   EXPECT_CALL(visitor_, OnLeadingHeader(
       Eq(mod_spdy::http::kAcceptEncoding),
@@ -281,10 +313,12 @@ TEST_P(SpdyToHttpConverterTest, WithContentLength) {
   // this stream, the trailing headers should be ignored.
   headers_.clear();
   headers_["x-metadata"] = "baz";
-  scoped_ptr<net::SpdyHeadersIR> headers_frame(new net::SpdyHeadersIR(1));
-  headers_frame->set_fin(true);
-  headers_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdyHeadersControlFrame> headers_frame(
+      framer_.CreateHeaders(
+          1,  // stream ID
+          net::CONTROL_FLAG_FIN,  // flags
+          false,  // use compression
+          &headers_));
 
   EXPECT_CALL(visitor_, OnComplete()).InSequence(s1, s2);
 
@@ -294,12 +328,15 @@ TEST_P(SpdyToHttpConverterTest, WithContentLength) {
 
 TEST_P(SpdyToHttpConverterTest, DoubleSynStreamFrame) {
   AddRequiredHeaders();
-  scoped_ptr<net::SpdySynStreamIR> syn_frame(
-      new net::SpdySynStreamIR(1));
-  syn_frame->set_priority(1);
-  syn_frame->set_fin(true);
-  syn_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdySynStreamControlFrame> syn_stream_frame(
+      framer_.CreateSynStream(
+          1,  // stream ID
+          0,  // associated stream ID
+          1,  // priority
+          0,  // credential slot
+          net::CONTROL_FLAG_FIN,  // flags
+          false,  // use compression
+          &headers_));
 
   InSequence seq;
   EXPECT_CALL(visitor_, OnRequestLine(Eq(kMethod), Eq(kPath), Eq(kVersion)));
@@ -311,23 +348,28 @@ TEST_P(SpdyToHttpConverterTest, DoubleSynStreamFrame) {
   EXPECT_CALL(visitor_, OnComplete());
 
   EXPECT_EQ(SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS,
-            converter_.ConvertSynStreamFrame(*syn_frame));
+            converter_.ConvertSynStreamFrame(*syn_stream_frame));
   EXPECT_EQ(SpdyToHttpConverter::EXTRA_SYN_STREAM,
-            converter_.ConvertSynStreamFrame(*syn_frame));
+            converter_.ConvertSynStreamFrame(*syn_stream_frame));
 }
 
 TEST_P(SpdyToHttpConverterTest, HeadersFrameBeforeSynStreamFrame) {
   headers_["x-foo"] = "bar";
-  scoped_ptr<net::SpdyHeadersIR> headers_frame(new net::SpdyHeadersIR(1));
-  headers_frame->GetMutableNameValueBlock()->insert(
-      headers_.begin(), headers_.end());
+  scoped_ptr<net::SpdyHeadersControlFrame> headers_frame(
+      framer_.CreateHeaders(
+          1,  // stream ID
+          net::CONTROL_FLAG_NONE,  // flags
+          false,  // use compression
+          &headers_));
   EXPECT_EQ(SpdyToHttpConverter::FRAME_BEFORE_SYN_STREAM,
             converter_.ConvertHeadersFrame(*headers_frame));
 }
 
 TEST_P(SpdyToHttpConverterTest, DataFrameBeforeSynStreamFrame) {
-  scoped_ptr<net::SpdyDataIR> data_frame(
-      new net::SpdyDataIR(1, kHost));
+  scoped_ptr<net::SpdyDataFrame> data_frame(
+      framer_.CreateDataFrame(
+          1,  // stream ID
+          kHost, strlen(kHost), net::DATA_FLAG_NONE));
   EXPECT_EQ(SpdyToHttpConverter::FRAME_BEFORE_SYN_STREAM,
             converter_.ConvertDataFrame(*data_frame));
 }

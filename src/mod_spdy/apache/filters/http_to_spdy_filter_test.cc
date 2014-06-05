@@ -22,22 +22,26 @@
 #include "util_filter.h"
 
 #include "base/memory/scoped_ptr.h"
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 #include "mod_spdy/apache/pool_util.h"
 #include "mod_spdy/common/protocol_util.h"
-#include "mod_spdy/common/shared_flow_control_window.h"
 #include "mod_spdy/common/spdy_frame_priority_queue.h"
 #include "mod_spdy/common/spdy_server_config.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/testing/spdy_frame_matchers.h"
 #include "mod_spdy/common/version.h"
+#include "net/spdy/buffered_spdy_framer.h"
+#include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using mod_spdy::testing::FlagFinIs;
+using mod_spdy::testing::IsControlFrameOfType;
 using mod_spdy::testing::IsDataFrame;
-using mod_spdy::testing::IsHeaders;
-using mod_spdy::testing::IsSynReply;
+using mod_spdy::testing::IsDataFrameWith;
+using mod_spdy::testing::StreamIdIs;
+using mod_spdy::testing::UncompressedHeadersAre;
 using testing::Pointee;
 
 namespace {
@@ -57,8 +61,8 @@ class HttpToSpdyFilterTest :
  public:
   HttpToSpdyFilterTest()
       : spdy_version_(GetParam()),
-        shared_window_(net::kSpdyStreamInitialWindowSize,
-                       net::kSpdyStreamInitialWindowSize),
+        framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
+        buffered_framer_(mod_spdy::SpdyVersionToFramerVersion(spdy_version_)),
         connection_(static_cast<conn_rec*>(
           apr_pcalloc(local_.pool(), sizeof(conn_rec)))),
         ap_filter_(static_cast<ap_filter_t*>(
@@ -98,34 +102,41 @@ class HttpToSpdyFilterTest :
   void ExpectSynReply(net::SpdyStreamId stream_id,
                       const net::SpdyHeaderBlock& headers,
                       bool flag_fin) {
-    net::SpdyFrameIR* raw_frame = NULL;
+    net::SpdyFrame* raw_frame = NULL;
     ASSERT_TRUE(output_queue_.Pop(&raw_frame));
     ASSERT_TRUE(raw_frame != NULL);
-    scoped_ptr<net::SpdyFrameIR> frame(raw_frame);
-    EXPECT_THAT(*frame, IsSynReply(stream_id, flag_fin, headers));
+    scoped_ptr<net::SpdyFrame> frame(raw_frame);
+    EXPECT_THAT(*frame, AllOf(IsControlFrameOfType(net::SYN_REPLY),
+                              StreamIdIs(stream_id),
+                              UncompressedHeadersAre(headers),
+                              FlagFinIs(flag_fin)));
   }
 
   void ExpectHeaders(net::SpdyStreamId stream_id,
                      const net::SpdyHeaderBlock& headers,
                      bool flag_fin) {
-    net::SpdyFrameIR* raw_frame = NULL;
+    net::SpdyFrame* raw_frame = NULL;
     ASSERT_TRUE(output_queue_.Pop(&raw_frame));
     ASSERT_TRUE(raw_frame != NULL);
-    scoped_ptr<net::SpdyFrameIR> frame(raw_frame);
-    EXPECT_THAT(*frame, IsHeaders(stream_id, flag_fin, headers));
+    scoped_ptr<net::SpdyFrame> frame(raw_frame);
+    EXPECT_THAT(*frame, AllOf(IsControlFrameOfType(net::HEADERS),
+                              StreamIdIs(stream_id),
+                              UncompressedHeadersAre(headers),
+                              FlagFinIs(flag_fin)));
   }
 
   void ExpectDataFrame(net::SpdyStreamId stream_id, base::StringPiece data,
                        bool flag_fin) {
-    net::SpdyFrameIR* raw_frame = NULL;
+    net::SpdyFrame* raw_frame = NULL;
     ASSERT_TRUE(output_queue_.Pop(&raw_frame));
     ASSERT_TRUE(raw_frame != NULL);
-    scoped_ptr<net::SpdyFrameIR> frame(raw_frame);
-    EXPECT_THAT(*frame, IsDataFrame(stream_id, flag_fin, data));
+    scoped_ptr<net::SpdyFrame> frame(raw_frame);
+    EXPECT_THAT(*frame, AllOf(IsDataFrameWith(data), StreamIdIs(stream_id),
+                              FlagFinIs(flag_fin)));
   }
 
   void ExpectOutputQueueEmpty() {
-    net::SpdyFrameIR* frame;
+    net::SpdyFrame* frame;
     EXPECT_FALSE(output_queue_.Pop(&frame));
   }
 
@@ -140,8 +151,9 @@ class HttpToSpdyFilterTest :
   }
 
   const mod_spdy::spdy::SpdyVersion spdy_version_;
+  net::SpdyFramer framer_;
+  net::BufferedSpdyFramer buffered_framer_;
   mod_spdy::SpdyFramePriorityQueue output_queue_;
-  mod_spdy::SharedFlowControlWindow shared_window_;
   MockSpdyServerPushInterface pusher_;
   mod_spdy::LocalPool local_;
   conn_rec* const connection_;
@@ -155,11 +167,11 @@ TEST_P(HttpToSpdyFilterTest, ResponseWithContentLength) {
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyStreamId associated_stream_id = 0;
   const int32 initial_server_push_depth = 0;
-  const net::SpdyPriority priority = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &shared_window_, &pusher_);
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -240,11 +252,11 @@ TEST_P(HttpToSpdyFilterTest, ChunkedResponse) {
   const net::SpdyStreamId stream_id = 3;
   const net::SpdyStreamId associated_stream_id = 0;
   const int32 initial_server_push_depth = 0;
-  const net::SpdyPriority priority = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &shared_window_, &pusher_);
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -314,11 +326,11 @@ TEST_P(HttpToSpdyFilterTest, RedirectResponse) {
   const net::SpdyStreamId stream_id = 5;
   const net::SpdyStreamId associated_stream_id = 0;
   const int32 initial_server_push_depth = 0;
-  const net::SpdyPriority priority = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &shared_window_, &pusher_);
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -354,11 +366,11 @@ TEST_P(HttpToSpdyFilterTest, AcceptEmptyBrigade) {
   const net::SpdyStreamId stream_id = 5;
   const net::SpdyStreamId associated_stream_id = 0;
   const int32 initial_server_push_depth = 0;
-  const net::SpdyPriority priority = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &shared_window_, &pusher_);
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -406,12 +418,11 @@ TEST_P(HttpToSpdyFilterTest, StreamAbort) {
   const net::SpdyStreamId stream_id = 7;
   const net::SpdyStreamId associated_stream_id = 0;
   const int32 initial_server_push_depth = 0;
-  const net::SpdyPriority priority =
-      mod_spdy::LowestSpdyPriorityForVersion(spdy_version_);
+  const net::SpdyPriority priority = framer_.GetLowestPriority();
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &shared_window_, &pusher_);
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -455,11 +466,11 @@ TEST_P(HttpToSpdyFilterTest, ServerPushedStream) {
   const net::SpdyStreamId stream_id = 4;
   const net::SpdyStreamId associated_stream_id = 3;
   const int32 initial_server_push_depth = 0;
-  const net::SpdyPriority priority = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &shared_window_, &pusher_);
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
 
@@ -493,11 +504,11 @@ TEST_P(HttpToSpdyFilterTest, DoNotSendVersionHeaderWhenAskedNotTo) {
   const net::SpdyStreamId stream_id = 5;
   const net::SpdyStreamId associated_stream_id = 0;
   const int32 initial_server_push_depth = 0;
-  const net::SpdyPriority priority = 0;
+  const net::SpdyPriority priority = framer_.GetHighestPriority();
   mod_spdy::SpdyStream stream(
       spdy_version_, stream_id, associated_stream_id,
       initial_server_push_depth, priority, net::kSpdyStreamInitialWindowSize,
-      &output_queue_, &shared_window_, &pusher_);
+      &output_queue_, &buffered_framer_, &pusher_);
   mod_spdy::SpdyServerConfig config;
   config.set_send_version_header(false);
   mod_spdy::HttpToSpdyFilter http_to_spdy_filter(&config, &stream);
@@ -519,7 +530,7 @@ TEST_P(HttpToSpdyFilterTest, DoNotSendVersionHeaderWhenAskedNotTo) {
   ExpectOutputQueueEmpty();
 }
 
-// Run each test over SPDY/2, SPDY/3, and SPDY/3.1.
+// Run each test over both SPDY v2 and SPDY v3.
 INSTANTIATE_TEST_CASE_P(Spdy2And3, HttpToSpdyFilterTest, testing::Values(
     mod_spdy::spdy::SPDY_VERSION_2, mod_spdy::spdy::SPDY_VERSION_3,
     mod_spdy::spdy::SPDY_VERSION_3_1));

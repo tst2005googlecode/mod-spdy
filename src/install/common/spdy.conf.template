@@ -19,11 +19,4 @@
     # consumption.
     #
     #SpdyMaxStreamsPerConnection 100
-
-    # Turns on automatic generation of X-Associated-Content headers
-    # for server push based on HTTPS request patterns. This is a
-    # highly experimental feature and off by default.
-    #
-    #SpdyServerPushDiscoveryEnabled off
-    #SpdyDebugServerPushDiscoverySendDebugHeaders off
 </IfModule>

@@ -16,7 +16,7 @@
 
 #include "apr_strings.h"
 
-#include "base/strings/string_number_conversions.h"
+#include "base/string_number_conversions.h"
 
 #include "mod_spdy/apache/config_util.h"
 #include "mod_spdy/apache/pool_util.h"
@@ -156,15 +156,7 @@ const command_rec kSpdyConfigCommands[] = {
       "SpdySendVersionHeader",
       SetBoolean<&SpdyServerConfig::set_send_version_header>,
       "Send an x-mod-spdy header with the module version number"),
-  SPDY_CONFIG_COMMAND(
-      "SpdyServerPushDiscoveryEnabled",
-      SetBoolean<&SpdyServerConfig::set_server_push_discovery_enabled>,
-      "Enables auto-generation of X-Associated-Content headers based on HTTPS request patterns."),
   // Debugging commands, which should not be used in production:
-  SPDY_CONFIG_COMMAND(
-      "SpdyDebugServerPushDiscoverySendDebugHeaders",
-      SetBoolean<&SpdyServerConfig::set_server_push_discovery_send_debug_headers>,
-      "Sends a copy of X-Associated-Content as X-Associated-Content-Debug to the user agent."),
   SPDY_CONFIG_COMMAND(
       "SpdyDebugLoggingVerbosity",
       GlobalOnly<SetNonNegativeInt<&SpdyServerConfig::set_vlog_level> >,

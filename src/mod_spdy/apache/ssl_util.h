@@ -40,4 +40,4 @@ bool IsUsingSslForConnection(conn_rec* connection);
 
 }  // namespace mod_spdy
 
-#endif  // MOD_SPDY_APACHE_SSL_UTIL_H_
+#endif  // MOD_SPDY_APACHE_SOCKADDR_UTIL_H_

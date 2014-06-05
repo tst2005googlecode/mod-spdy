@@ -14,8 +14,8 @@
 
 #include "mod_spdy/common/protocol_util.h"
 
-#include "base/strings/string_piece.h"
-#include "base/strings/string_util.h"
+#include "base/string_piece.h"
+#include "base/string_util.h"
 #include "net/spdy/spdy_frame_builder.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
@@ -58,16 +58,18 @@ extern const char* const kSpdy3Version = ":version";
 
 }  // namespace spdy
 
-net::SpdyMajorVersion SpdyVersionToFramerVersion(spdy::SpdyVersion version) {
+int SpdyVersionToFramerVersion(spdy::SpdyVersion version) {
   switch (version) {
+    case spdy::SPDY_VERSION_NONE:
+      return 0;
     case spdy::SPDY_VERSION_2:
-      return net::SPDY2;
+      return 2;
     case spdy::SPDY_VERSION_3:
     case spdy::SPDY_VERSION_3_1:
-      return net::SPDY3;
+      return 3;
     default:
       LOG(DFATAL) << "Invalid SpdyVersion value: " << version;
-      return static_cast<net::SpdyMajorVersion>(0);
+      return -1;
   }
 }
 
@@ -102,6 +104,11 @@ const char* SettingsIdToString(net::SpdySettingsIds id) {
     case net::SETTINGS_INITIAL_WINDOW_SIZE:    return "INITIAL_WINDOW_SIZE";
     default:                                   return "<unknown>";
   }
+}
+
+base::StringPiece FrameData(const net::SpdyFrame& frame) {
+  return base::StringPiece(
+      frame.data(), frame.length() + net::SpdyFrame::kHeaderSize);
 }
 
 bool IsInvalidSpdyResponseHeader(base::StringPiece key) {

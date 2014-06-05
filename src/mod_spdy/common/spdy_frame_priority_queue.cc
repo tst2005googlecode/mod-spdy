@@ -21,7 +21,7 @@
 #include "base/stl_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "base/time/time.h"
+#include "base/time.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace mod_spdy {
@@ -45,7 +45,7 @@ bool SpdyFramePriorityQueue::IsEmpty() const {
 
 const int SpdyFramePriorityQueue::kTopPriority = -1;
 
-void SpdyFramePriorityQueue::Insert(int priority, net::SpdyFrameIR* frame) {
+void SpdyFramePriorityQueue::Insert(int priority, net::SpdyFrame* frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 
@@ -67,13 +67,13 @@ void SpdyFramePriorityQueue::Insert(int priority, net::SpdyFrameIR* frame) {
   condvar_.Signal();
 }
 
-bool SpdyFramePriorityQueue::Pop(net::SpdyFrameIR** frame) {
+bool SpdyFramePriorityQueue::Pop(net::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
   return InternalPop(frame);
 }
 
 bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
-                                         net::SpdyFrameIR** frame) {
+                                         net::SpdyFrame** frame) {
   base::AutoLock autolock(lock_);
   DCHECK(frame);
 
@@ -94,7 +94,7 @@ bool SpdyFramePriorityQueue::BlockingPop(const base::TimeDelta& max_time,
   return InternalPop(frame);
 }
 
-bool SpdyFramePriorityQueue::InternalPop(net::SpdyFrameIR** frame) {
+bool SpdyFramePriorityQueue::InternalPop(net::SpdyFrame** frame) {
   lock_.AssertAcquired();
   DCHECK(frame);
   if (queue_map_.empty()) {

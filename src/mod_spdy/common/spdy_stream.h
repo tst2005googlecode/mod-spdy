@@ -16,9 +16,10 @@
 #define MOD_SPDY_COMMON_SPDY_STREAM_H_
 
 #include "base/basictypes.h"
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_protocol.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "mod_spdy/common/spdy_frame_queue.h"
@@ -26,7 +27,6 @@
 
 namespace mod_spdy {
 
-class SharedFlowControlWindow;
 class SpdyFramePriorityQueue;
 
 // Represents one stream of a SPDY connection.  This class is used to
@@ -38,6 +38,10 @@ class SpdyFramePriorityQueue;
 class SpdyStream {
  public:
   // The SpdyStream object does *not* take ownership of any of these arguments.
+  // The BufferedSpdyFramer object is used only for creating uncompressed
+  // frames; its state will never by modified by the SpdyStream (unfortunately,
+  // however, we do need to call some non-const methods on it that don't
+  // actually mutate state, so we require a non-const pointer here).
   SpdyStream(spdy::SpdyVersion spdy_version,
              net::SpdyStreamId stream_id,
              net::SpdyStreamId associated_stream_id_,
@@ -45,7 +49,7 @@ class SpdyStream {
              net::SpdyPriority priority,
              int32 initial_output_window_size,
              SpdyFramePriorityQueue* output_queue,
-             SharedFlowControlWindow* shared_window,
+             net::BufferedSpdyFramer* framer,
              SpdyServerPushInterface* pusher);
   ~SpdyStream();
 
@@ -82,10 +86,10 @@ class SpdyStream {
   void AbortSilently();
 
   // Same as AbortSilently, but also sends a RST_STREAM frame for this stream.
-  void AbortWithRstStream(net::SpdyRstStreamStatus status);
+  void AbortWithRstStream(net::SpdyStatusCodes status);
 
   // What are the current window sizes for this stream?  These are mostly
-  // useful for debugging.  Requires that spdy_version() >= SPDY_VERSION_3.
+  // useful for debugging.  Requires that spdy_version() >= 3.
   int32 current_input_window_size() const;
   int32 current_output_window_size() const;
 
@@ -111,14 +115,14 @@ class SpdyStream {
   // Provide a SPDY frame sent from the client.  This is to be called from the
   // master connection thread.  This method takes ownership of the frame
   // object.
-  void PostInputFrame(net::SpdyFrameIR* frame);
+  void PostInputFrame(net::SpdyFrame* frame);
 
   // Get a SPDY frame from the client and return true, or return false if no
   // frame is available.  If the block argument is true and no frame is
   // currently available, block until a frame becomes available or the stream
   // is aborted.  This is to be called from the stream thread.  The caller
   // gains ownership of the provided frame.
-  bool GetInputFrame(bool block, net::SpdyFrameIR** frame);
+  bool GetInputFrame(bool block, net::SpdyFrame** frame);
 
   // Send a SYN_STREAM frame to the client for this stream.  This may only be
   // called if is_server_push() is true.
@@ -147,7 +151,7 @@ class SpdyStream {
   // Send a SPDY frame to the client.  This is to be called from the stream
   // thread.  This method takes ownership of the frame object.  Must be holding
   // lock_ to call this method.
-  void SendOutputFrame(net::SpdyFrameIR* frame);
+  void SendOutputFrame(net::SpdyFrame* frame);
 
   // Aborts the input queue, sets aborted_, and wakes up threads waiting on
   // condvar_.  Must be holding lock_ to call this method.
@@ -155,10 +159,12 @@ class SpdyStream {
 
   // Like InternalAbortSilently, but also sends a RST_STREAM frame for this
   // stream.  Must be holding lock_ to call this method.
-  void InternalAbortWithRstStream(net::SpdyRstStreamStatus status);
+  void InternalAbortWithRstStream(net::SpdyStatusCodes status);
 
   // These fields are all either constant or thread-safe, and do not require
-  // additional synchronization.
+  // additional synchronization.  In the case of framer_, we are careful to
+  // only call certain methods, in a thread-safe way (even though some of those
+  // methods are marked as non-const).
   const spdy::SpdyVersion spdy_version_;
   const net::SpdyStreamId stream_id_;
   const net::SpdyStreamId associated_stream_id_;
@@ -166,7 +172,7 @@ class SpdyStream {
   const net::SpdyPriority priority_;
   SpdyFrameQueue input_queue_;
   SpdyFramePriorityQueue* const output_queue_;
-  SharedFlowControlWindow* const shared_window_;
+  net::BufferedSpdyFramer* const framer_;  // we call only thread-safe methods
   SpdyServerPushInterface* const pusher_;
 
   // The lock protects the fields below.  The above fields do not require
@@ -177,7 +183,6 @@ class SpdyStream {
   int32 output_window_size_;
   int32 input_window_size_;
   size_t input_bytes_consumed_;  // consumed since we last sent a WINDOW_UPDATE
-  size_t input_bytes_unconsumed_;  // received but not yet consumed
 
   DISALLOW_COPY_AND_ASSIGN(SpdyStream);
 };
