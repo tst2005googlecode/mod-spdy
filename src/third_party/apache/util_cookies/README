@@ -1,3 +1,0 @@
-This is a piece of Apache 2.4 included in the mod_spdy package to enable cookie operations while still building for Apache 2.2.
-
-util_cookies is mostly unmodified, except for the removal of a few logging statements.

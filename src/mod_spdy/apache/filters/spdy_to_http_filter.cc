@@ -19,8 +19,8 @@
 
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/strings/string_piece.h"
-#include "base/strings/stringprintf.h"
+#include "base/string_piece.h"
+#include "base/stringprintf.h"
 #include "mod_spdy/common/spdy_stream.h"
 #include "mod_spdy/common/spdy_to_http_converter.h"
 #include "net/spdy/spdy_frame_builder.h"
@@ -207,60 +207,15 @@ apr_status_t SpdyToHttpFilter::Read(ap_filter_t *filter,
   return APR_SUCCESS;
 }
 
-SpdyToHttpFilter::DecodeFrameVisitor::DecodeFrameVisitor(
-    SpdyToHttpFilter* filter)
-    : filter_(filter), success_(false) {
-  DCHECK(filter_);
-}
-
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitSynStream(
-    const net::SpdySynStreamIR& frame) {
-  success_ = filter_->DecodeSynStreamFrame(frame);
-}
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitSynReply(
-    const net::SpdySynReplyIR& frame) { BadFrameType("SYN_REPLY"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitRstStream(
-    const net::SpdyRstStreamIR& frame) { BadFrameType("RST_STREAM"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitSettings(
-    const net::SpdySettingsIR& frame) { BadFrameType("SETTINGS"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitPing(
-    const net::SpdyPingIR& frame) { BadFrameType("PING"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitGoAway(
-    const net::SpdyGoAwayIR& frame) { BadFrameType("GOAWAY"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitHeaders(
-    const net::SpdyHeadersIR& frame) {
-  success_ = filter_->DecodeHeadersFrame(frame);
-}
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitWindowUpdate(
-    const net::SpdyWindowUpdateIR& frame) { BadFrameType("WINDOW_UPDATE"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitCredential(
-    const net::SpdyCredentialIR& frame) { BadFrameType("CREDENTIAL"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitBlocked(
-    const net::SpdyBlockedIR& frame) { BadFrameType("BLOCKED"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitPushPromise(
-    const net::SpdyPushPromiseIR& frame) { BadFrameType("PUSH_PROMISE"); }
-void SpdyToHttpFilter::DecodeFrameVisitor::VisitData(
-    const net::SpdyDataIR& frame) {
-  success_ = filter_->DecodeDataFrame(frame);
-}
-
-void SpdyToHttpFilter::DecodeFrameVisitor::BadFrameType(
-    const char* frame_type) {
-  LOG(DFATAL) << "Master connection sent a " << frame_type
-              << " frame to stream " << filter_->stream_->stream_id();
-  filter_->AbortStream(net::RST_STREAM_INTERNAL_ERROR);
-  success_ = false;
-}
-
 bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
   if (end_of_stream_reached()) {
     return false;
   }
 
   // Try to get the next SPDY frame from the stream.
-  scoped_ptr<net::SpdyFrameIR> frame;
+  scoped_ptr<net::SpdyFrame> frame;
   {
-    net::SpdyFrameIR* frame_ptr = NULL;
+    net::SpdyFrame* frame_ptr = NULL;
     if (!stream_->GetInputFrame(block == APR_BLOCK_READ, &frame_ptr)) {
       DCHECK(frame_ptr == NULL);
       return false;
@@ -270,13 +225,33 @@ bool SpdyToHttpFilter::GetNextFrame(apr_read_type_e block) {
   DCHECK(frame.get() != NULL);
 
   // Decode the frame into HTTP and append to the data buffer.
-  DecodeFrameVisitor visitor(this);
-  frame->Visit(&visitor);
-  return visitor.success();
+  if (frame->is_control_frame()) {
+    net::SpdyControlFrame* ctrl_frame =
+        static_cast<net::SpdyControlFrame*>(frame.get());
+    switch (ctrl_frame->type()) {
+      case net::SYN_STREAM:
+        return DecodeSynStreamFrame(
+            *static_cast<net::SpdySynStreamControlFrame*>(ctrl_frame));
+      case net::HEADERS:
+        return DecodeHeadersFrame(
+            *static_cast<net::SpdyHeadersControlFrame*>(ctrl_frame));
+      default:
+        // Other frame types should be handled by the master connection, rather
+        // than sent here.
+        LOG(DFATAL) << "Master connection sent a frame of type "
+                    << ctrl_frame->type() << " to stream "
+                    << stream_->stream_id();
+        AbortStream(net::INTERNAL_ERROR);
+        return false;
+    }
+  } else {
+    return DecodeDataFrame(
+        *static_cast<net::SpdyDataFrame*>(frame.get()));
+  }
 }
 
 bool SpdyToHttpFilter::DecodeSynStreamFrame(
-    const net::SpdySynStreamIR& frame) {
+    const net::SpdySynStreamControlFrame& frame) {
   const SpdyToHttpConverter::Status status =
       converter_.ConvertSynStreamFrame(frame);
   switch (status) {
@@ -287,12 +262,12 @@ bool SpdyToHttpFilter::DecodeSynStreamFrame(
       // with PROTOCOL_ERROR (SPDY draft 2 section 2.7.1).
       LOG(ERROR) << "Client sent extra SYN_STREAM frame on stream "
                  << stream_->stream_id();
-      AbortStream(net::RST_STREAM_PROTOCOL_ERROR);
+      AbortStream(net::PROTOCOL_ERROR);
       return false;
     case SpdyToHttpConverter::INVALID_HEADER_BLOCK:
       LOG(ERROR) << "Invalid SYN_STREAM header block on stream "
                  << stream_->stream_id();
-      AbortStream(net::RST_STREAM_PROTOCOL_ERROR);
+      AbortStream(net::PROTOCOL_ERROR);
       return false;
     case SpdyToHttpConverter::BAD_REQUEST:
       // TODO(mdsteeele): According to the SPDY spec, we're supposed to return
@@ -300,43 +275,44 @@ bool SpdyToHttpFilter::DecodeSynStreamFrame(
       //   3.2.1).  We need to do some refactoring to make that possible.
       LOG(ERROR) << "Could not generate request line from SYN_STREAM frame"
                   << " in stream " << stream_->stream_id();
-      AbortStream(net::RST_STREAM_REFUSED_STREAM);
+      AbortStream(net::REFUSED_STREAM);
       return false;
     default:
       // No other outcome should be possible.
       LOG(DFATAL) << "Got " << SpdyToHttpConverter::StatusString(status)
                   << " from ConvertSynStreamFrame on stream "
                   << stream_->stream_id();
-      AbortStream(net::RST_STREAM_INTERNAL_ERROR);
+      AbortStream(net::INTERNAL_ERROR);
       return false;
   }
 }
 
-bool SpdyToHttpFilter::DecodeHeadersFrame(const net::SpdyHeadersIR& frame) {
+bool SpdyToHttpFilter::DecodeHeadersFrame(
+    const net::SpdyHeadersControlFrame& frame) {
   const SpdyToHttpConverter::Status status =
       converter_.ConvertHeadersFrame(frame);
   switch (status) {
     case SpdyToHttpConverter::SPDY_CONVERTER_SUCCESS:
       return true;
     case SpdyToHttpConverter::FRAME_AFTER_FIN:
-      AbortStream(net::RST_STREAM_INVALID_STREAM);
+      AbortStream(net::INVALID_STREAM);
       return false;
     case SpdyToHttpConverter::INVALID_HEADER_BLOCK:
       LOG(ERROR) << "Invalid HEADERS header block on stream "
                  << stream_->stream_id();
-      AbortStream(net::RST_STREAM_PROTOCOL_ERROR);
+      AbortStream(net::PROTOCOL_ERROR);
       return false;
     default:
       // No other outcome should be possible.
       LOG(DFATAL) << "Got " << SpdyToHttpConverter::StatusString(status)
                   << " from ConvertHeadersFrame on stream "
                   << stream_->stream_id();
-      AbortStream(net::RST_STREAM_INTERNAL_ERROR);
+      AbortStream(net::INTERNAL_ERROR);
       return false;
   }
 }
 
-bool SpdyToHttpFilter::DecodeDataFrame(const net::SpdyDataIR& frame) {
+bool SpdyToHttpFilter::DecodeDataFrame(const net::SpdyDataFrame& frame) {
   const SpdyToHttpConverter::Status status =
       converter_.ConvertDataFrame(frame);
   switch (status) {
@@ -349,24 +325,24 @@ bool SpdyToHttpFilter::DecodeDataFrame(const net::SpdyDataIR& frame) {
       //   forget which of it is leading/trailing headers and which of it is
       //   request data, so it'll take a little work to know when to send the
       //   WINDOW_UPDATE frames.  For now, just doing it here is good enough.
-      stream_->OnInputDataConsumed(frame.data().size());
+      stream_->OnInputDataConsumed(frame.length());
       return true;
     case SpdyToHttpConverter::FRAME_AFTER_FIN:
       // If the stream is no longer open, we must send a RST_STREAM with
       // INVALID_STREAM (SPDY draft 3 section 2.2.2).
-      AbortStream(net::RST_STREAM_INVALID_STREAM);
+      AbortStream(net::INVALID_STREAM);
       return false;
     default:
       // No other outcome should be possible.
       LOG(DFATAL) << "Got " << SpdyToHttpConverter::StatusString(status)
                   << " from ConvertDataFrame on stream "
                   << stream_->stream_id();
-      AbortStream(net::RST_STREAM_INTERNAL_ERROR);
+      AbortStream(net::INTERNAL_ERROR);
       return false;
   }
 }
 
-void SpdyToHttpFilter::AbortStream(net::SpdyRstStreamStatus status) {
+void SpdyToHttpFilter::AbortStream(net::SpdyStatusCodes status) {
   stream_->AbortWithRstStream(status);
 }
 

@@ -16,7 +16,7 @@
 #define MOD_SPDY_COMMON_HTTP_REQUEST_VISITOR_INTERFACE_H_
 
 #include "base/basictypes.h"
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 
 namespace mod_spdy {
 

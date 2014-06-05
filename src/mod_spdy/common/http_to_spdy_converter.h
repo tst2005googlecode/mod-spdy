@@ -19,7 +19,7 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/strings/string_piece.h"
+#include "base/string_piece.h"
 #include "mod_spdy/common/http_response_parser.h"
 #include "mod_spdy/common/protocol_util.h"
 #include "net/spdy/spdy_framer.h"  // for SpdyHeaderBlock
